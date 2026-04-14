@@ -4,24 +4,119 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#e8f4fd">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" id="pwa-manifest">
+<script>
+// PWA Manifest 동적 생성
+var manifest = {
+  name: "ROUTETOP 학원관리",
+  short_name: "ROUTETOP",
+  start_url: "/",
+  display: "standalone",
+  background_color: "#e8f4fd",
+  theme_color: "#1a6fa8",
+  icons: [{
+    src: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='40' fill='%235b7fff'/%3E%3Cpath d='M32 96h32l24-72 32 144 24-72h32' stroke='white' stroke-width='16' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E",
+    sizes: "192x192",
+    type: "image/svg+xml"
+  }]
+};
+var blob = new Blob([JSON.stringify(manifest)], {type:'application/json'});
+var url = URL.createObjectURL(blob);
+document.getElementById('pwa-manifest').href = url;
+</script>
 <title>ROUTETOP 학원관리</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=DM+Mono:wght@500&display=swap" rel="stylesheet">
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script>
-try {
-  firebase.initializeApp({
-    apiKey:"AIzaSyDKFA53PAvGZ90G7iyK90by45cjcVpIyHM",
-    authDomain:"routetop-app.firebaseapp.com",
-    projectId:"routetop-app",
-    storageBucket:"routetop-app.firebasestorage.app",
-    messagingSenderId:"943418145999",
-    appId:"1:943418145999:web:21d560297e700c1c3d8bba"
-  });
-  window._db = firebase.firestore();
-} catch(e) { console.warn('FB init error:',e); window._db = null; }
+// ═══════════════════════════════════════
+// Firebase Firestore REST API (SDK 없이 직접 구현)
+// Cloudflare Workers 환경에서도 완벽하게 작동
+// ═══════════════════════════════════════
+var _FB = {
+  apiKey: "AIzaSyDKFA53PAvGZ90G7iyK90by45cjcVpIyHM",
+  projectId: "routetop-app",
+  baseUrl: "https://firestore.googleapis.com/v1/projects/routetop-app/databases/(default)/documents"
+};
+window._db = null;
+window._fsUnsubscribe = null;
+
+// Firestore REST 래퍼
+var _FS = {
+  // 문서 읽기
+  get: function(path) {
+    return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey)
+      .then(function(r){ return r.json(); });
+  },
+  // 문서 쓰기 (전체 덮어쓰기)
+  set: function(path, data) {
+    var body = _FS._toFS(data);
+    return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); });
+  },
+  // 실시간 리스닝 (롱폴링 방식 - 30초마다 갱신)
+  onSnapshot: function(path, cb) {
+    var stopped = false;
+    function poll() {
+      if (stopped) return;
+      _FS.get(path).then(function(doc) {
+        if (stopped) return;
+        if (doc && doc.fields) cb(doc);
+        setTimeout(poll, 30000);
+      }).catch(function() {
+        if (!stopped) setTimeout(poll, 60000);
+      });
+    }
+    poll();
+    return function(){ stopped = true; };
+  },
+  // JS 객체 → Firestore 형식 변환
+  _toFS: function(val) {
+    if (val === null || val === undefined) return {nullValue: null};
+    if (typeof val === 'boolean') return {booleanValue: val};
+    if (typeof val === 'number') return {doubleValue: val};
+    if (typeof val === 'string') return {stringValue: val};
+    if (Array.isArray(val)) return {arrayValue: {values: val.map(function(v){ return _FS._toFS(v); })}};
+    if (typeof val === 'object') {
+      var fields = {};
+      Object.keys(val).forEach(function(k){ fields[k] = _FS._toFS(val[k]); });
+      return {mapValue: {fields: fields}};
+    }
+    return {stringValue: String(val)};
+  },
+  // Firestore 형식 → JS 객체 변환
+  _fromFS: function(fv) {
+    if (!fv) return null;
+    if ('nullValue' in fv) return null;
+    if ('booleanValue' in fv) return fv.booleanValue;
+    if ('integerValue' in fv) return parseInt(fv.integerValue);
+    if ('doubleValue' in fv) return fv.doubleValue;
+    if ('stringValue' in fv) return fv.stringValue;
+    if ('arrayValue' in fv) return (fv.arrayValue.values||[]).map(function(v){ return _FS._fromFS(v); });
+    if ('mapValue' in fv) {
+      var obj = {};
+      var fields = fv.mapValue.fields || {};
+      Object.keys(fields).forEach(function(k){ obj[k] = _FS._fromFS(fields[k]); });
+      return obj;
+    }
+    return null;
+  },
+  // Firestore 문서 → JS 객체
+  docToObj: function(doc) {
+    if (!doc || !doc.fields) return null;
+    var obj = {};
+    Object.keys(doc.fields).forEach(function(k){ obj[k] = _FS._fromFS(doc.fields[k]); });
+    return obj;
+  }
+};
+
+function _loadFirebase() {
+  return Promise.resolve(); // REST API라 별도 로드 불필요
+}
 </script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
@@ -45,19 +140,19 @@ html,body{height:100%;background:var(--bg);color:var(--te);font-family:'Noto San
 .tabbar{display:flex;background:var(--s1);border-top:1px solid var(--s3);flex-shrink:0;padding-bottom:env(safe-area-inset-bottom,10px)}
 .ti{flex:1;display:flex;flex-direction:column;align-items:center;padding:9px 0 3px;cursor:pointer;gap:3px;position:relative}
 .tdot{width:18px;height:3px;border-radius:2px;background:transparent}
-.tic{width:22px;height:22px;color:var(--t3)}
+.tic{width:22px;height:22px;color:var(--t2)}
 .tlb{font-size:10px;color:var(--t3)}
 .ti.on .tdot{background:var(--acc)}
 .ti.on .tic,.ti.on .tlb{color:var(--acc)}
 svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.card{background:var(--s1);border-radius:var(--r);padding:15px;margin-bottom:10px}
+.card{background:var(--s1);border-radius:var(--r);padding:15px;margin-bottom:10px;border:1px solid var(--s3)}
 .ct{font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;font-weight:500}
 .sg3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px}
 .sg4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
-.sc{background:var(--s1);border-radius:var(--rs);padding:12px 8px;text-align:center}
+.sc{background:var(--s1);border-radius:var(--rs);padding:12px 8px;text-align:center;border:1px solid var(--s3)}
 .sv{font-size:22px;font-weight:700;font-family:'DM Mono',monospace;line-height:1.1}
 .sl-val{font-size:10px;color:var(--t2);margin-top:3px}
-.ic2{background:var(--s1);border-radius:var(--r);padding:13px 14px;margin-bottom:8px;display:flex;align-items:center;gap:11px;cursor:pointer}
+.ic2{background:var(--s1);border-radius:var(--r);padding:13px 14px;margin-bottom:8px;display:flex;align-items:center;gap:11px;cursor:pointer;border:1px solid var(--s3)}
 .ic2:active{opacity:.7}
 .av{border-radius:11px;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0}
 .ii{flex:1;min-width:0}
@@ -109,14 +204,22 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 .cc.sel{background:var(--acc);color:#fff;font-weight:700}
 .cc.sel::after{background:#fff}
 .empty{text-align:center;padding:28px 0;color:var(--t3);font-size:13px;line-height:1.8}
+.search-bar{display:flex;align-items:center;gap:8px;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:9px 13px;margin-bottom:12px}
+.search-bar input{flex:1;background:none;border:none;outline:none;font-size:14px;color:var(--te);font-family:'Noto Sans KR',sans-serif}
+.search-bar input::placeholder{color:var(--t3)}
+.search-bar svg{flex-shrink:0;color:var(--t3)}
+.t-chips{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;padding-bottom:2px}
+.t-chip{flex-shrink:0;padding:5px 11px;border-radius:20px;font-size:12px;border:1px solid var(--s3);background:transparent;color:var(--t2);cursor:pointer;white-space:nowrap}
+.t-chip.on{background:var(--s2);border-color:var(--acc);color:var(--acc);font-weight:500}
 .rank-row{display:flex;align-items:center;gap:11px;padding:10px 14px;background:var(--s1);border-radius:var(--r);margin-bottom:6px;border:1px solid var(--s3)}
 .rank-num{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:'DM Mono',monospace;flex-shrink:0}
+.rank-bar-wrap{flex:1;margin-top:4px}
 .rank-bar-bg{height:5px;background:var(--s3);border-radius:3px;overflow:hidden}
 .rank-bar-fill{height:5px;border-radius:3px;transition:width .4s}
 .rank-tab-row{display:flex;gap:6px;margin-bottom:12px}
 .rank-tab{flex:1;padding:8px 4px;border-radius:var(--rs);font-size:11px;font-weight:500;text-align:center;cursor:pointer;border:1px solid var(--s3);background:transparent;color:var(--t2)}
 .rank-tab.on{background:var(--acc-l);border-color:var(--acc);color:var(--acc)}
-.sec-box{background:var(--s2);border-radius:var(--rs);padding:13px;margin-bottom:12px}
+.sec-box{background:var(--s2);border-radius:var(--rs);padding:13px;margin-bottom:12px;border:1px solid var(--s3)}
 .preview{background:var(--s2);border-radius:var(--rs);padding:13px;margin-bottom:13px;border:1px solid var(--s3)}
 .pr{display:flex;justify-content:space-between;margin-bottom:6px}
 .pr:last-child{margin-bottom:0}
@@ -406,6 +509,35 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 알림 설정 모달 -->
+<div class="ov" id="ov-notif" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div><div class="mt2">🔔 알림 설정</div>
+    <div class="sec-box" style="margin-bottom:14px">
+      <div style="font-size:11px;color:var(--t3);font-weight:500;margin-bottom:8px">알림 권한</div>
+      <div id="notif-status" style="font-size:13px;margin-bottom:10px"></div>
+      <button id="notif-req-btn" class="btn sm" onclick="reqNotifAndTest()">알림 허용하기</button>
+    </div>
+    <div class="sec-box">
+      <div style="font-size:11px;color:var(--t3);font-weight:500;margin-bottom:8px">매일 알림 시간</div>
+      <div style="font-size:13px;color:var(--t2);margin-bottom:10px;line-height:1.6">앱이 열려있거나 백그라운드 상태일 때 상담 필요 학생을 알려드려요.</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <select class="fs" id="notif-hour" style="margin-bottom:0;flex:1">
+          <option value="7">오전 7시</option>
+          <option value="8">오전 8시</option>
+          <option value="9" selected>오전 9시</option>
+          <option value="10">오전 10시</option>
+          <option value="12">오후 12시</option>
+          <option value="18">오후 6시</option>
+          <option value="20">오후 8시</option>
+        </select>
+        <button class="btn sm" style="width:auto;padding:10px 16px;flex-shrink:0" onclick="saveNotifTime()">저장</button>
+      </div>
+    </div>
+    <button class="btn" style="margin-top:12px" onclick="checkConsultAndNotify();toast('테스트 알림을 보냈어요')">📣 지금 테스트 알림 보내기</button>
+    <button class="btn ghost" onclick="closeModal('ov-notif')">닫기</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -417,12 +549,14 @@ var ME = null; // {role:'admin'|'teacher', name:string}
 var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
 var cFilter = 'all';
+var teacherFilter = ''; // 강사 필터 (전체 탭 공통)
+var rankTab = 'progress'; // 순위 기준: progress | consult | students
 var suTeachers = [];
 var fgRole2 = null, fgTIdx = -1;
 var saveTimer = null;
 
-var COLORS = ['#5b7fff','#a78bfa','#2ecc8f','#f5a623','#ff6b6b','#38bdf8','#fb923c','#e879f9'];
-var AVBG   = ['#1a2140','#1e1535','#0d2d1e','#2a1f08','#2a1010','#0d2535','#2d1f0a','#2d0f2d'];
+var COLORS = ['#1a6fa8','#6d28d9','#0e8a5f','#c07800','#c0392b','#0369a1','#c2410c','#9d174d'];
+var AVBG   = ['#dbeafe','#ede9fe','#d1fae5','#fef3c7','#fee2e2','#e0f2fe','#ffedd5','#fce7f3'];
 var MOOD_E = {매우좋음:'😄',좋음:'🙂',보통:'😐',관심필요:'😟',위기:'😰'};
 
 // ═══════════════════════════════════════
@@ -434,9 +568,7 @@ function saveAll() {
   localStorage.setItem('ac_stu', JSON.stringify(DB.stu));
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
-    if (!window._db) return;
-    window._db.collection('academy').doc('data')
-      .set({ cfg: DB.cfg, subj: DB.subj, stu: DB.stu })
+    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu})
       .catch(function(e) { console.warn('FB save error:', e); });
   }, 500);
 }
@@ -500,11 +632,29 @@ function renderHome() {
   else renderTeacherHome();
 }
 
-
+// 강사 필터 칩 렌더 (관리자 전용)
+function teacherFilterChips() {
+  var T = DB.cfg.teachers;
+  if (!T.length) return '';
+  var h = '<div class="t-chips">'
+    + '<div class="t-chip'+(teacherFilter===''?' on':'')+'" onclick="setTFilter(\'\')">전체</div>';
+  T.forEach(function(t) {
+    h += '<div class="t-chip'+(teacherFilter===t.name?' on':'')+'" onclick="setTFilter(\''+t.name+'\')">'+t.name+'</div>';
+  });
+  h += '</div>';
+  return h;
+}
+function setTFilter(name) {
+  teacherFilter = name;
+  if (curTab==='home') renderAdminHome();
+  else if (curTab==='progress') renderProgress();
+  else if (curTab==='consult') renderConsult();
+}
 function setRankTab(tab) {
   rankTab = tab;
   renderAdminHome();
 }
+
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
@@ -517,6 +667,7 @@ function renderAdminHome() {
      + '<div style="width:28px;height:28px;border-radius:7px;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">관</div>'
      + '<span style="font-size:13px;font-weight:600;flex:1">관리자</span>'
      + '<span style="font-size:11px;color:var(--t2)">관리자</span>'
+     + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-left:6px">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>';
 
@@ -536,7 +687,7 @@ function renderAdminHome() {
       var c = COLORS[i%COLORS.length];
       bars += '<div class="cb">'
             + '<span style="font-size:9px;color:'+c+';font-family:DM Mono,monospace">'+rates[i]+'%</span>'
-            + '<div class="cbar" style="height:'+Math.round(rates[i]/maxR*52)+'px;background:'+c+';opacity:.85"></div>'
+            + '<div class="cbar" style="height:'+Math.round(rates[i]/maxR*52)+'px;background:'+c+';opacity:1"></div>'
             + '<span class="cn">'+s.name.replace(/\s.*/,'')+'</span>'
             + '</div>';
     });
@@ -545,36 +696,78 @@ function renderAdminHome() {
        + '<div style="text-align:right;font-size:11px;color:var(--t2);margin-top:4px">전체 평균 '+avgR+'%</div></div>';
   }
 
+  // ── 강사 순위
+  h += '<div class="sl2"><div class="d8" style="background:var(--pu)"></div>강사 순위 🏆</div>';
+  h += '<div class="rank-tab-row">'     + '<div class="rank-tab'+(rankTab==='progress'?' on':'')+'" onclick="setRankTab(\'progress\')">📈 진도율</div>'     + '<div class="rank-tab'+(rankTab==='consult'?' on':'')+'" onclick="setRankTab(\'consult\')">💬 상담완료율</div>'     + '<div class="rank-tab'+(rankTab==='students'?' on':'')+'" onclick="setRankTab(\'students\')">👥 담당학생</div>'     + '</div>';
+  if (!T.length) {
+    h += '<div class="empty">강사가 없어요.</div>';
+  } else {
+    // 각 강사 데이터 계산
+    var tData = T.map(function(t, i) {
+      var tS = DB.subj.filter(function(s){return s.teacher===t.name;});
+      var tSt = DB.stu.filter(function(s){return s.teacher===t.name;});
+      var tR = tS.map(calcRate);
+      var progressAvg = tR.length ? Math.round(tR.reduce(function(a,b){return a+b;},0)/tR.length) : 0;
+      var consultDone = tSt.filter(function(s){return cSt(s).lv==='ok';}).length;
+      var consultRate = tSt.length ? Math.round(consultDone/tSt.length*100) : 0;
+      return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length};
+    });
+    // 기준별 정렬
+    var sorted = tData.slice().sort(function(a,b){
+      if(rankTab==='progress') return b.progressAvg - a.progressAvg;
+      if(rankTab==='consult') return b.consultRate - a.consultRate;
+      return b.studentCount - a.studentCount;
+    });
+    // 최대값 (막대 비율 계산)
+    var maxVal = Math.max.apply(null, sorted.map(function(t){
+      if(rankTab==='progress') return t.progressAvg;
+      if(rankTab==='consult') return t.consultRate;
+      return t.studentCount;
+    }).concat([1]));
+    var medals = ['🥇','🥈','🥉'];
+    var rankColors = ['#f5a623','#7b84aa','#c09060'];
+    sorted.forEach(function(t, rank) {
+      var val = rankTab==='progress' ? t.progressAvg : rankTab==='consult' ? t.consultRate : t.studentCount;
+      var unit = rankTab==='students' ? '명' : '%';
+      var barColor = rank===0?'var(--am)':rank===1?'var(--t2)':'var(--t3)';
+      var numBg = rank===0?'var(--aml)':rank===1?'var(--s2)':'var(--s2)';
+      var numColor = rank===0?'var(--am)':rank===1?'var(--te)':'var(--t2)';
+      var origIdx = t.idx;
+      var c = COLORS[origIdx%COLORS.length], bg = AVBG[origIdx%AVBG.length];
+      h += '<div class="rank-row" onclick="showTDetail('+origIdx+')">'         + '<div class="rank-num" style="background:'+numBg+';color:'+numColor+'">'         + (rank<3 ? medals[rank] : (rank+1)+'위')+'</div>'         + '<div class="av" style="width:34px;height:34px;border-radius:9px;background:'+bg+';color:'+c+';font-size:13px;flex-shrink:0">'+t.name.slice(0,1)+'</div>'         + '<div style="flex:1;min-width:0">'           + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'             + '<span style="font-size:13px;font-weight:600">'+t.name+'</span>'             + '<span style="font-size:14px;font-weight:700;font-family:DM Mono,monospace;color:'+barColor+'">'+val+unit+'</span>'           + '</div>'           + '<div class="rank-bar-bg"><div class="rank-bar-fill" style="width:'+Math.round(val/maxVal*100)+'%;background:'+barColor+'"></div></div>'         + '</div>'         + '</div>';
+    });
+  }
+
+  // 강사 검색바 + 필터칩
+  h += '<div class="search-bar">'     + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'     + '<input id="home-search" type="text" placeholder="강사 이름 검색..." value="'+teacherFilter+'" oninput="setTFilter(this.value)">'     + (teacherFilter ? '<button onclick="setTFilter(\'\');document.getElementById(\'home-search\').value=\'\';" style="background:none;border:none;color:var(--t3);cursor:pointer;font-size:16px">✕</button>' : '')     + '</div>';
+  h += teacherFilterChips();
+
   // 강사별 현황
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">'
-     + '<div class="sl2" style="margin:0"><div class="d8" style="background:var(--acc)"></div>강사별 현황</div>'
-     + '<button style="font-size:12px;color:var(--acc);background:none;border:none;cursor:pointer" onclick="openAccounts()">계정 관리</button>'
-     + '</div>';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">'     + '<div class="sl2" style="margin:0"><div class="d8" style="background:var(--acc)"></div>강사별 현황</div>'     + '<button style="font-size:12px;color:var(--acc);background:none;border:none;cursor:pointer" onclick="openAccounts()">계정 관리</button>'     + '</div>';
+  var filteredT = teacherFilter ? T.filter(function(t){ return t.name.indexOf(teacherFilter)>=0; }) : T;
   if (!T.length) {
     h += '<div class="empty">강사가 없습니다. 계정 관리에서 추가하세요.</div>';
+  } else if (!filteredT.length) {
+    h += '<div class="empty">"'+teacherFilter+'" 강사를 찾을 수 없어요.</div>';
   } else {
-    T.forEach(function(t, i) {
+    filteredT.forEach(function(t) {
+      var i = T.indexOf(t);
       var tS = DB.subj.filter(function(s){return s.teacher===t.name;});
       var tSt = DB.stu.filter(function(s){return s.teacher===t.name;});
       var tUrg = tSt.filter(function(s){return cSt(s).lv==='urgent';}).length;
       var tR = tS.map(calcRate);
       var tAvg = tR.length ? Math.round(tR.reduce(function(a,b){return a+b;},0)/tR.length) : null;
       var c = COLORS[i%COLORS.length], bg = AVBG[i%AVBG.length];
-      h += '<div class="ic2" onclick="showTDetail('+i+')">'
-         + '<div class="av" style="width:40px;height:40px;background:'+bg+';color:'+c+';font-size:15px">'+t.name.slice(0,1)+'</div>'
-         + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+t.name+'</div>'
-         + '<div style="font-size:12px;color:var(--t2);margin-top:1px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div>'
-         + '<div style="text-align:right">'
-         + (tAvg!==null ? '<div style="font-size:13px;font-weight:600;color:'+pCol(tAvg)+'">'+tAvg+'%</div><div style="font-size:10px;color:var(--t2)">평균진도</div>' : '<div style="font-size:11px;color:var(--t3)">과목없음</div>')
-         + (tUrg>0 ? '<div style="font-size:11px;color:var(--rd);margin-top:2px">⚠ 상담 '+tUrg+'명</div>' : '')
-         + '</div></div>';
+      h += '<div class="ic2" onclick="showTDetail('+i+')">'         + '<div class="av" style="width:40px;height:40px;background:'+bg+';color:'+c+';font-size:15px">'+t.name.slice(0,1)+'</div>'         + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+t.name+'</div>'         + '<div style="font-size:12px;color:var(--t2);margin-top:1px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div>'         + '<div style="text-align:right">'         + (tAvg!==null ? '<div style="font-size:13px;font-weight:600;color:'+pCol(tAvg)+'">'+tAvg+'%</div><div style="font-size:10px;color:var(--t2)">평균진도</div>' : '<div style="font-size:11px;color:var(--t3)">과목없음</div>')         + (tUrg>0 ? '<div style="font-size:11px;color:var(--rd);margin-top:2px">⚠ 상담 '+tUrg+'명</div>' : '')         + '</div></div>';
     });
   }
 
-  // 상담 필요
+  // 상담 필요 (필터 적용)
+  var filteredUrg = teacherFilter ? urgStu.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; }) : urgStu;
   h += '<div class="sl2" style="margin-top:10px"><div class="d8" style="background:var(--rd)"></div>상담 필요 학생</div>';
-  if (urgStu.length) urgStu.forEach(function(s){ h += stuCard(s, gStI(s), true); });
+  if (filteredUrg.length) filteredUrg.forEach(function(s){ h += stuCard(s, gStI(s), true); });
   else h += '<div class="empty" style="padding:6px 0 10px;text-align:left;font-size:12px">없음</div>';
+
 
   document.getElementById('home-body').innerHTML = h;
 }
@@ -596,6 +789,7 @@ function renderTeacherHome() {
      + '<span style="font-size:13px;font-weight:600;flex:1">'+ME.name+'</span>'
      + '<span style="font-size:11px;color:var(--t2)">강사</span>'
      + '<button onclick="openMySettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-left:6px">내 설정</button>'
+     + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-left:6px">🔔</button>'
      + '<button onclick="logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>';
 
@@ -649,8 +843,12 @@ function renderProgress() {
   var mySu = mySubj();
   document.getElementById('prog-sub').textContent = ME.role==='admin' ? '전체 과목' : '내 담당 과목';
   var h = '';
-  if (ME.role === 'admin')
+  if (ME.role === 'admin') {
     h += '<button class="btn sm" style="margin-bottom:12px" onclick="openAddSubj()">+ 과목 추가</button>';
+    h += '<div class="search-bar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="강사 이름 검색..." value="' + teacherFilter + '" oninput="setTFilter(this.value)"></div>';
+    h += teacherFilterChips();
+    mySu = teacherFilter ? mySu.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; }) : mySu;
+  }
   if (!mySu.length) {
     h += '<div class="empty">'+(ME.role==='admin'?'과목을 추가하세요.':'담당 과목이 없습니다.')+'</div>';
   } else {
@@ -685,6 +883,10 @@ function renderConsult() {
   var h = '';
   if (ME.role === 'admin')
     h += '<button class="btn sm" style="margin-bottom:12px" onclick="openAddStu()">+ 학생 추가</button>';
+    if (ME && ME.role==='admin') {
+    h += '<div class="search-bar"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="text" placeholder="강사 이름 검색..." value="' + teacherFilter + '" oninput="setTFilter(this.value)"></div>';
+    h += teacherFilterChips();
+  }
   h += '<div class="chips">'
      + '<div class="chip'+(cFilter==='all'?' on':'')+'" onclick="setFilter(\'all\')">전체</div>'
      + '<div class="chip'+(cFilter==='urgent'?' on':'')+'" onclick="setFilter(\'urgent\')">필요</div>'
@@ -700,6 +902,8 @@ function renderConsultList() {
   var el = document.getElementById('c-list');
   if (!el) return;
   var list = myStu();
+  if (ME && ME.role==='admin' && teacherFilter)
+    list = list.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; });
   if (cFilter !== 'all') list = list.filter(function(s){return cSt(s).lv===cFilter;});
   if (!list.length) { el.innerHTML='<div class="empty">해당하는 학생이 없습니다.</div>'; return; }
   var h = '';
@@ -1270,7 +1474,7 @@ function doReset() {
   if(!ME||ME.role!=='admin') return;
   if(!confirm('모든 데이터를 초기화하시겠어요?')) return;
   localStorage.clear();
-  if(window._db) window._db.collection('academy').doc('data').delete().catch(function(){});
+  _FS.set('academy/data', {cfg:{adminPw:'',adminPhone:'',teachers:[]},subj:[],stu:[]}).catch(function(){});
   DB={cfg:{adminPw:'',adminPhone:'',teachers:[]},subj:[],stu:[]};
   toast('초기화됐어요','var(--am)');logout();
 }
@@ -1300,12 +1504,115 @@ updClk();setInterval(updClk,10000);
 // ═══════════════════════════════════════
 // Firebase 초기 로드
 // ═══════════════════════════════════════
+// ═══════════════════════════════════════
+// PWA 서비스 워커 & 알림
+// ═══════════════════════════════════════
+// ═══════════════════════════════════════
+// 알림 시스템 (서비스워커 없음 - 앱 실행 중 작동)
+// ═══════════════════════════════════════
+
+function requestNotifPerm(cb) {
+  if (!('Notification' in window)) { if(cb) cb(false); return; }
+  if (Notification.permission === 'granted') { if(cb) cb(true); return; }
+  if (Notification.permission === 'denied') { if(cb) cb(false); return; }
+  Notification.requestPermission().then(function(p){ if(cb) cb(p==='granted'); });
+}
+
+function showDirectNotif(title, body) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  new Notification(title, {body:body, tag:'routetop-consult', icon:''});
+}
+
+function checkConsultAndNotify() {
+  if (!ME) return;
+  var list = myStu().filter(function(s){ return cSt(s).lv==='urgent'; });
+  if (list.length === 0) return;
+  var msg = list.length <= 3
+    ? list.map(function(s){return s.name;}).join(', ') + ' 상담이 필요해요.'
+    : '상담이 필요한 학생이 ' + list.length + '명 있어요.';
+  showDirectNotif('ROUTETOP 학원관리', msg);
+}
+
+function openNotifSettings() {
+  if (!('Notification' in window)) {
+    toast('이 브라우저는 알림을 지원하지 않아요', 'var(--rd)'); return;
+  }
+  var savedHour = localStorage.getItem('notif_hour') || '9';
+  var sel = document.getElementById('notif-hour');
+  if (sel) sel.value = savedHour;
+  openModal('ov-notif');
+  updateNotifStatus();
+}
+
+function updateNotifStatus() {
+  var el = document.getElementById('notif-status');
+  var btn = document.getElementById('notif-req-btn');
+  if (!el) return;
+  if (!('Notification' in window)) {
+    el.textContent='이 브라우저는 알림을 지원하지 않아요.';
+    el.style.color='var(--rd)'; return;
+  }
+  if (Notification.permission === 'granted') {
+    el.textContent='✓ 알림이 허용됐어요.'; el.style.color='var(--g)';
+    if(btn) btn.style.display='none';
+  } else if (Notification.permission === 'denied') {
+    el.textContent='✗ 알림이 차단됐어요. 브라우저 설정에서 허용해 주세요.';
+    el.style.color='var(--rd)';
+    if(btn) btn.style.display='none';
+  } else {
+    el.textContent='알림 권한을 허용하면 상담 필요 학생을 알려드려요.';
+    el.style.color='var(--t2)';
+    if(btn) btn.style.display='block';
+  }
+}
+
+function reqNotifAndTest() {
+  requestNotifPerm(function(granted){
+    updateNotifStatus();
+    if(granted){
+      toast('알림 허용됐어요 ✓');
+      setTimeout(function(){
+        showDirectNotif('ROUTETOP 알림 테스트', '알림이 정상 작동해요! 🎉');
+      }, 500);
+    } else {
+      toast('알림이 차단됐어요. 설정에서 허용해 주세요.', 'var(--rd)');
+    }
+  });
+}
+
+function saveNotifTime() {
+  var sel = document.getElementById('notif-hour');
+  var hour = sel ? sel.value : '9';
+  localStorage.setItem('notif_hour', hour);
+  toast('알림 시간이 저장됐어요 ✓');
+  closeModal('ov-notif');
+  scheduleNotif();
+}
+
+function scheduleNotif() {
+  if(window._notifTimer) clearTimeout(window._notifTimer);
+  if(!ME) return;
+  var hour = parseInt(localStorage.getItem('notif_hour') || '9');
+  var now = new Date();
+  var next = new Date();
+  next.setHours(hour, 0, 0, 0);
+  if(next <= now) next.setDate(next.getDate() + 1);
+  var ms = next - now;
+  window._notifTimer = setTimeout(function(){
+    checkConsultAndNotify();
+    scheduleNotif();
+  }, ms);
+  console.log('알림 예약:', next.toLocaleTimeString(), '('+Math.round(ms/60000)+'분 후)');
+}
+
+// Firebase 로드 후 앱 초기화
+_loadFirebase().then(function() {
 (function initApp() {
   function setFbSt(msg,color){var el=document.getElementById('fb-status');if(el){el.textContent=msg;el.style.color=color||'var(--t3)';}}
   function applyDB(d) {
     if(d&&d.cfg){
       DB.cfg=d.cfg;DB.subj=d.subj||[];DB.stu=d.stu||[];
-      setFbSt('● Firebase 연결됨 — 실시간 동기화 중','var(--g)');
+      setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
       DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","teachers":[]}');
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
@@ -1317,31 +1624,32 @@ updClk();setInterval(updClk,10000);
   }
   // setup 버튼 연결
   document.querySelector('[onclick="openModal(\'ov-setup\')"]').onclick=function(){openSetup();};
-  if(window._db){
-    var ref=window._db.collection('academy').doc('data');
-    ref.get().then(function(snap){
-      applyDB(snap.exists?snap.data():null);
-      // 실시간 동기화
-      ref.onSnapshot(function(s){
-        if(!s.exists) return;
-        var d=s.data();
-        DB.cfg=d.cfg||DB.cfg;DB.subj=d.subj||DB.subj;DB.stu=d.stu||DB.stu;
-        if(ME){
-          if(curTab==='home') renderHome();
-          else if(curTab==='progress') renderProgress();
-          else if(curTab==='consult') renderConsult();
-        }
-        if(DB.cfg.teachers.length) refreshTSel();
-      });
-    }).catch(function(e){console.warn('FB load failed:',e);applyDB(null);});
-  } else {
+  // Firestore REST API로 데이터 로드
+  _FS.get('academy/data').then(function(doc) {
+    var d = _FS.docToObj(doc);
+    applyDB(d);
+    // 30초마다 실시간 동기화 (롱폴링)
+    window._fsUnsubscribe = _FS.onSnapshot('academy/data', function(snap) {
+      var d2 = _FS.docToObj(snap);
+      if (!d2) return;
+      DB.cfg=d2.cfg||DB.cfg; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu;
+      if(ME){
+        if(curTab==='home') renderHome();
+        else if(curTab==='progress') renderProgress();
+        else if(curTab==='consult') renderConsult();
+      }
+      if(DB.cfg.teachers.length) refreshTSel();
+    });
+  }).catch(function(e) {
+    console.warn('FB load failed:', e);
     applyDB(null);
-  }
+  });
   // 10초 타임아웃
   setTimeout(function(){
     if(document.getElementById('loading').style.display!=='none') applyDB(null);
   },10000);
 })();
+}); // end _loadFirebase
 </script>
 </body>
 </html>
