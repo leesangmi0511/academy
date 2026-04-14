@@ -109,6 +109,13 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 .cc.sel{background:var(--acc);color:#fff;font-weight:700}
 .cc.sel::after{background:#fff}
 .empty{text-align:center;padding:28px 0;color:var(--t3);font-size:13px;line-height:1.8}
+.rank-row{display:flex;align-items:center;gap:11px;padding:10px 14px;background:var(--s1);border-radius:var(--r);margin-bottom:6px;border:1px solid var(--s3)}
+.rank-num{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;font-family:'DM Mono',monospace;flex-shrink:0}
+.rank-bar-bg{height:5px;background:var(--s3);border-radius:3px;overflow:hidden}
+.rank-bar-fill{height:5px;border-radius:3px;transition:width .4s}
+.rank-tab-row{display:flex;gap:6px;margin-bottom:12px}
+.rank-tab{flex:1;padding:8px 4px;border-radius:var(--rs);font-size:11px;font-weight:500;text-align:center;cursor:pointer;border:1px solid var(--s3);background:transparent;color:var(--t2)}
+.rank-tab.on{background:var(--acc-l);border-color:var(--acc);color:var(--acc)}
 .sec-box{background:var(--s2);border-radius:var(--rs);padding:13px;margin-bottom:12px}
 .preview{background:var(--s2);border-radius:var(--rs);padding:13px;margin-bottom:13px;border:1px solid var(--s3)}
 .pr{display:flex;justify-content:space-between;margin-bottom:6px}
@@ -493,6 +500,11 @@ function renderHome() {
   else renderTeacherHome();
 }
 
+
+function setRankTab(tab) {
+  rankTab = tab;
+  renderAdminHome();
+}
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
