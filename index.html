@@ -28,6 +28,12 @@ var url = URL.createObjectURL(blob);
 document.getElementById('pwa-manifest').href = url;
 </script>
 <title>ROUTETOP 학원관리</title>
+<script>
+if ('serviceWorker' in navigator) {
+  var _SW='self.addEventListener("install",function(e){self.skipWaiting();});self.addEventListener("activate",function(e){e.waitUntil(self.clients.claim());});self.addEventListener("notificationclick",function(e){e.notification.close();e.waitUntil(self.clients.matchAll({type:"window"}).then(function(c){for(var i=0;i<c.length;i++){if("focus" in c[i])return c[i].focus();}return self.clients.openWindow("/academy/");}));});';
+  try{var _b=new Blob([_SW],{type:'application/javascript'});navigator.serviceWorker.register(URL.createObjectURL(_b),{scope:'./'}).then(function(r){window._swReg=r;}).catch(function(){});}catch(e){}
+}
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=DM+Mono:wght@500&display=swap" rel="stylesheet">
 <script>
 // ═══════════════════════════════════════
@@ -1578,10 +1584,18 @@ function reqNotifAndTest() {
 function doTestNotif() {
   if (!('Notification' in window)) { toast('이 브라우저는 알림을 지원하지 않아요','var(--rd)'); return; }
   if (Notification.permission !== 'granted') { toast('알림 권한이 필요해요','var(--rd)'); return; }
-  try {
-    new Notification('ROUTETOP 학원관리', {body:'알림이 정상 작동해요! 🎉', tag:'routetop-test'});
-    toast('테스트 알림을 보냈어요 ✓');
-  } catch(e) { toast('알림 오류: '+e.message,'var(--rd)'); }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.ready.then(function(reg){
+      reg.showNotification('ROUTETOP 학원관리', {body:'알림이 정상 작동해요! 🎉', tag:'routetop-test'});
+      toast('테스트 알림을 보냈어요 ✓');
+    }).catch(function(){
+      try { new Notification('ROUTETOP 학원관리', {body:'알림이 정상 작동해요! 🎉'}); toast('테스트 알림을 보냈어요 ✓'); }
+      catch(e){ toast('알림 오류: '+e.message,'var(--rd)'); }
+    });
+  } else {
+    try { new Notification('ROUTETOP 학원관리', {body:'알림이 정상 작동해요! 🎉'}); toast('테스트 알림을 보냈어요 ✓'); }
+    catch(e){ toast('알림 오류: '+e.message,'var(--rd)'); }
+  }
 }
 
 function saveNotifTime() {
