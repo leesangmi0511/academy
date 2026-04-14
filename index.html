@@ -51,7 +51,8 @@ var _FS = {
   },
   // 문서 쓰기 (전체 덮어쓰기)
   set: function(path, data) {
-    var body = _FS._toFS(data);
+    var fsObj = _FS._toFS(data);
+    var body = fsObj.mapValue ? {fields: fsObj.mapValue.fields} : fsObj;
     return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
