@@ -866,6 +866,28 @@ var EVAL_ITEMS = [
   '일의 효율이 높은 편이다','책임감이 강하다'
 ];
 
+
+function openTeacherEvalMenu() {
+  // 강사 목록 선택 모달 (간단히 prompt 대신 기존 모달 활용)
+  var T = DB.cfg.teachers;
+  if(!T.length){toast('강사가 없어요','var(--rd)');return;}
+  // 강사 선택 시트 생성
+  var h = '<div class="ov" id="ov-eval-menu" onclick="ovClose(event,this)" style="display:flex">'
+        + '<div class="modal"><div class="mh"></div><div class="mt2">📋 강사 평가 선택</div>';
+  T.forEach(function(t){
+    var score = t.evalTotal !== undefined ? ' · '+t.evalTotal+'점' : '';
+    var date = t.evalDate ? ' ('+t.evalDate+')' : '';
+    h += '<button onclick="document.getElementById(\'ov-eval-menu\').remove();openTeacherEval(\''+t.name+'\')" '
+       + 'style="width:100%;text-align:left;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
+       + '<span style="font-size:14px;font-weight:600">'+t.name+'</span>'
+       + '<span style="font-size:11px;color:var(--t2)">'+score+date+'</span>'
+       + '</button>';
+  });
+  h += '<button class="btn ghost" onclick="document.getElementById(\'ov-eval-menu\').remove()">닫기</button>'
+     + '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+
 function openTeacherEval(tName) {
   currentEvalTeacher = tName;
   document.getElementById('eval-teacher-name').textContent = tName + ' 강사 평가';
@@ -1010,12 +1032,12 @@ function renderAdminHome() {
   // 유저배지
   h += '<div class="ubadge">'
      + '<div style="width:28px;height:28px;border-radius:7px;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">관</div>'
-     + '<span style="font-size:13px;font-weight:600;flex:1">관리자</span>'
-     + '<span style="font-size:11px;color:var(--t2)">'+(ME.role==='owner'?'원장':'관리자')+'</span>'
-     + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-left:6px">🔔</button>'
-     + (ME.role==='owner'?'<button onclick="openAdminEval()" style="font-size:11px;color:var(--pu);background:none;border:none;cursor:pointer;margin-left:6px">👔 관리자평가</button>':'')
+     + '<span style="font-size:13px;font-weight:600;flex:1">'+(ME.role==='owner'?'원장':'관리자')+'</span>'
+     + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
-     + '</div>';
+     + '</div>'
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button></div>':'')
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button></div>';
 
   // 통계
   h += '<div class="sg4">'
@@ -1127,7 +1149,7 @@ function renderAdminHome() {
       var tAvg = tR.length ? Math.round(tR.reduce(function(a,b){return a+b;},0)/tR.length) : null;
       var c = COLORS[i%COLORS.length], bg = AVBG[i%AVBG.length];
       h += '<div class="ic2" onclick="showTDetail('+i+')">'         + '<div class="av" style="width:40px;height:40px;background:'+bg+';color:'+c+';font-size:15px">'+t.name.slice(0,1)+'</div>'         + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+t.name+'</div>'         + '<div style="font-size:12px;color:var(--t2);margin-top:1px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div>'         + '<div style="text-align:right">'         + (tAvg!==null ? '<div style="font-size:13px;font-weight:600;color:'+pCol(tAvg)+'">'+tAvg+'%</div><div style="font-size:10px;color:var(--t2)">평균진도</div>' : '<div style="font-size:11px;color:var(--t3)">과목없음</div>')         + (tUrg>0 ? '<div style="font-size:11px;color:var(--rd);margin-top:2px">⚠ 상담 '+tUrg+'명</div>' : '')         + '</div></div>'
-         + '<button onclick="event.stopPropagation();openTeacherEval(\''+t.name+'\')" style="font-size:11px;color:var(--acc);background:var(--acc-l);border:1px solid var(--acc);border-radius:var(--rs);padding:5px;cursor:pointer;margin-top:2px;width:100%;display:block">📋 평가하기'+(t.evalTotal!==undefined?' · '+t.evalTotal+'점':'')+'</button>';
+         + (t.evalTotal!==undefined?'<div style="font-size:10px;color:var(--t2);text-align:right;margin-top:3px">📋 평가: '+t.evalTotal+'점 ('+( t.evalDate||'')+') </div>':'');
     });
   }
 
