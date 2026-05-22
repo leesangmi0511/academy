@@ -229,6 +229,15 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 .rank-tab-row{display:flex;gap:6px;margin-bottom:12px}
 .rank-tab{flex:1;padding:8px 4px;border-radius:var(--rs);font-size:11px;font-weight:500;text-align:center;cursor:pointer;border:1px solid var(--s3);background:transparent;color:var(--t2)}
 .rank-tab.on{background:var(--acc-l);border-color:var(--acc);color:var(--acc)}
+.tb-status{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;cursor:pointer;border:1.5px solid transparent}
+.tb-high{background:#d1fae5;color:#065f46;border-color:#6ee7b7}
+.tb-mid{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+.tb-low{background:#fee2e2;color:#991b1b;border-color:#fca5a5}
+.tb-none{background:var(--s2);color:var(--t2);border-color:var(--s3)}
+.tb-submit{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:12px;font-size:11px;font-weight:600;cursor:pointer;border:1.5px solid}
+.tb-done{background:var(--acc-l);color:var(--acc);border-color:var(--acc)}
+.tb-notdone{background:var(--rdl);color:var(--rd);border-color:var(--rd)}
+.stu-prog-row{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--s1);border-radius:var(--rs);margin-bottom:6px;border:1px solid var(--s3)}
 .sec-box{background:var(--s2);border-radius:var(--rs);padding:13px;margin-bottom:12px;border:1px solid var(--s3)}
 .preview{background:var(--s2);border-radius:var(--rs);padding:13px;margin-bottom:13px;border:1px solid var(--s3)}
 .pr{display:flex;justify-content:space-between;margin-bottom:6px}
@@ -944,20 +953,58 @@ function renderProgress() {
       var d=s.endDate?daysUntil(s.endDate):null;
       var daily=d&&d>0?Math.ceil(remain/d):null;
       var cv=COLORS[gi%COLORS.length];
-      h += '<div class="ic2" onclick="'+(ME.role==='admin'?'openEditSubj('+gi+')':'openProgInput('+gi+')')+'">'
+      // 담당 학생 목록 (학생의 class === 과목명)
+      var subjStu = DB.stu.filter(function(st){ return st.teacher===s.teacher && st.class===s.name; });
+      var isExp = window._expandedSubj === gi;
+      h += '<div style="margin-bottom:8px">'
+         + '<div class="ic2" onclick="toggleSubjExpand('+gi+')" style="cursor:pointer;margin-bottom:0">'
          + '<div class="av" style="width:44px;height:44px;background:'+AVBG[gi%AVBG.length]+';color:'+cv+';font-size:13px">'+s.name.slice(0,2)+'</div>'
          + '<div class="ii"><div class="in">'+s.name+'</div>'
-         + '<div class="im">'+(s.teacher||'강사 미정')+' · '+(s.currentPage||s.startPage||1)+'p / '+s.totalPages+'p</div>'
+         + '<div class="im">'+(s.teacher||'강사 미정')+' · '+(s.currentPage||s.startPage||1)+'p / '+s.totalPages+'p · 👥 '+subjStu.length+'명</div>'
          + '<div class="pt"><div class="pf" style="width:'+r+'%;background:'+pCol(r)+'"></div></div></div>'
          + '<div class="ir">'
          + '<span class="tag" style="background:'+pBg(r)+';color:'+pCol(r)+'">'+r+'%</span>'
          + (d!==null?'<span class="tag" style="background:'+(d<=7?'var(--rdl)':'var(--gl)')+';color:'+(d<=7?'var(--rd)':'var(--g)')+'">D-'+d+'</span>':'')
          + (daily?'<span style="font-size:10px;color:var(--am)">'+daily+'p/일</span>':'')
+         + '<span style="font-size:14px;color:var(--t2);margin-left:6px">'+(isExp?'▲':'▼')+'</span>'
          + '</div></div>';
+      // 펼쳐진 경우
+      if (isExp) {
+        h += '<div style="padding:10px 10px 12px;background:var(--acc-l);border-radius:0 0 var(--r) var(--r);border:1px solid var(--s3);border-top:none">';
+        if (ME.role !== 'admin') {
+          h += '<button class="btn sm" style="margin-bottom:10px;width:100%" onclick="openProgInput('+gi+')">✏️ 진도 입력</button>';
+        } else {
+          h += '<button class="btn sm" style="margin-bottom:10px;width:100%;background:var(--s2);color:var(--te)" onclick="openEditSubj('+gi+')">⚙️ 과목 수정</button>';
+        }
+        if (!subjStu.length) {
+          h += '<div style="font-size:12px;color:var(--t2);text-align:center;padding:6px 0">학생이 없어요. 학생 등록 시 "반"을 과목명과 동일하게 입력해 주세요.</div>';
+        } else {
+          h += '<div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:8px">📚 교재 제출 현황</div>';
+          subjStu.forEach(function(st) {
+            var si = gStI(st);
+            var tbInfo = (st.textbookStatus && st.textbookStatus[gi]) ? st.textbookStatus[gi] : {};
+            var submitted = tbInfo.submitted || false;
+            var cond = tbInfo.condition || '';
+            h += '<div class="stu-prog-row">'
+               + '<div style="flex:1;min-width:0">'
+                 + '<div style="font-size:13px;font-weight:600">'+st.name+'</div>'
+                 + (submitted && tbInfo.submittedDate ? '<div style="font-size:10px;color:var(--t3)">제출일: '+tbInfo.submittedDate+'</div>' : '')
+               + '</div>'
+               + '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0">'
+               + '<span class="tb-status '+(cond==='상'?'tb-high':'tb-none')+'" onclick="setTbCondition('+si+','+gi+',\'상\')">상</span>'
+               + '<span class="tb-status '+(cond==='중'?'tb-mid':'tb-none')+'" onclick="setTbCondition('+si+','+gi+',\'중\')">중</span>'
+               + '<span class="tb-status '+(cond==='하'?'tb-low':'tb-none')+'" onclick="setTbCondition('+si+','+gi+',\'하\')">하</span>'
+               + '<span class="tb-submit '+(submitted?'tb-done':'tb-notdone')+'" onclick="toggleTbSubmit('+si+','+gi+')">'+(submitted?'✓ 제출':'✗ 미제출')+'</span>'
+               + '</div>'
+               + '</div>';
+          });
+        }
+        h += '</div>';
+      }
+      h += '</div>';
     });
   }
-  h += '<div style="margin-top:6px;font-size:11px;color:var(--t3);text-align:center">'
-     + (ME.role==='admin'?'과목을 탭하면 수정할 수 있어요':'과목을 탭하면 진도를 입력할 수 있어요')+'</div>';
+  h += '<div style="margin-top:6px;font-size:11px;color:var(--t3);text-align:center">과목을 탭하면 학생 현황을 볼 수 있어요</div>';
   document.getElementById('prog-body').innerHTML = h;
 }
 
@@ -1102,6 +1149,43 @@ function showSubjDetail(gi) {
   document.querySelectorAll('.ti').forEach(function(el){el.classList.remove('on');});
   document.getElementById('sc-detail').classList.add('on');
   curTab='detail';
+}
+
+
+// ═══ 교재 제출/상태 관리 ═══
+window._expandedSubj = null;
+
+function toggleSubjExpand(gi) {
+  window._expandedSubj = window._expandedSubj === gi ? null : gi;
+  renderProgress();
+}
+
+function setTbCondition(si, gi, cond) {
+  var st = DB.stu[si];
+  if (!st) return;
+  if (!st.textbookStatus) st.textbookStatus = {};
+  if (!st.textbookStatus[gi]) st.textbookStatus[gi] = {};
+  // 같은 값 클릭 시 해제
+  st.textbookStatus[gi].condition = st.textbookStatus[gi].condition === cond ? '' : cond;
+  saveAll();
+  renderProgress();
+  toast('교재 상태 저장됐어요 ✓');
+}
+
+function toggleTbSubmit(si, gi) {
+  var st = DB.stu[si];
+  if (!st) return;
+  if (!st.textbookStatus) st.textbookStatus = {};
+  if (!st.textbookStatus[gi]) st.textbookStatus[gi] = {};
+  st.textbookStatus[gi].submitted = !st.textbookStatus[gi].submitted;
+  if (st.textbookStatus[gi].submitted) {
+    st.textbookStatus[gi].submittedDate = today();
+    toast('📚 교재 제출 완료 ✓');
+  } else {
+    toast('교재 제출 취소됐어요');
+  }
+  saveAll();
+  renderProgress();
 }
 
 // ═══════════════════════════════════════
