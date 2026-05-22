@@ -1940,8 +1940,7 @@ _loadFirebase().then(function() {
     document.getElementById('loading').style.display='none';
     if(DB.cfg.teachers.length) refreshTSel();
   }
-  // setup 버튼 연결
-  document.querySelector('[onclick="openModal(\'ov-setup\')"]').onclick=function(){openSetup();};
+  // setup 버튼은 HTML onclick으로 처리됨
   // Firestore REST API로 데이터 로드
   _FS.get('academy/data').then(function(doc) {
     var d = _FS.docToObj(doc);
