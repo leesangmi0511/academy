@@ -735,13 +735,39 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 평가 기간 조회 모달 -->
+<div class="ov" id="ov-eval-period" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">📊 기간별 평가 점수</div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+      <div style="flex:1">
+        <label class="fl">시작 월</label>
+        <input class="fi" id="period-from" type="month" style="margin-bottom:0">
+      </div>
+      <div style="font-size:18px;color:var(--t3);margin-top:20px">~</div>
+      <div style="flex:1">
+        <label class="fl">종료 월</label>
+        <input class="fi" id="period-to" type="month" style="margin-bottom:0">
+      </div>
+    </div>
+    <button class="btn sm" style="margin-bottom:14px;width:100%" onclick="calcPeriodAvg()">📊 평균 계산</button>
+    <div id="period-result" style="display:none">
+      <div style="background:var(--acc-l);border-radius:var(--rs);padding:12px;margin-bottom:12px">
+        <div id="period-result-content"></div>
+      </div>
+    </div>
+    <div id="period-history" style="margin-bottom:8px"></div>
+    <button class="btn ghost" onclick="closeModal('ov-eval-period')">닫기</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 // ═══════════════════════════════════════
 // 데이터
 // ═══════════════════════════════════════
-var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',teachers:[]}, subj:[], stu:[] };
+var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',teachers:[]}, subj:[], stu:[], evalHistory:{} };
 var ME = null; // {role:'admin'|'teacher', name:string}
 var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
@@ -765,6 +791,7 @@ function saveAll() {
   localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg));
   localStorage.setItem('ac_subj', JSON.stringify(DB.subj));
   localStorage.setItem('ac_stu', JSON.stringify(DB.stu));
+  localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{}));
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
     _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu})
@@ -829,6 +856,8 @@ function renderHome() {
   if (!ME) return;
   if (ME.role === 'owner' || ME.role === 'admin') renderAdminHome();
   else renderTeacherHome();
+  // 25일 이후 평가 알림 체크
+  setTimeout(checkEvalReminder, 2000);
 }
 
 // 강사 필터 칩 렌더 (관리자 전용)
@@ -866,6 +895,123 @@ var EVAL_ITEMS = [
   '일의 효율이 높은 편이다','책임감이 강하다'
 ];
 
+
+
+// ═══ 평가 기간 조회 + 25일 알림 ═══
+function getYearMonth() {
+  var now = new Date();
+  return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+}
+
+function openEvalPeriod() {
+  var now = new Date();
+  var ym = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  // 3개월 전 기본값
+  var from = new Date(now);
+  from.setMonth(from.getMonth()-2);
+  var fromYm = from.getFullYear()+'-'+String(from.getMonth()+1).padStart(2,'0');
+  document.getElementById('period-from').value = fromYm;
+  document.getElementById('period-to').value = ym;
+  document.getElementById('period-result').style.display = 'none';
+  renderPeriodHistory();
+  openModal('ov-eval-period');
+}
+
+function renderPeriodHistory() {
+  var eh = DB.evalHistory || {};
+  var months = Object.keys(eh).sort().reverse().slice(0,6);
+  if(!months.length) {
+    document.getElementById('period-history').innerHTML = '<div style="font-size:12px;color:var(--t3);text-align:center">저장된 평가 내역이 없어요</div>';
+    return;
+  }
+  var h = '<div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:8px">최근 평가 내역</div>';
+  h += '<div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse">';
+  h += '<tr style="background:var(--s2)"><th style="padding:6px 8px;text-align:left;font-weight:600">월</th>';
+  // 강사 목록
+  var teachers = DB.cfg.teachers.map(function(t){return t.name;});
+  teachers.forEach(function(n){ h += '<th style="padding:6px 8px;text-align:center;font-weight:600">'+n+'</th>'; });
+  h += '<th style="padding:6px 8px;text-align:center;font-weight:600">관리자</th></tr>';
+  months.forEach(function(ym){
+    var data = eh[ym] || {};
+    h += '<tr style="border-bottom:1px solid var(--s3)">';
+    h += '<td style="padding:6px 8px;font-weight:600;color:var(--acc)">'+ym+'</td>';
+    teachers.forEach(function(n){
+      var sc = data.teachers && data.teachers[n] !== undefined ? data.teachers[n] : '-';
+      h += '<td style="padding:6px 8px;text-align:center;color:'+(sc!=='-'?'var(--te)':'var(--t3)')+'">'+sc+(sc!=='-'?'점':'')+'</td>';
+    });
+    var asc = data.admin !== undefined ? data.admin : '-';
+    h += '<td style="padding:6px 8px;text-align:center;color:'+(asc!=='-'?'var(--pu)':'var(--t3)')+'">'+asc+(asc!=='-'?'점':'')+'</td>';
+    h += '</tr>';
+  });
+  h += '</table></div>';
+  document.getElementById('period-history').innerHTML = h;
+}
+
+function calcPeriodAvg() {
+  var from = document.getElementById('period-from').value;
+  var to = document.getElementById('period-to').value;
+  if(!from||!to){toast('기간을 선택해 주세요','var(--rd)');return;}
+  if(from>to){toast('시작월이 종료월보다 늦어요','var(--rd)');return;}
+  var eh = DB.evalHistory || {};
+  var months = Object.keys(eh).filter(function(m){return m>=from&&m<=to;}).sort();
+  if(!months.length){
+    document.getElementById('period-result').style.display='block';
+    document.getElementById('period-result-content').innerHTML='<div style="text-align:center;color:var(--t2);font-size:13px">해당 기간에 평가 데이터가 없어요</div>';
+    return;
+  }
+  // 강사별 평균
+  var teachers = DB.cfg.teachers.map(function(t){return t.name;});
+  var h = '<div style="font-size:12px;font-weight:600;color:var(--acc);margin-bottom:10px">'+from+' ~ '+to+' 평균 ('+months.length+'개월)</div>';
+  // 강사 평균
+  h += '<div style="margin-bottom:8px">';
+  teachers.forEach(function(name){
+    var scores = months.map(function(m){ return eh[m].teachers&&eh[m].teachers[name]!==undefined?eh[m].teachers[name]:null; }).filter(function(s){return s!==null;});
+    if(!scores.length) return;
+    var avg = Math.round(scores.reduce(function(a,b){return a+b;},0)/scores.length);
+    h += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--s3)">'
+       + '<span style="font-size:13px">📋 '+name+'</span>'
+       + '<span style="font-size:14px;font-weight:700;color:var(--acc)">'+avg+'점</span>'
+       + '</div>';
+  });
+  // 관리자 평균
+  var adminScores = months.map(function(m){ return eh[m].admin!==undefined?eh[m].admin:null; }).filter(function(s){return s!==null;});
+  if(adminScores.length){
+    var adminAvg = Math.round(adminScores.reduce(function(a,b){return a+b;},0)/adminScores.length);
+    h += '<div style="display:flex;justify-content:space-between;padding:6px 0">'
+       + '<span style="font-size:13px">👔 관리자</span>'
+       + '<span style="font-size:14px;font-weight:700;color:var(--pu)">'+adminAvg+'점</span>'
+       + '</div>';
+  }
+  h += '</div>';
+  document.getElementById('period-result-content').innerHTML = h;
+  document.getElementById('period-result').style.display = 'block';
+}
+
+// 매달 25일 평가 알림 체크
+function checkEvalReminder() {
+  if(!ME || (ME.role!=='admin' && ME.role!=='owner')) return;
+  var now = new Date();
+  var day = now.getDate();
+  var ym = getYearMonth();
+  // 25일~말일 사이 + 이번 달 아직 안 알림
+  if(day < 25) return;
+  var lastRemind = localStorage.getItem('eval_remind_'+ym);
+  if(lastRemind) return;
+  localStorage.setItem('eval_remind_'+ym, '1');
+  // 이번 달 평가 완료 여부 확인
+  var eh = DB.evalHistory || {};
+  var thisMonth = eh[ym] || {};
+  var teachers = DB.cfg.teachers;
+  var notDone = teachers.filter(function(t){ return !thisMonth.teachers||thisMonth.teachers[t.name]===undefined; });
+  var adminDone = thisMonth.admin !== undefined;
+  if(notDone.length > 0 || (!adminDone && ME.role==='owner')) {
+    var msg = '📋 이번 달 평가 기간이에요!\n';
+    if(notDone.length > 0) msg += notDone.map(function(t){return t.name;}).join(', ')+' 강사 평가 미완료\n';
+    if(!adminDone && ME.role==='owner') msg += '👔 관리자 평가 미완료';
+    showDirectNotif('ROUTETOP 평가 알림', msg.trim());
+    toast('📋 이번 달 평가 기간이에요! (25일~말일)', 'var(--acc)');
+  }
+}
 
 function openTeacherEvalMenu() {
   // 강사 목록 선택 모달 (간단히 prompt 대신 기존 모달 활용)
@@ -944,6 +1090,12 @@ function saveTeacherEval() {
   t.evalScores = Object.assign({}, currentEvalData);
   t.evalTotal = calcEvalScore(currentEvalData);
   t.evalDate = today();
+  // 월별 히스토리 저장
+  var ym = getYearMonth();
+  if(!DB.evalHistory) DB.evalHistory = {};
+  if(!DB.evalHistory[ym]) DB.evalHistory[ym] = {};
+  if(!DB.evalHistory[ym].teachers) DB.evalHistory[ym].teachers = {};
+  DB.evalHistory[ym].teachers[currentEvalTeacher] = t.evalTotal;
   saveAll();
   closeModal('ov-teacher-eval');
   toast('📋 평가가 저장됐어요 ✓');
@@ -1010,6 +1162,11 @@ function saveAdminEval() {
   DB.cfg.adminEvalScores = Object.assign({}, currentAdminEvalData);
   DB.cfg.adminEvalTotal = calcAdminEvalScore(currentAdminEvalData, 10);
   DB.cfg.adminEvalDate = today();
+  // 월별 히스토리 저장
+  var ym = getYearMonth();
+  if(!DB.evalHistory) DB.evalHistory = {};
+  if(!DB.evalHistory[ym]) DB.evalHistory[ym] = {};
+  DB.evalHistory[ym].admin = DB.cfg.adminEvalTotal;
   saveAll();
   closeModal('ov-admin-eval');
   toast('👔 관리자 평가가 저장됐어요 ✓');
@@ -1037,7 +1194,7 @@ function renderAdminHome() {
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button></div>':'')
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button></div>';
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>';
 
   // 통계
   h += '<div class="sg4">'
@@ -2277,10 +2434,11 @@ _loadFirebase().then(function() {
   function setFbSt(msg,color){var el=document.getElementById('fb-status');if(el){el.textContent=msg;el.style.color=color||'var(--t3)';}}
   function applyDB(d) {
     if(d&&d.cfg){
-      DB.cfg=d.cfg;DB.subj=d.subj||[];DB.stu=d.stu||[];
+      DB.cfg=d.cfg;DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
-      DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","teachers":[]}');
+      DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","teachers":[]}')
+      DB.evalHistory=JSON.parse(localStorage.getItem('ac_evalHistory')||'{}');
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
       DB.stu=JSON.parse(localStorage.getItem('ac_stu')||'[]');
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
