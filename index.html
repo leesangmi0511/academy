@@ -573,6 +573,80 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 강사 평가 모달 -->
+<div class="ov" id="ov-teacher-eval" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">📋 강사 평가</div>
+    <div id="eval-teacher-name" style="font-size:13px;color:var(--acc);font-weight:600;margin-bottom:12px;text-align:center"></div>
+    <div style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">1. 면담 또는 회의 시 원활한 소통이 된다</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-0-high" onclick="setEvalItem(0,'상')">상</span>
+          <span class="tb-status" id="eval-0-mid" onclick="setEvalItem(0,'중')">중</span>
+          <span class="tb-status" id="eval-0-low" onclick="setEvalItem(0,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">2. 능동적이다</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-1-high" onclick="setEvalItem(1,'상')">상</span>
+          <span class="tb-status" id="eval-1-mid" onclick="setEvalItem(1,'중')">중</span>
+          <span class="tb-status" id="eval-1-low" onclick="setEvalItem(1,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">3. 협조적이다</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-2-high" onclick="setEvalItem(2,'상')">상</span>
+          <span class="tb-status" id="eval-2-mid" onclick="setEvalItem(2,'중')">중</span>
+          <span class="tb-status" id="eval-2-low" onclick="setEvalItem(2,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">4. 일에 대한 믿음이 있다</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-3-high" onclick="setEvalItem(3,'상')">상</span>
+          <span class="tb-status" id="eval-3-mid" onclick="setEvalItem(3,'중')">중</span>
+          <span class="tb-status" id="eval-3-low" onclick="setEvalItem(3,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">5. 동료 간 협업이 잘 된다</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-4-high" onclick="setEvalItem(4,'상')">상</span>
+          <span class="tb-status" id="eval-4-mid" onclick="setEvalItem(4,'중')">중</span>
+          <span class="tb-status" id="eval-4-low" onclick="setEvalItem(4,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">6. 솔선수범한다</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-5-high" onclick="setEvalItem(5,'상')">상</span>
+          <span class="tb-status" id="eval-5-mid" onclick="setEvalItem(5,'중')">중</span>
+          <span class="tb-status" id="eval-5-low" onclick="setEvalItem(5,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">7. 일의 효율이 높은 편이다 (능력이 있다)</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-6-high" onclick="setEvalItem(6,'상')">상</span>
+          <span class="tb-status" id="eval-6-mid" onclick="setEvalItem(6,'중')">중</span>
+          <span class="tb-status" id="eval-6-low" onclick="setEvalItem(6,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">8. 책임감이 강하다</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="eval-7-high" onclick="setEvalItem(7,'상')">상</span>
+          <span class="tb-status" id="eval-7-mid" onclick="setEvalItem(7,'중')">중</span>
+          <span class="tb-status" id="eval-7-low" onclick="setEvalItem(7,'하')">하</span>
+        </div>
+      </div>
+    </div>
+    <div style="background:var(--acc-l);border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
+      <div style="font-size:11px;color:var(--t2);margin-bottom:4px">관리자 평가 점수</div>
+      <div id="eval-score-preview" style="font-size:24px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace">—</div>
+      <div style="font-size:10px;color:var(--t3);margin-top:2px">상=100점 / 중=60점 / 하=30점 평균</div>
+    </div>
+    <button class="btn" onclick="saveTeacherEval()">저장</button>
+    <button class="btn ghost" onclick="closeModal('ov-teacher-eval')">닫기</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -692,6 +766,85 @@ var HW_API='https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(de
 var HW_KEY='AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
 function loadHwData(cb){if(hwData){if(cb)cb(hwData);return;}fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
 function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var sp=hwData.fields.studentProgress;if(!sp||!sp.mapValue||!sp.mapValue.fields)return 0;var spFields=sp.mapValue.fields;if(!stuList||!stuList.length)return 0;var totalDone=0,totalAll=0;var hwUsers=hwData.fields.users?hwData.fields.users.arrayValue.values||[]:[];stuList.forEach(function(stu){var hwUser=hwUsers.find(function(u){var f=u.mapValue?u.mapValue.fields:null;return f&&(f.name?f.name.stringValue:'')===stu.name;});if(!hwUser)return;var hwId=(hwUser.mapValue.fields.id||{}).stringValue||'';if(!hwId||!spFields[hwId])return;var stuSp=spFields[hwId].mapValue?spFields[hwId].mapValue.fields:null;if(!stuSp)return;Object.keys(stuSp).forEach(function(key){var vals=stuSp[key].arrayValue?stuSp[key].arrayValue.values||[]:[];totalAll++;if(vals.filter(function(v){return v.stringValue&&v.stringValue!=='t0';}).length>0)totalDone++;});});return totalAll>0?Math.round(totalDone/totalAll*100):0;}
+
+// ═══ 강사 평가 ═══
+var currentEvalTeacher = null; // 평가 중인 강사 이름
+var currentEvalData = {}; // {0:'상', 1:'중', ...}
+
+var EVAL_ITEMS = [
+  '면담 또는 회의 시 원활한 소통이 된다',
+  '능동적이다','협조적이다','일에 대한 믿음이 있다',
+  '동료 간 협업이 잘 된다','솔선수범한다',
+  '일의 효율이 높은 편이다','책임감이 강하다'
+];
+
+function openTeacherEval(tName) {
+  currentEvalTeacher = tName;
+  document.getElementById('eval-teacher-name').textContent = tName + ' 강사 평가';
+  // 기존 평가 로드
+  var t = DB.cfg.teachers.find(function(t){ return t.name === tName; });
+  currentEvalData = (t && t.evalScores) ? Object.assign({}, t.evalScores) : {};
+  // UI 업데이트
+  for(var i=0; i<8; i++) {
+    updateEvalItemUI(i);
+  }
+  updateEvalScorePreview();
+  openModal('ov-teacher-eval');
+}
+
+function setEvalItem(idx, val) {
+  currentEvalData[idx] = currentEvalData[idx] === val ? '' : val;
+  updateEvalItemUI(idx);
+  updateEvalScorePreview();
+}
+
+function updateEvalItemUI(idx) {
+  var val = currentEvalData[idx] || '';
+  var h = document.getElementById('eval-'+idx+'-high');
+  var m = document.getElementById('eval-'+idx+'-mid');
+  var l = document.getElementById('eval-'+idx+'-low');
+  if(!h||!m||!l) return;
+  h.className = 'tb-status ' + (val==='상'?'tb-high':'tb-none');
+  m.className = 'tb-status ' + (val==='중'?'tb-mid':'tb-none');
+  l.className = 'tb-status ' + (val==='하'?'tb-low':'tb-none');
+}
+
+function evalToScore(val) {
+  return val==='상'?100:val==='중'?60:val==='하'?30:null;
+}
+
+function calcEvalScore(evalData) {
+  var scores = [];
+  for(var i=0; i<8; i++) {
+    var sc = evalToScore(evalData[i]);
+    if(sc !== null) scores.push(sc);
+  }
+  return scores.length ? Math.round(scores.reduce(function(a,b){return a+b;},0)/scores.length) : 0;
+}
+
+function updateEvalScorePreview() {
+  var score = calcEvalScore(currentEvalData);
+  var el = document.getElementById('eval-score-preview');
+  if(el) el.textContent = Object.keys(currentEvalData).filter(function(k){return currentEvalData[k];}).length > 0 ? score+'점' : '—';
+}
+
+function saveTeacherEval() {
+  var t = DB.cfg.teachers.find(function(t){ return t.name === currentEvalTeacher; });
+  if(!t) return;
+  t.evalScores = Object.assign({}, currentEvalData);
+  t.evalTotal = calcEvalScore(currentEvalData);
+  t.evalDate = today();
+  saveAll();
+  closeModal('ov-teacher-eval');
+  toast('📋 평가가 저장됐어요 ✓');
+  renderAdminHome();
+}
+
+function getEvalScore(tName) {
+  var t = DB.cfg.teachers.find(function(t){ return t.name===tName; });
+  return (t && t.evalTotal !== undefined) ? t.evalTotal : null;
+}
+
 function setRankTab(tab) {
   rankTab = tab;
   if(tab==='homework'&&!hwData){toast('과제 데이터 불러오는 중...');loadHwData(function(){renderAdminHome();});}
@@ -741,7 +894,7 @@ function renderAdminHome() {
 
   // ── 강사 순위
   h += '<div class="sl2"><div class="d8" style="background:var(--pu)"></div>강사 순위 🏆</div>';
-  h += '<div class="rank-tab-row">'     + '<div class="rank-tab'+(rankTab==='progress'?' on':'')+'" onclick="setRankTab(\'progress\')">📈 진도율</div>'     + '<div class="rank-tab'+(rankTab==='consult'?' on':'')+'" onclick="setRankTab(\'consult\')">💬 상담완료율</div>'     + '<div class="rank-tab'+(rankTab==='students'?' on':'')+'" onclick="setRankTab(\'students\')">👥 담당학생</div>'     + '<div class="rank-tab'+(rankTab==='homework'?' on':'')+'" onclick="setRankTab(\'homework\')">📝 과제완료율</div>'     + '</div>';
+  h += '<div class="rank-tab-row">'     + '<div class="rank-tab'+(rankTab==='progress'?' on':'')+'" onclick="setRankTab(\'progress\')">📈 진도율</div>'     + '<div class="rank-tab'+(rankTab==='consult'?' on':'')+'" onclick="setRankTab(\'consult\')">💬 상담완료율</div>'     + '<div class="rank-tab'+(rankTab==='students'?' on':'')+'" onclick="setRankTab(\'students\')">👥 담당학생</div>'     + '<div class="rank-tab'+(rankTab==='homework'?' on':'')+'" onclick="setRankTab(\'homework\')">📝 과제완료율</div>'     + '<div class="rank-tab'+(rankTab==='eval'?' on':'')+'" onclick="setRankTab(\'eval\')">📋 관리자평가</div>'     + '</div>';
   if (!T.length) {
     h += '<div class="empty">강사가 없어요.</div>';
   } else {
@@ -754,13 +907,15 @@ function renderAdminHome() {
       var consultDone = tSt.filter(function(s){return cSt(s).lv==='ok';}).length;
       var consultRate = tSt.length ? Math.round(consultDone/tSt.length*100) : 0;
       var hwRate = calcHwRate(t.name, tSt);
-      return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate};
+      var evalScore = getEvalScore(t.name) || 0;
+      return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore};
     });
     // 기준별 정렬
     var sorted = tData.slice().sort(function(a,b){
       if(rankTab==='progress') return b.progressAvg - a.progressAvg;
       if(rankTab==='consult') return b.consultRate - a.consultRate;
       if(rankTab==='homework') return b.hwRate - a.hwRate;
+      if(rankTab==='eval') return b.evalScore - a.evalScore;
       return b.studentCount - a.studentCount;
     });
     // 최대값 (막대 비율 계산)
@@ -768,13 +923,14 @@ function renderAdminHome() {
       if(rankTab==='progress') return t.progressAvg;
       if(rankTab==='consult') return t.consultRate;
       if(rankTab==='homework') return t.hwRate;
+      if(rankTab==='eval') return t.evalScore;
       return t.studentCount;
     }).concat([1]));
     var medals = ['🥇','🥈','🥉'];
     var rankColors = ['#f5a623','#7b84aa','#c09060'];
     sorted.forEach(function(t, rank) {
-      var val = rankTab==='progress' ? t.progressAvg : rankTab==='consult' ? t.consultRate : rankTab==='homework' ? t.hwRate : t.studentCount;
-      var unit = rankTab==='students' ? '명' : '%';
+      var val = rankTab==='progress' ? t.progressAvg : rankTab==='consult' ? t.consultRate : rankTab==='homework' ? t.hwRate : rankTab==='eval' ? t.evalScore : t.studentCount;
+      var unit = rankTab==='students' ? '명' : rankTab==='eval' ? '점' : '%';
       var barColor = rank===0?'var(--am)':rank===1?'var(--t2)':'var(--t3)';
       var numBg = rank===0?'var(--aml)':rank===1?'var(--s2)':'var(--s2)';
       var numColor = rank===0?'var(--am)':rank===1?'var(--te)':'var(--t2)';
@@ -804,7 +960,8 @@ function renderAdminHome() {
       var tR = tS.map(calcRate);
       var tAvg = tR.length ? Math.round(tR.reduce(function(a,b){return a+b;},0)/tR.length) : null;
       var c = COLORS[i%COLORS.length], bg = AVBG[i%AVBG.length];
-      h += '<div class="ic2" onclick="showTDetail('+i+')">'         + '<div class="av" style="width:40px;height:40px;background:'+bg+';color:'+c+';font-size:15px">'+t.name.slice(0,1)+'</div>'         + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+t.name+'</div>'         + '<div style="font-size:12px;color:var(--t2);margin-top:1px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div>'         + '<div style="text-align:right">'         + (tAvg!==null ? '<div style="font-size:13px;font-weight:600;color:'+pCol(tAvg)+'">'+tAvg+'%</div><div style="font-size:10px;color:var(--t2)">평균진도</div>' : '<div style="font-size:11px;color:var(--t3)">과목없음</div>')         + (tUrg>0 ? '<div style="font-size:11px;color:var(--rd);margin-top:2px">⚠ 상담 '+tUrg+'명</div>' : '')         + '</div></div>';
+      h += '<div class="ic2" onclick="showTDetail('+i+')">'         + '<div class="av" style="width:40px;height:40px;background:'+bg+';color:'+c+';font-size:15px">'+t.name.slice(0,1)+'</div>'         + '<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+t.name+'</div>'         + '<div style="font-size:12px;color:var(--t2);margin-top:1px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div>'         + '<div style="text-align:right">'         + (tAvg!==null ? '<div style="font-size:13px;font-weight:600;color:'+pCol(tAvg)+'">'+tAvg+'%</div><div style="font-size:10px;color:var(--t2)">평균진도</div>' : '<div style="font-size:11px;color:var(--t3)">과목없음</div>')         + (tUrg>0 ? '<div style="font-size:11px;color:var(--rd);margin-top:2px">⚠ 상담 '+tUrg+'명</div>' : '')         + '</div></div>'
+         + '<button onclick="event.stopPropagation();openTeacherEval(\''+t.name+'\')" style="font-size:11px;color:var(--acc);background:var(--acc-l);border:1px solid var(--acc);border-radius:var(--rs);padding:5px;cursor:pointer;margin-top:2px;width:100%;display:block">📋 평가하기'+(t.evalTotal!==undefined?' · '+t.evalTotal+'점':'')+'</button>';
     });
   }
 
@@ -831,12 +988,14 @@ function calcMyRank(myName) {
     var consultRate = tSt.length ? consultDone/tSt.length*100 : 0;
     var studentCount = tSt.length;
     var hwRate = (typeof calcHwRate==='function') ? calcHwRate(t.name, tSt) : 0;
-    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate};
+    var evalSc = (typeof getEvalScore==='function') ? (getEvalScore(t.name)||0) : 0;
+    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate, evalScore:evalSc};
   });
   var maxStu = Math.max.apply(null, scores.map(function(s){ return s.studentCount; }).concat([1]));
   scores.forEach(function(s) {
     var stuScore = s.studentCount / maxStu * 100;
-    s.total = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1) / 4.5;
+    var baseScore = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1) / 4.5;
+    s.total = (baseScore*2 + (s.evalScore||0)*0.5) / 2.5;
   });
   scores.sort(function(a,b){ return b.total - a.total; });
   var myRank = scores.findIndex(function(s){ return s.name===myName; }) + 1;
@@ -892,6 +1051,7 @@ function renderTeacherHome() {
        + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">👥 학생 ×1.5</span>'
        + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">📝 과제 ×1</span>'
        + '</div>'
+       + '<div style="font-size:10px;color:var(--t3);margin-top:6px;text-align:center">종합점수 ×2 + 관리자평가 ×0.5</div>'
        + '</div>';
   }
 
