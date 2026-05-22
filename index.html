@@ -647,6 +647,94 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 관리자 평가 모달 -->
+<div class="ov" id="ov-admin-eval" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">👔 관리자 평가</div>
+    <div style="font-size:13px;color:var(--acc);font-weight:600;margin-bottom:12px;text-align:center">관리자 종합 평가</div>
+    <div style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">1. 솔선수범이 되는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-0-high" onclick="setAdminEvalItem(0,'상')">상</span>
+          <span class="tb-status" id="aeval-0-mid" onclick="setAdminEvalItem(0,'중')">중</span>
+          <span class="tb-status" id="aeval-0-low" onclick="setAdminEvalItem(0,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">2. 관리자로서 형평성을 가지고 있는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-1-high" onclick="setAdminEvalItem(1,'상')">상</span>
+          <span class="tb-status" id="aeval-1-mid" onclick="setAdminEvalItem(1,'중')">중</span>
+          <span class="tb-status" id="aeval-1-low" onclick="setAdminEvalItem(1,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">3. 학원을 위하는 자세가 있는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-2-high" onclick="setAdminEvalItem(2,'상')">상</span>
+          <span class="tb-status" id="aeval-2-mid" onclick="setAdminEvalItem(2,'중')">중</span>
+          <span class="tb-status" id="aeval-2-low" onclick="setAdminEvalItem(2,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">4. 일의 지시가 명확한가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-3-high" onclick="setAdminEvalItem(3,'상')">상</span>
+          <span class="tb-status" id="aeval-3-mid" onclick="setAdminEvalItem(3,'중')">중</span>
+          <span class="tb-status" id="aeval-3-low" onclick="setAdminEvalItem(3,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">5. 일의 수행이 원만하게 되는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-4-high" onclick="setAdminEvalItem(4,'상')">상</span>
+          <span class="tb-status" id="aeval-4-mid" onclick="setAdminEvalItem(4,'중')">중</span>
+          <span class="tb-status" id="aeval-4-low" onclick="setAdminEvalItem(4,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">6. 팀에 대한 능동적인 설계가 있는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-5-high" onclick="setAdminEvalItem(5,'상')">상</span>
+          <span class="tb-status" id="aeval-5-mid" onclick="setAdminEvalItem(5,'중')">중</span>
+          <span class="tb-status" id="aeval-5-low" onclick="setAdminEvalItem(5,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">7. 퇴원에 대한 인식과 대책이 있는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-6-high" onclick="setAdminEvalItem(6,'상')">상</span>
+          <span class="tb-status" id="aeval-6-mid" onclick="setAdminEvalItem(6,'중')">중</span>
+          <span class="tb-status" id="aeval-6-low" onclick="setAdminEvalItem(6,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">8. 일의 분배를 잘 하고 있는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-7-high" onclick="setAdminEvalItem(7,'상')">상</span>
+          <span class="tb-status" id="aeval-7-mid" onclick="setAdminEvalItem(7,'중')">중</span>
+          <span class="tb-status" id="aeval-7-low" onclick="setAdminEvalItem(7,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">9. 다음 관리자를 양성하고 있는가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-8-high" onclick="setAdminEvalItem(8,'상')">상</span>
+          <span class="tb-status" id="aeval-8-mid" onclick="setAdminEvalItem(8,'중')">중</span>
+          <span class="tb-status" id="aeval-8-low" onclick="setAdminEvalItem(8,'하')">하</span>
+        </div>
+      </div>      <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
+        <div style="flex:1;font-size:13px;line-height:1.4">10. 학원에 협조적인가</div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <span class="tb-status" id="aeval-9-high" onclick="setAdminEvalItem(9,'상')">상</span>
+          <span class="tb-status" id="aeval-9-mid" onclick="setAdminEvalItem(9,'중')">중</span>
+          <span class="tb-status" id="aeval-9-low" onclick="setAdminEvalItem(9,'하')">하</span>
+        </div>
+      </div>
+    </div>
+    <div style="background:var(--acc-l);border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
+      <div style="font-size:11px;color:var(--t2);margin-bottom:4px">관리자 평가 점수</div>
+      <div id="aeval-score-preview" style="font-size:24px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace">—</div>
+      <div style="font-size:10px;color:var(--t3);margin-top:2px">상=100점 / 중=60점 / 하=30점 평균</div>
+    </div>
+    <button class="btn" onclick="saveAdminEval()">저장</button>
+    <button class="btn ghost" onclick="closeModal('ov-admin-eval')">닫기</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -845,6 +933,67 @@ function getEvalScore(tName) {
   return (t && t.evalTotal !== undefined) ? t.evalTotal : null;
 }
 
+
+// ═══ 관리자 평가 (원장 전용) ═══
+var currentAdminEvalData = {};
+var ADMIN_EVAL_ITEMS = [
+  '솔선수범이 되는가','관리자로서 형평성을 가지고 있는가',
+  '학원을 위하는 자세가 있는가','일의 지시가 명확한가',
+  '일의 수행이 원만하게 되는가','팀에 대한 능동적인 설계가 있는가',
+  '퇴원에 대한 인식과 대책이 있는가','일의 분배를 잘 하고 있는가',
+  '다음 관리자를 양성하고 있는가','학원에 협조적인가'
+];
+
+function openAdminEval() {
+  // 기존 평가 로드
+  currentAdminEvalData = DB.cfg.adminEvalScores ? Object.assign({}, DB.cfg.adminEvalScores) : {};
+  for(var i=0; i<10; i++) updateAdminEvalItemUI(i);
+  updateAdminEvalScorePreview();
+  openModal('ov-admin-eval');
+}
+
+function setAdminEvalItem(idx, val) {
+  currentAdminEvalData[idx] = currentAdminEvalData[idx] === val ? '' : val;
+  updateAdminEvalItemUI(idx);
+  updateAdminEvalScorePreview();
+}
+
+function updateAdminEvalItemUI(idx) {
+  var val = currentAdminEvalData[idx] || '';
+  var h = document.getElementById('aeval-'+idx+'-high');
+  var m = document.getElementById('aeval-'+idx+'-mid');
+  var l = document.getElementById('aeval-'+idx+'-low');
+  if(!h||!m||!l) return;
+  h.className = 'tb-status '+(val==='상'?'tb-high':'tb-none');
+  m.className = 'tb-status '+(val==='중'?'tb-mid':'tb-none');
+  l.className = 'tb-status '+(val==='하'?'tb-low':'tb-none');
+}
+
+function calcAdminEvalScore(evalData, itemCount) {
+  var scores = [];
+  for(var i=0; i<itemCount; i++) {
+    var sc = evalToScore(evalData[i]);
+    if(sc !== null) scores.push(sc);
+  }
+  return scores.length ? Math.round(scores.reduce(function(a,b){return a+b;},0)/scores.length) : 0;
+}
+
+function updateAdminEvalScorePreview() {
+  var score = calcAdminEvalScore(currentAdminEvalData, 10);
+  var el = document.getElementById('aeval-score-preview');
+  if(el) el.textContent = Object.keys(currentAdminEvalData).filter(function(k){return currentAdminEvalData[k];}).length > 0 ? score+'점' : '—';
+}
+
+function saveAdminEval() {
+  DB.cfg.adminEvalScores = Object.assign({}, currentAdminEvalData);
+  DB.cfg.adminEvalTotal = calcAdminEvalScore(currentAdminEvalData, 10);
+  DB.cfg.adminEvalDate = today();
+  saveAll();
+  closeModal('ov-admin-eval');
+  toast('👔 관리자 평가가 저장됐어요 ✓');
+  renderAdminHome();
+}
+
 function setRankTab(tab) {
   rankTab = tab;
   if(tab==='homework'&&!hwData){toast('과제 데이터 불러오는 중...');loadHwData(function(){renderAdminHome();});}
@@ -864,6 +1013,7 @@ function renderAdminHome() {
      + '<span style="font-size:13px;font-weight:600;flex:1">관리자</span>'
      + '<span style="font-size:11px;color:var(--t2)">'+(ME.role==='owner'?'원장':'관리자')+'</span>'
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-left:6px">🔔</button>'
+     + (ME.role==='owner'?'<button onclick="openAdminEval()" style="font-size:11px;color:var(--pu);background:none;border:none;cursor:pointer;margin-left:6px">👔 관리자평가</button>':'')
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>';
 
@@ -890,6 +1040,22 @@ function renderAdminHome() {
     h += '<div class="card"><div class="ct">과목별 진도율</div>'
        + '<div class="chart">'+bars+'</div>'
        + '<div style="text-align:right;font-size:11px;color:var(--t2);margin-top:4px">전체 평균 '+avgR+'%</div></div>';
+  }
+
+  // 원장: 관리자 평가 현황 카드
+  if(ME.role==='owner') {
+    var aes = DB.cfg.adminEvalTotal;
+    var aed = DB.cfg.adminEvalDate;
+    h += '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">'
+       + '<div>'
+         + '<div style="font-size:11px;color:var(--t2);margin-bottom:3px">👔 관리자 평가</div>'
+         + '<div style="font-size:13px;color:var(--t3)">'+(aed?aed+' 평가':'아직 평가 없음')+'</div>'
+       + '</div>'
+       + '<div style="display:flex;align-items:center;gap:10px">'
+         + (aes!==undefined?'<span style="font-size:24px;font-weight:800;color:var(--pu);font-family:DM Mono,monospace">'+aes+'점</span>':'')
+         + '<button onclick="openAdminEval()" style="font-size:12px;color:var(--pu);background:var(--s2);border:1px solid var(--pu);border-radius:var(--rs);padding:6px 12px;cursor:pointer">'+(aes!==undefined?'재평가':'평가하기')+'</button>'
+       + '</div>'
+       + '</div>';
   }
 
   // ── 강사 순위
