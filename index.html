@@ -560,7 +560,8 @@ var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
 var cFilter = 'all';
 var teacherFilter = ''; // 강사 필터 (전체 탭 공통)
-var rankTab = 'progress'; // 순위 기준: progress | consult | students | homework
+var rankTab = 'progress';
+var hwData = null; // 순위 기준: progress | consult | students | homework
 var hwData = null;
 var suTeachers = [];
 var fgRole2 = null, fgTIdx = -1;
@@ -792,6 +793,29 @@ function renderAdminHome() {
   document.getElementById('home-body').innerHTML = h;
 }
 
+
+function calcMyRank(myName) {
+  var T = DB.cfg.teachers;
+  if (!T || T.length < 2) return null;
+  var scores = T.map(function(t) {
+    var tS = DB.subj.filter(function(s){ return s.teacher===t.name; });
+    var tSt = DB.stu.filter(function(s){ return s.teacher===t.name; });
+    var tR = tS.map(calcRate);
+    var progressAvg = tR.length ? tR.reduce(function(a,b){return a+b;},0)/tR.length : 0;
+    var consultDone = tSt.filter(function(s){ return cSt(s).lv==='ok'; }).length;
+    var consultRate = tSt.length ? consultDone/tSt.length*100 : 0;
+    var hwRate = (typeof calcHwRate==='function') ? calcHwRate(t.name, tSt) : 0;
+    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate};
+  });
+  var maxStu = Math.max.apply(null, scores.map(function(s){ return s.studentCount; }).concat([1]));
+  scores.forEach(function(s) {
+    s.total = (s.progressAvg + s.consultRate + (s.studentCount/maxStu*100)*1.5 + s.hwRate) / 4.5;
+  });
+  scores.sort(function(a,b){ return b.total - a.total; });
+  var myRank = scores.findIndex(function(s){ return s.name===myName; }) + 1;
+  var myScore = scores.find(function(s){ return s.name===myName; });
+  return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0};
+}
 function renderTeacherHome() {
   var mySu = mySubj(), mySt = myStu();
   var rates = mySu.map(calcRate);
@@ -812,6 +836,35 @@ function renderTeacherHome() {
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-left:6px">🔔</button>'
      + '<button onclick="logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>';
+  // 종합 순위 카드
+  var rankInfo = calcMyRank(ME.name);
+  if (rankInfo && rankInfo.total >= 2) {
+    var rColor = rankInfo.rank===1?'#c07800':rankInfo.rank===2?'#3a6a8a':rankInfo.rank===3?'#c09060':'var(--acc)';
+    var rEmoji = rankInfo.rank===1?'🥇':rankInfo.rank===2?'🥈':rankInfo.rank===3?'🥉':'🏅';
+    h += '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:14px 16px;margin-bottom:12px">'
+       + '<div style="display:flex;align-items:center;gap:12px">'
+       + '<div style="width:46px;height:46px;border-radius:50%;background:var(--acc-l);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">'+rEmoji+'</div>'
+       + '<div style="flex:1">'
+         + '<div style="font-size:11px;color:var(--t2);margin-bottom:3px">전체 강사 종합 순위</div>'
+         + '<div style="display:flex;align-items:baseline;gap:6px">'
+           + '<span style="font-size:22px;font-weight:800;color:'+rColor+';font-family:DM Mono,monospace">'+rankInfo.rank+'위</span>'
+           + '<span style="font-size:13px;color:var(--t2)">/ '+rankInfo.total+'명 중</span>'
+           + '<span style="font-size:13px;font-weight:700;color:'+rColor+'">(상위 '+rankInfo.pct+'%)</span>'
+         + '</div>'
+       + '</div>'
+       + '<div style="text-align:right">'
+         + '<div style="font-size:10px;color:var(--t3);margin-bottom:2px">종합점수</div>'
+         + '<div style="font-size:18px;font-weight:700;font-family:DM Mono,monospace">'+rankInfo.score+'</div>'
+       + '</div>'
+       + '</div>'
+       + '<div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">'
+       + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">📈 진도 ×1</span>'
+       + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">💬 상담 ×1</span>'
+       + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">👥 학생 ×1.5</span>'
+       + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">📝 과제 ×1</span>'
+       + '</div>'
+       + '</div>';
+  }
 
   // 통계
   h += '<div class="sg3">'
