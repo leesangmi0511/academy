@@ -410,6 +410,13 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
       <div class="pr"><span class="pk">하루 목표</span><span class="pv" id="pv-dy" style="color:var(--am)"></span></div>
       <div id="pv-pace" style="display:none;margin-top:7px;padding:7px 10px;border-radius:var(--rs);font-size:12px"></div>
     </div>
+    <div style="margin-top:10px;padding:12px;background:var(--s2);border-radius:var(--rs);border:1px solid var(--s3)">
+      <div style="font-size:11px;color:var(--acc);font-weight:600;margin-bottom:10px">📚 과제 앱 연동 (선택)</div>
+      <label class="fl">소단원명</label>
+      <input class="fi" id="pi-lesson" placeholder="예: 1-1 자연수의 덧셈" style="margin-bottom:8px">
+      <label class="fl">페이지 범위</label>
+      <input class="fi" id="pi-pages" placeholder="예: 10~15p" style="margin-bottom:0">
+    </div>
     <label class="fl">메모</label><input class="fi" id="pi-note" placeholder="오늘 수업 내용 (선택)">
     <button class="btn" onclick="doSaveProgress()">저장</button>
     <button class="btn ghost" onclick="closeModal('ov-proginput')">취소</button>
@@ -804,18 +811,21 @@ function calcMyRank(myName) {
     var progressAvg = tR.length ? tR.reduce(function(a,b){return a+b;},0)/tR.length : 0;
     var consultDone = tSt.filter(function(s){ return cSt(s).lv==='ok'; }).length;
     var consultRate = tSt.length ? consultDone/tSt.length*100 : 0;
+    var studentCount = tSt.length;
     var hwRate = (typeof calcHwRate==='function') ? calcHwRate(t.name, tSt) : 0;
-    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate};
+    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate};
   });
   var maxStu = Math.max.apply(null, scores.map(function(s){ return s.studentCount; }).concat([1]));
   scores.forEach(function(s) {
-    s.total = (s.progressAvg + s.consultRate + (s.studentCount/maxStu*100)*1.5 + s.hwRate) / 4.5;
+    var stuScore = s.studentCount / maxStu * 100;
+    s.total = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1) / 4.5;
   });
   scores.sort(function(a,b){ return b.total - a.total; });
   var myRank = scores.findIndex(function(s){ return s.name===myName; }) + 1;
   var myScore = scores.find(function(s){ return s.name===myName; });
   return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0};
 }
+
 function renderTeacherHome() {
   var mySu = mySubj(), mySt = myStu();
   var rates = mySu.map(calcRate);
@@ -841,6 +851,7 @@ function renderTeacherHome() {
   if (rankInfo && rankInfo.total >= 2) {
     var rColor = rankInfo.rank===1?'#c07800':rankInfo.rank===2?'#3a6a8a':rankInfo.rank===3?'#c09060':'var(--acc)';
     var rEmoji = rankInfo.rank===1?'🥇':rankInfo.rank===2?'🥈':rankInfo.rank===3?'🥉':'🏅';
+    var pctLabel = '상위 '+rankInfo.pct+'%';
     h += '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:14px 16px;margin-bottom:12px">'
        + '<div style="display:flex;align-items:center;gap:12px">'
        + '<div style="width:46px;height:46px;border-radius:50%;background:var(--acc-l);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">'+rEmoji+'</div>'
@@ -849,12 +860,12 @@ function renderTeacherHome() {
          + '<div style="display:flex;align-items:baseline;gap:6px">'
            + '<span style="font-size:22px;font-weight:800;color:'+rColor+';font-family:DM Mono,monospace">'+rankInfo.rank+'위</span>'
            + '<span style="font-size:13px;color:var(--t2)">/ '+rankInfo.total+'명 중</span>'
-           + '<span style="font-size:13px;font-weight:700;color:'+rColor+'">(상위 '+rankInfo.pct+'%)</span>'
+           + '<span style="font-size:13px;font-weight:700;color:'+rColor+'">( '+pctLabel+' )</span>'
          + '</div>'
        + '</div>'
        + '<div style="text-align:right">'
          + '<div style="font-size:10px;color:var(--t3);margin-bottom:2px">종합점수</div>'
-         + '<div style="font-size:18px;font-weight:700;font-family:DM Mono,monospace">'+rankInfo.score+'</div>'
+         + '<div style="font-size:18px;font-weight:700;color:var(--te);font-family:DM Mono,monospace">'+rankInfo.score+'</div>'
        + '</div>'
        + '</div>'
        + '<div style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap">'
@@ -865,6 +876,8 @@ function renderTeacherHome() {
        + '</div>'
        + '</div>';
   }
+
+
 
   // 통계
   h += '<div class="sg3">'
@@ -1101,6 +1114,8 @@ function openProgInput(gi) {
   document.getElementById('pi-idx').value=gi;
   document.getElementById('pi-page').value='';
   document.getElementById('pi-note').value='';
+  document.getElementById('pi-lesson').value='';
+  document.getElementById('pi-pages').value='';
   document.getElementById('pi-prev').style.display='none';
   openModal('ov-proginput');
 }
@@ -1133,10 +1148,115 @@ function doSaveProgress() {
   if(page>s.totalPages){toast('전체 페이지를 초과했어요','var(--rd)');return;}
   if(!s.history) s.history=[];
   var n=new Date();
-  s.history.push({page:page,note:document.getElementById('pi-note').value.trim(),date:today(),time:n.getHours()+':'+String(n.getMinutes()).padStart(2,'0'),teacher:ME?ME.name:''});
+  var lessonName=document.getElementById('pi-lesson').value.trim();
+  var pagesRange=document.getElementById('pi-pages').value.trim();
+  s.history.push({page:page,note:document.getElementById('pi-note').value.trim(),date:today(),time:n.getHours()+':'+String(n.getMinutes()).padStart(2,'0'),teacher:ME?ME.name:'',lesson:lessonName,pagesRange:pagesRange});
   s.currentPage=page;
   saveAll();closeModal('ov-proginput');toast('진도 저장 완료 ✓');
   renderProgress();renderHome();
+  // 소단원명이 있으면 과제 앱에 연동
+  if(lessonName) {
+    syncProgressToHwApp(s, lessonName, pagesRange);
+  }
+}
+
+// ═══ 과제 앱 진도 연동 ═══
+var HW_PROJ = "rt-hw-app";
+var HW_KEY2 = "AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU";
+var HW_BASE = "https://firestore.googleapis.com/v1/projects/"+HW_PROJ+"/databases/(default)/documents";
+
+function syncProgressToHwApp(subj, lessonName, pagesRange) {
+  // 1. 과제앱 데이터 로드
+  fetch(HW_BASE+"/appData/main?key="+HW_KEY2)
+  .then(function(r){return r.json();})
+  .then(function(doc){
+    if(!doc.fields) return;
+
+    // 과제앱에서 과목명과 동일한 교재 찾기
+    var textbooks = (doc.fields.textbooks&&doc.fields.textbooks.arrayValue&&doc.fields.textbooks.arrayValue.values)||[];
+    var matchTb = null;
+    textbooks.forEach(function(tb){
+      var f=tb.mapValue&&tb.mapValue.fields;
+      if(f&&f.name&&f.name.stringValue===subj.name) matchTb=f;
+    });
+
+    if(!matchTb) {
+      toast('과제앱에 "'+subj.name+'" 교재가 없어요. 교재명을 맞춰주세요.','var(--am)');
+      return;
+    }
+
+    var tbId = matchTb.id.stringValue;
+    var tbChapters = (matchTb.chapters&&matchTb.chapters.arrayValue&&matchTb.chapters.arrayValue.values)||[];
+
+    // 새 레슨 ID 생성 (날짜 기반)
+    var lessonId = 'ls_'+Date.now();
+    var chId = 'ch_'+today().replace(/-/g,'');
+
+    // 기존 curriculum에서 이 교재 항목 찾기
+    var curriculum = (doc.fields.curriculum&&doc.fields.curriculum.arrayValue&&doc.fields.curriculum.arrayValue.values)||[];
+
+    // 강사 ID 찾기 (과제앱 users에서 이름으로 찾기)
+    var hwUsers = (doc.fields.users&&doc.fields.users.arrayValue&&doc.fields.users.arrayValue.values)||[];
+    var instId = 'inst1'; // 기본값
+    if(ME) {
+      var hwMe = hwUsers.find(function(u){
+        var f=u.mapValue&&u.mapValue.fields;
+        return f&&f.name&&f.name.stringValue===ME.name;
+      });
+      if(hwMe&&hwMe.mapValue.fields.id) instId=hwMe.mapValue.fields.id.stringValue;
+    }
+
+    // 학생이 속한 반 찾기 (subj.name 기반)
+    var classId = subj.name; // 과목명 = 반 이름으로 사용
+
+    // curriculum 키: instId__classId__tbId
+    var currKey = instId+'__'+classId+'__'+tbId;
+    var existCurr = curriculum.find(function(c){
+      var f=c.mapValue&&c.mapValue.fields;
+      return f&&f.key&&f.key.stringValue===currKey;
+    });
+
+    // 새 레슨 항목
+    var newLesson = {
+      mapValue:{fields:{
+        lessonId:{stringValue:chId+'__'+lessonId},
+        date:{stringValue:today()},
+        lessonName:{stringValue:lessonName},
+        pages:{stringValue:pagesRange||''}
+      }}
+    };
+
+    var updatedCurriculum;
+    if(existCurr) {
+      // 기존 curriculum에 레슨 추가
+      var existLessons = (existCurr.mapValue.fields.lessons&&existCurr.mapValue.fields.lessons.arrayValue&&existCurr.mapValue.fields.lessons.arrayValue.values)||[];
+      existCurr.mapValue.fields.lessons = {arrayValue:{values:[...existLessons, newLesson]}};
+      updatedCurriculum = curriculum;
+    } else {
+      // 새 curriculum 항목 추가
+      var newCurr = {mapValue:{fields:{
+        key:{stringValue:currKey},
+        lessons:{arrayValue:{values:[newLesson]}}
+      }}};
+      updatedCurriculum = [...curriculum, newCurr];
+    }
+
+    // 2. Firestore PATCH로 curriculum 업데이트
+    var body = {fields: {}};
+    // 기존 필드 모두 유지
+    Object.keys(doc.fields).forEach(function(k){ body.fields[k]=doc.fields[k]; });
+    // curriculum만 교체
+    body.fields.curriculum = {arrayValue:{values:updatedCurriculum}};
+    body.fields.lastUpdated = {stringValue:new Date().toISOString()};
+
+    return fetch(HW_BASE+"/appData/main?key="+HW_KEY2, {
+      method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+  })
+  .then(function(r){ if(r&&r.ok) toast('과제 앱에도 반영됐어요 ✓'); })
+  .catch(function(e){ console.warn('HW sync failed:',e); });
 }
 
 // ═══════════════════════════════════════
