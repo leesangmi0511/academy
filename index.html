@@ -560,7 +560,8 @@ var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
 var cFilter = 'all';
 var teacherFilter = ''; // 강사 필터 (전체 탭 공통)
-var rankTab = 'progress'; // 순위 기준: progress | consult | students
+var rankTab = 'progress'; // 순위 기준: progress | consult | students | homework
+var hwData = null;
 var suTeachers = [];
 var fgRole2 = null, fgTIdx = -1;
 var saveTimer = null;
@@ -660,9 +661,15 @@ function setTFilter(name) {
   else if (curTab==='progress') renderProgress();
   else if (curTab==='consult') renderConsult();
 }
+
+var HW_API='https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(default)/documents/appData/main';
+var HW_KEY='AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
+function loadHwData(cb){if(hwData){if(cb)cb(hwData);return;}fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
+function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var sp=hwData.fields.studentProgress;if(!sp||!sp.mapValue||!sp.mapValue.fields)return 0;var spFields=sp.mapValue.fields;if(!stuList||!stuList.length)return 0;var totalDone=0,totalAll=0;var hwUsers=hwData.fields.users?hwData.fields.users.arrayValue.values||[]:[];stuList.forEach(function(stu){var hwUser=hwUsers.find(function(u){var f=u.mapValue?u.mapValue.fields:null;return f&&(f.name?f.name.stringValue:'')===stu.name;});if(!hwUser)return;var hwId=(hwUser.mapValue.fields.id||{}).stringValue||'';if(!hwId||!spFields[hwId])return;var stuSp=spFields[hwId].mapValue?spFields[hwId].mapValue.fields:null;if(!stuSp)return;Object.keys(stuSp).forEach(function(key){var vals=stuSp[key].arrayValue?stuSp[key].arrayValue.values||[]:[];totalAll++;if(vals.filter(function(v){return v.stringValue&&v.stringValue!=='t0';}).length>0)totalDone++;});});return totalAll>0?Math.round(totalDone/totalAll*100):0;}
 function setRankTab(tab) {
   rankTab = tab;
-  renderAdminHome();
+  if(tab==='homework'&&!hwData){toast('과제 데이터 불러오는 중...');loadHwData(function(){renderAdminHome();});}
+  else{renderAdminHome();}
 }
 
 function renderAdminHome() {
@@ -708,7 +715,7 @@ function renderAdminHome() {
 
   // ── 강사 순위
   h += '<div class="sl2"><div class="d8" style="background:var(--pu)"></div>강사 순위 🏆</div>';
-  h += '<div class="rank-tab-row">'     + '<div class="rank-tab'+(rankTab==='progress'?' on':'')+'" onclick="setRankTab(\'progress\')">📈 진도율</div>'     + '<div class="rank-tab'+(rankTab==='consult'?' on':'')+'" onclick="setRankTab(\'consult\')">💬 상담완료율</div>'     + '<div class="rank-tab'+(rankTab==='students'?' on':'')+'" onclick="setRankTab(\'students\')">👥 담당학생</div>'     + '</div>';
+  h += '<div class="rank-tab-row">'     + '<div class="rank-tab'+(rankTab==='progress'?' on':'')+'" onclick="setRankTab(\'progress\')">📈 진도율</div>'     + '<div class="rank-tab'+(rankTab==='consult'?' on':'')+'" onclick="setRankTab(\'consult\')">💬 상담완료율</div>'     + '<div class="rank-tab'+(rankTab==='students'?' on':'')+'" onclick="setRankTab(\'students\')">👥 담당학생</div>'     + '<div class="rank-tab'+(rankTab==='homework'?' on':'')+'" onclick="setRankTab(\'homework\')">📝 과제완료율</div>'     + '</div>';
   if (!T.length) {
     h += '<div class="empty">강사가 없어요.</div>';
   } else {
@@ -720,24 +727,27 @@ function renderAdminHome() {
       var progressAvg = tR.length ? Math.round(tR.reduce(function(a,b){return a+b;},0)/tR.length) : 0;
       var consultDone = tSt.filter(function(s){return cSt(s).lv==='ok';}).length;
       var consultRate = tSt.length ? Math.round(consultDone/tSt.length*100) : 0;
-      return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length};
+      var hwRate = calcHwRate(t.name, tSt);
+      return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate};
     });
     // 기준별 정렬
     var sorted = tData.slice().sort(function(a,b){
       if(rankTab==='progress') return b.progressAvg - a.progressAvg;
       if(rankTab==='consult') return b.consultRate - a.consultRate;
+      if(rankTab==='homework') return b.hwRate - a.hwRate;
       return b.studentCount - a.studentCount;
     });
     // 최대값 (막대 비율 계산)
     var maxVal = Math.max.apply(null, sorted.map(function(t){
       if(rankTab==='progress') return t.progressAvg;
       if(rankTab==='consult') return t.consultRate;
+      if(rankTab==='homework') return t.hwRate;
       return t.studentCount;
     }).concat([1]));
     var medals = ['🥇','🥈','🥉'];
     var rankColors = ['#f5a623','#7b84aa','#c09060'];
     sorted.forEach(function(t, rank) {
-      var val = rankTab==='progress' ? t.progressAvg : rankTab==='consult' ? t.consultRate : t.studentCount;
+      var val = rankTab==='progress' ? t.progressAvg : rankTab==='consult' ? t.consultRate : rankTab==='homework' ? t.hwRate : t.studentCount;
       var unit = rankTab==='students' ? '명' : '%';
       var barColor = rank===0?'var(--am)':rank===1?'var(--t2)':'var(--t3)';
       var numBg = rank===0?'var(--aml)':rank===1?'var(--s2)':'var(--s2)';
