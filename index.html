@@ -311,7 +311,8 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <input class="fi" id="li-opw" type="password" placeholder="원장 비밀번호">
   </div>
   <div id="lf-admin">
-    <input class="fi" id="li-apw" type="password" placeholder="관리자 비밀번호">
+    <input class="fi" id="li-aid" placeholder="관리자 아이디 (이름)">
+    <input class="fi" id="li-apw" type="password" placeholder="비밀번호">
   </div>
   <div id="lf-teacher" style="display:none">
     <input class="fi" id="li-tid" placeholder="강사 아이디 (한글 이름)">
@@ -761,13 +762,24 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 관리자 명단 모달 (원장 전용) -->
+<div class="ov" id="ov-admin-list" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">👔 관리자 명단 관리</div>
+    <div style="font-size:12px;color:var(--t2);margin-bottom:12px">원장 전용 · 관리자 계정을 추가/삭제할 수 있어요</div>
+    <div id="admin-list-body"></div>
+    <button class="btn sm" style="margin-bottom:12px;width:100%" onclick="addAdminToList()">+ 관리자 추가</button>
+    <button class="btn ghost" onclick="closeModal('ov-admin-list')">닫기</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 // ═══════════════════════════════════════
 // 데이터
 // ═══════════════════════════════════════
-var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',teachers:[]}, subj:[], stu:[], evalHistory:{} };
+var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',admins:[],teachers:[]}, subj:[], stu:[], evalHistory:{} };
 var ME = null; // {role:'admin'|'teacher', name:string}
 var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
@@ -901,6 +913,74 @@ var EVAL_ITEMS = [
 function getYearMonth() {
   var now = new Date();
   return now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+}
+
+
+// ═══ 관리자 명단 관리 (원장 전용) ═══
+function openAdminList() {
+  renderAdminListBody();
+  openModal('ov-admin-list');
+}
+
+function renderAdminListBody() {
+  var admins = DB.cfg.admins || [];
+  var h = '';
+  if(!admins.length) {
+    h = '<div style="text-align:center;color:var(--t3);font-size:13px;padding:12px 0;margin-bottom:12px">등록된 관리자가 없어요.<br>추가 버튼으로 관리자를 등록하세요.</div>';
+  } else {
+    admins.forEach(function(a, i) {
+      h += '<div style="background:var(--s2);border-radius:var(--rs);padding:12px;margin-bottom:8px">'
+         + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+           + '<div style="width:32px;height:32px;border-radius:50%;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">'+a.name.slice(0,1)+'</div>'
+           + '<div style="flex:1">'
+             + '<div style="font-size:14px;font-weight:600">'+a.name+'</div>'
+             + '<div style="font-size:11px;color:var(--t3)">등록일: '+(a.date||'—')+'</div>'
+           + '</div>'
+           + '<button onclick="deleteAdmin('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:18px;padding:4px">✕</button>'
+         + '</div>'
+         + '<div style="display:flex;gap:8px">'
+           + '<input class="fi" style="flex:1;margin-bottom:0;font-size:12px" type="password" id="admin-pw-'+i+'" placeholder="새 비밀번호 입력" value="">'
+           + '<button onclick="changeAdminPw('+i+')" style="font-size:11px;color:var(--acc);background:var(--acc-l);border:1px solid var(--acc);border-radius:var(--rs);padding:6px 10px;cursor:pointer;white-space:nowrap">변경</button>'
+         + '</div>'
+         + '</div>';
+    });
+  }
+  document.getElementById('admin-list-body').innerHTML = h;
+}
+
+function addAdminToList() {
+  var name = prompt('관리자 이름(아이디)을 입력하세요:');
+  if(!name || !name.trim()) return;
+  name = name.trim();
+  if(!DB.cfg.admins) DB.cfg.admins = [];
+  if(DB.cfg.admins.find(function(a){return a.name===name;})) {
+    toast('이미 등록된 이름이에요','var(--rd)'); return;
+  }
+  DB.cfg.admins.push({name:name, pw:'7193455', date:today()});
+  saveAll();
+  renderAdminListBody();
+  toast('관리자 '+name+' 추가됐어요 ✓');
+}
+
+function deleteAdmin(idx) {
+  var a = DB.cfg.admins[idx];
+  if(!a) return;
+  if(!confirm(a.name+' 관리자를 삭제할까요?')) return;
+  DB.cfg.admins.splice(idx, 1);
+  saveAll();
+  renderAdminListBody();
+  toast('관리자 삭제됐어요');
+}
+
+function changeAdminPw(idx) {
+  var a = DB.cfg.admins[idx];
+  if(!a) return;
+  var pw = document.getElementById('admin-pw-'+idx).value;
+  if(!pw) {toast('새 비밀번호를 입력하세요','var(--rd)'); return;}
+  DB.cfg.admins[idx].pw = pw;
+  saveAll();
+  document.getElementById('admin-pw-'+idx).value='';
+  toast(a.name+' 비밀번호 변경됐어요 ✓');
 }
 
 function openEvalPeriod() {
@@ -1193,7 +1273,7 @@ function renderAdminHome() {
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>';
 
   // 통계
@@ -2012,9 +2092,23 @@ function doLogin() {
     if(document.getElementById('li-opw').value!==ownerPw){err.textContent='비밀번호가 틀렸습니다.';return;}
     ME={role:'owner',name:'원장'};
   } else if(loginRole==='admin'){
-    if(!DB.cfg.adminPw){err.textContent='먼저 초기 설정을 완료하세요.';return;}
-    if(document.getElementById('li-apw').value!==DB.cfg.adminPw){err.textContent='비밀번호가 틀렸습니다.';return;}
-    ME={role:'admin',name:'관리자'};
+    var aid = document.getElementById('li-aid').value.trim();
+    var apw = document.getElementById('li-apw').value;
+    if(!aid){err.textContent='아이디를 입력하세요.';return;}
+    if(!apw){err.textContent='비밀번호를 입력하세요.';return;}
+    // 관리자 명단에서 찾기
+    var admins = DB.cfg.admins||[];
+    var foundAdmin = admins.find(function(a){return a.name===aid;});
+    if(foundAdmin){
+      if(foundAdmin.pw!==apw){err.textContent='비밀번호가 틀렸습니다.';return;}
+      ME={role:'admin',name:foundAdmin.name};
+    } else {
+      // 기존 단일 관리자 계정 (하위 호환)
+      if(!DB.cfg.adminPw){err.textContent='먼저 초기 설정을 완료하세요.';return;}
+      if(aid!=='관리자'&&admins.length>0){err.textContent='존재하지 않는 아이디입니다.';return;}
+      if(apw!==DB.cfg.adminPw){err.textContent='비밀번호가 틀렸습니다.';return;}
+      ME={role:'admin',name:'관리자'};
+    }
   } else {
     var name=document.getElementById('li-tid').value.trim();
     var pw=document.getElementById('li-tpw').value;
@@ -2036,6 +2130,7 @@ function logout() {
   ME=null;
   document.getElementById('login').style.display='flex';
   document.getElementById('li-opw').value='';
+  document.getElementById('li-aid').value='';
   document.getElementById('li-apw').value='';
   document.getElementById('li-tid').value='';
   document.getElementById('li-tpw').value='';
@@ -2434,10 +2529,11 @@ _loadFirebase().then(function() {
   function setFbSt(msg,color){var el=document.getElementById('fb-status');if(el){el.textContent=msg;el.style.color=color||'var(--t3)';}}
   function applyDB(d) {
     if(d&&d.cfg){
-      DB.cfg=d.cfg;DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};
+      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
-      DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","teachers":[]}')
+      DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","admins":[],"teachers":[]}')
+      if(!DB.cfg.admins) DB.cfg.admins=[]
       DB.evalHistory=JSON.parse(localStorage.getItem('ac_evalHistory')||'{}');
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
       DB.stu=JSON.parse(localStorage.getItem('ac_stu')||'[]');
