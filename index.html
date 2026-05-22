@@ -303,20 +303,24 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   <div style="font-family:'DM Mono',monospace;font-size:26px;font-weight:500;letter-spacing:1px;margin-bottom:4px">ROUTE<span style="color:var(--acc)">TOP</span></div>
   <div style="font-size:11px;color:var(--t3);letter-spacing:3px;margin-bottom:28px">ACADEMY</div>
   <div class="role-tabs">
+    <div class="role-tab" id="rtab-owner" onclick="selRole('owner')">원장</div>
     <div class="role-tab on" id="rtab-admin" onclick="selRole('admin')">관리자</div>
     <div class="role-tab" id="rtab-teacher" onclick="selRole('teacher')">강사</div>
+  </div>
+  <div id="lf-owner" style="display:none">
+    <input class="fi" id="li-opw" type="password" placeholder="원장 비밀번호">
   </div>
   <div id="lf-admin">
     <input class="fi" id="li-apw" type="password" placeholder="관리자 비밀번호">
   </div>
   <div id="lf-teacher" style="display:none">
-    <select class="fs" id="li-tsel"><option value="">강사 선택...</option></select>
+    <input class="fi" id="li-tid" placeholder="강사 아이디 (한글 이름)">
     <input class="fi" id="li-tpw" type="password" placeholder="비밀번호">
   </div>
   <button class="btn" onclick="doLogin()">로그인</button>
   <div id="li-err" style="font-size:12px;color:var(--rd);text-align:center;min-height:18px;margin-bottom:8px"></div>
   <div style="display:flex;flex-direction:column;gap:8px;align-items:center;margin-top:8px">
-    <button style="background:none;border:none;color:var(--t2);font-size:12px;cursor:pointer;font-family:'Noto Sans KR',sans-serif" onclick="openModal('ov-setup')">처음 사용 / 계정 설정</button>
+    <button style="background:none;border:none;color:var(--t2);font-size:12px;cursor:pointer;font-family:'Noto Sans KR',sans-serif" onclick="openSetupModal()">처음 사용 / 계정 설정</button>
     <button style="background:none;border:none;color:var(--acc);font-size:12px;cursor:pointer;font-family:'Noto Sans KR',sans-serif" onclick="openForgot()">비밀번호를 잊으셨나요?</button>
     <button id="btn-reset" style="display:none;background:none;border:none;color:var(--rd);font-size:12px;cursor:pointer;font-family:'Noto Sans KR',sans-serif" onclick="doReset()">⚠ 데이터 초기화 (관리자 전용)</button>
   </div>
@@ -475,7 +479,12 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
         <button class="btn sm" style="width:auto;padding:10px 14px;flex-shrink:0" onclick="saveMgrPhone()">저장</button>
       </div>
       <div id="mgr-phone-st" style="font-size:11px;color:var(--t3);min-height:16px;margin-bottom:10px"></div>
-      <label class="fl">관리자 비밀번호 변경</label>
+      <div id="owner-pw-section" style="display:none">
+    <label class="fl">원장 비밀번호 변경</label>
+    <input class="fi" id="owner-pw-input" type="password" placeholder="새 원장 비밀번호">
+    <button class="btn sm" style="margin-bottom:12px" onclick="saveOwnerPw()">원장 비밀번호 저장</button>
+    </div>
+    <label class="fl">관리자 비밀번호 변경</label>
       <input class="fi" id="mgr-pw1" type="password" placeholder="새 비밀번호" style="margin-bottom:6px">
       <input class="fi" id="mgr-pw2" type="password" placeholder="새 비밀번호 확인">
       <div id="mgr-pw-st" style="font-size:11px;color:var(--t3);min-height:16px;margin-bottom:6px"></div>
@@ -570,7 +579,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 // ═══════════════════════════════════════
 // 데이터
 // ═══════════════════════════════════════
-var DB = { cfg:{adminPw:'',adminPhone:'',teachers:[]}, subj:[], stu:[] };
+var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',teachers:[]}, subj:[], stu:[] };
 var ME = null; // {role:'admin'|'teacher', name:string}
 var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
@@ -627,8 +636,8 @@ function cSt(s) {
 function stC(l)  { return l==='urgent' ? 'var(--rd)' : l==='upcoming' ? 'var(--am)' : 'var(--g)'; }
 function stBg(l) { return l==='urgent' ? 'var(--rdl)' : l==='upcoming' ? 'var(--aml)' : 'var(--gl)'; }
 function stI(l)  { return l==='urgent' ? '⚠' : l==='upcoming' ? '◷' : '✓'; }
-function mySubj() { return ME && ME.role==='admin' ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
-function myStu()  { return ME && ME.role==='admin' ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
+function mySubj() { return ME && (ME.role==='admin'||ME.role==='owner') ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
+function myStu()  { return ME && (ME.role==='admin'||ME.role==='owner') ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
 function gSI(s)  { return DB.subj.indexOf(s); }
 function gStI(s) { return DB.stu.indexOf(s); }
 
@@ -656,7 +665,7 @@ function goBack() { goTab(prevTab); }
 // ═══════════════════════════════════════
 function renderHome() {
   if (!ME) return;
-  if (ME.role === 'admin') renderAdminHome();
+  if (ME.role === 'owner' || ME.role === 'admin') renderAdminHome();
   else renderTeacherHome();
 }
 
@@ -700,7 +709,7 @@ function renderAdminHome() {
   h += '<div class="ubadge">'
      + '<div style="width:28px;height:28px;border-radius:7px;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">관</div>'
      + '<span style="font-size:13px;font-weight:600;flex:1">관리자</span>'
-     + '<span style="font-size:11px;color:var(--t2)">관리자</span>'
+     + '<span style="font-size:11px;color:var(--t2)">'+(ME.role==='owner'?'원장':'관리자')+'</span>'
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-left:6px">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>';
@@ -1480,39 +1489,50 @@ function renderCalEv(ds) {
 var loginRole = 'admin';
 function selRole(r) {
   loginRole=r;
+  document.getElementById('rtab-owner').className='role-tab'+(r==='owner'?' on':'');
   document.getElementById('rtab-admin').className='role-tab'+(r==='admin'?' on':'');
   document.getElementById('rtab-teacher').className='role-tab'+(r==='teacher'?' on':'');
+  document.getElementById('lf-owner').style.display=r==='owner'?'':'none';
   document.getElementById('lf-admin').style.display=r==='admin'?'':'none';
   document.getElementById('lf-teacher').style.display=r==='teacher'?'':'none';
-  if(r==='teacher') refreshTSel();
 }
 function refreshTSel() {
-  var sel=document.getElementById('li-tsel');
-  sel.innerHTML='<option value="">강사 선택...</option>'+DB.cfg.teachers.map(function(t){return '<option value="'+t.name+'">'+t.name+'</option>';}).join('');
+  // 강사 직접 입력 방식으로 변경 - 사용 안 함
 }
 function doLogin() {
   var err=document.getElementById('li-err');
-  if(loginRole==='admin'){
+  if(loginRole==='owner'){
+    // 원장 로그인
+    var ownerPw=DB.cfg.ownerPw||'7193455';
+    if(document.getElementById('li-opw').value!==ownerPw){err.textContent='비밀번호가 틀렸습니다.';return;}
+    ME={role:'owner',name:'원장'};
+  } else if(loginRole==='admin'){
     if(!DB.cfg.adminPw){err.textContent='먼저 초기 설정을 완료하세요.';return;}
     if(document.getElementById('li-apw').value!==DB.cfg.adminPw){err.textContent='비밀번호가 틀렸습니다.';return;}
     ME={role:'admin',name:'관리자'};
   } else {
-    var name=document.getElementById('li-tsel').value;
+    var name=document.getElementById('li-tid').value.trim();
     var pw=document.getElementById('li-tpw').value;
-    if(!name){err.textContent='강사를 선택하세요.';return;}
+    if(!name){err.textContent='아이디를 입력하세요.';return;}
+    if(!pw){err.textContent='비밀번호를 입력하세요.';return;}
     var t=DB.cfg.teachers.find(function(t){return t.name===name;});
-    if(!t||t.pw!==pw){err.textContent='비밀번호가 틀렸습니다.';return;}
+    if(!t){err.textContent='존재하지 않는 아이디입니다.';return;}
+    // 초기 비밀번호 7193455 또는 설정된 비밀번호
+    var tPw=t.pw||'7193455';
+    if(tPw!==pw){err.textContent='비밀번호가 틀렸습니다.';return;}
     ME={role:'teacher',name:name};
   }
   err.textContent='';
   document.getElementById('login').style.display='none';
-  if(ME.role==='admin') document.getElementById('btn-reset').style.display='inline';
+  if(ME.role==='admin'||ME.role==='owner') document.getElementById('btn-reset').style.display='inline';
   goTab('home');
 }
 function logout() {
   ME=null;
   document.getElementById('login').style.display='flex';
+  document.getElementById('li-opw').value='';
   document.getElementById('li-apw').value='';
+  document.getElementById('li-tid').value='';
   document.getElementById('li-tpw').value='';
   document.getElementById('li-err').textContent='';
   document.getElementById('btn-reset').style.display='none';
@@ -1563,6 +1583,21 @@ function openSetup() {
 // ═══════════════════════════════════════
 // 비밀번호 찾기
 // ═══════════════════════════════════════
+function openSetupModal() {
+  var ownerSec = document.getElementById('owner-pw-section');
+  if(ownerSec) ownerSec.style.display = (ME && ME.role==='owner') ? 'block' : 'none';
+  openModal('ov-setup');
+}
+
+function saveOwnerPw() {
+  var pw = document.getElementById('owner-pw-input').value.trim();
+  if(!pw){toast('비밀번호를 입력하세요','var(--rd)');return;}
+  DB.cfg.ownerPw = pw;
+  saveAll();
+  toast('원장 비밀번호가 변경됐어요 ✓');
+  document.getElementById('owner-pw-input').value='';
+}
+
 function openForgot() {
   fgRole2=null;fgTIdx=-1;
   ['fg-s0','fg-s0t','fg-s1','fg-s2'].forEach(function(id){document.getElementById(id).style.display='none';});
@@ -1897,7 +1932,7 @@ _loadFirebase().then(function() {
       DB.cfg=d.cfg;DB.subj=d.subj||[];DB.stu=d.stu||[];
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
-      DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","teachers":[]}');
+      DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","teachers":[]}');
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
       DB.stu=JSON.parse(localStorage.getItem('ac_stu')||'[]');
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
