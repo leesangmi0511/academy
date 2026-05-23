@@ -510,7 +510,10 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 <div class="ov" id="ov-editteacher" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2" id="et-title">강사 수정</div>
     <input type="hidden" id="et-idx">
-    <label class="fl">휴대폰 번호</label><input class="fi" id="et-phone" type="tel" maxlength="11">
+    <label class="fl">강사 이름</label>
+    <input class="fi" id="et-name" placeholder="강사 이름">
+    <label class="fl">휴대폰 번호</label>
+    <input class="fi" id="et-phone" type="tel" maxlength="11" placeholder="010-0000-0000">
     <div class="sec-box">
       <div style="font-size:11px;color:var(--t3);font-weight:500;margin-bottom:8px">비밀번호 변경 (선택)</div>
       <input class="fi" id="et-pw1" type="password" placeholder="새 비밀번호" style="margin-bottom:6px">
@@ -2715,26 +2718,71 @@ function doAddTeacher() {
   toast(name+' 추가됐어요 ✓');renderAccTList();refreshTSel();
 }
 function openEditTeacher(i) {
-  var t=DB.cfg.teachers[i];
-  document.getElementById('et-title').textContent=t.name+' 수정';
-  document.getElementById('et-idx').value=i;
-  document.getElementById('et-phone').value=t.phone||'';
-  document.getElementById('et-pw1').value='';document.getElementById('et-pw2').value='';
-  document.getElementById('et-err').textContent='';
+  var t = DB.cfg.teachers[i];
+  document.getElementById('et-title').textContent = t.name + ' 수정';
+  document.getElementById('et-idx').value = i;
+  document.getElementById('et-name').value = t.name || '';
+  document.getElementById('et-phone').value = t.phone || '';
+  document.getElementById('et-pw1').value = '';
+  document.getElementById('et-pw2').value = '';
+  document.getElementById('et-err').textContent = '';
   openModal('ov-editteacher');
 }
 function doEditTeacher() {
-  var i=parseInt(document.getElementById('et-idx').value);
-  var ph=document.getElementById('et-phone').value.trim();
-  var pw=document.getElementById('et-pw1').value;
-  var pw2=document.getElementById('et-pw2').value;
-  var e=document.getElementById('et-err');
-  if(pw){if(pw.length<4){e.textContent='4자리 이상으로 입력하세요.';return;}if(pw!==pw2){e.textContent='비밀번호가 일치하지 않아요.';return;}DB.cfg.teachers[i].pw=pw;}
-  if(ph) DB.cfg.teachers[i].phone=ph;
-  saveAll();closeModal('ov-editteacher');toast('저장됐어요 ✓');renderAccTList();
+  var i = parseInt(document.getElementById('et-idx').value);
+  var t = DB.cfg.teachers[i];
+  var newName = document.getElementById('et-name').value.trim();
+  var ph = document.getElementById('et-phone').value.trim();
+  var pw = document.getElementById('et-pw1').value;
+  var pw2 = document.getElementById('et-pw2').value;
+  var e = document.getElementById('et-err');
+
+  if (!newName) { e.textContent = '이름을 입력하세요.'; return; }
+  // 이름 중복 체크 (본인 제외)
+  if (newName !== t.name && DB.cfg.teachers.find(function(x, xi){ return xi !== i && x.name === newName; })) {
+    e.textContent = '이미 있는 강사 이름이에요.'; return;
+  }
+  if (pw) {
+    if (pw.length < 4) { e.textContent = '4자리 이상으로 입력하세요.'; return; }
+    if (pw !== pw2) { e.textContent = '비밀번호가 일치하지 않아요.'; return; }
+    DB.cfg.teachers[i].pw = pw;
+  }
+
+  var oldName = t.name;
+  DB.cfg.teachers[i].name = newName;
+  if (ph) DB.cfg.teachers[i].phone = ph;
+
+  // 이름이 바뀌면 담당 학생·과목도 자동 업데이트
+  if (oldName !== newName) {
+    DB.stu.forEach(function(s){ if (s.teacher === oldName) s.teacher = newName; });
+    DB.subj.forEach(function(s){ if (s.teacher === oldName) s.teacher = newName; });
+    // 강사 본인이 로그인 중이면 ME도 업데이트
+    if (ME && ME.name === oldName) ME.name = newName;
+    toast(oldName + ' → ' + newName + ' 변경됐어요 ✓');
+  } else {
+    toast('저장됐어요 ✓');
+  }
+
+  saveAll();
+  closeModal('ov-editteacher');
+  renderAccTList();
+  renderHome();
 }
 function doDelTeacher(i) {
-  DB.cfg.teachers.splice(i,1);saveAll();renderAccTList();toast('삭제됐어요','var(--rd)');
+  var t = DB.cfg.teachers[i];
+  if (!t) return;
+  var stuCnt = DB.stu.filter(function(s){ return s.teacher === t.name; }).length;
+  var msg = t.name + ' 강사를 삭제할까요?';
+  if (stuCnt > 0) msg += '\n\n⚠️ 담당 학생 ' + stuCnt + '명의 담당 강사가 해제됩니다.';
+  if (!confirm(msg)) return;
+  // 담당 학생/과목 초기화
+  DB.stu.forEach(function(s){ if (s.teacher === t.name) s.teacher = ''; });
+  DB.subj.forEach(function(s){ if (s.teacher === t.name) s.teacher = ''; });
+  DB.cfg.teachers.splice(i, 1);
+  saveAll();
+  renderAccTList();
+  renderHome();
+  toast(t.name + ' 삭제됐어요', 'var(--rd)');
 }
 
 // ═══════════════════════════════════════
