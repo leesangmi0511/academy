@@ -773,6 +773,35 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 과제 앱 명단 동기화 모달 -->
+<div class="ov" id="ov-sync" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">🔄 과제 앱 명단 동기화</div>
+    <div style="background:var(--acc-l);border-radius:var(--rs);padding:14px;margin-bottom:14px">
+      <div style="font-size:12px;color:var(--t2);margin-bottom:8px">동기화 대상 (학원 앱 기준)</div>
+      <div style="display:flex;gap:16px">
+        <div style="text-align:center">
+          <div style="font-size:22px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace" id="sync-tea-count">0</div>
+          <div style="font-size:11px;color:var(--t2)">👩‍🏫 강사</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:22px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace" id="sync-stu-count">0</div>
+          <div style="font-size:11px;color:var(--t2)">👨‍🎓 학생</div>
+        </div>
+      </div>
+    </div>
+    <div style="font-size:12px;color:var(--t2);margin-bottom:14px;line-height:1.7">
+      · 학원 앱의 강사·학생 명단을 과제 앱과 동기화해요.<br>
+      · 과제 앱의 기존 admin/manager 계정은 유지됩니다.<br>
+      · 학생 초기 비밀번호: <b>1234</b> (과제 앱에서 변경 가능)<br>
+      · 과목명이 과제 앱의 반(classId)으로 자동 등록돼요.
+    </div>
+    <div id="sync-status" style="display:none;font-size:13px;padding:10px;background:var(--s2);border-radius:var(--rs);margin-bottom:12px;text-align:center"></div>
+    <button class="btn" id="sync-btn" onclick="doSync()">🔄 지금 동기화하기</button>
+    <button class="btn ghost" onclick="closeModal('ov-sync')">닫기</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -908,6 +937,142 @@ var EVAL_ITEMS = [
 ];
 
 
+
+
+// ═══ 과제 앱 학생·강사 명단 동기화 ═══
+var HW_SYNC_BASE = 'https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(default)/documents';
+var HW_SYNC_KEY = 'AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
+
+// 과제앱 appData/main 전체 가져오기
+function fetchHwMain(cb) {
+  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
+    .then(function(r){ return r.json(); })
+    .then(function(d){ cb(null, d); })
+    .catch(function(e){ cb(e, null); });
+}
+
+// 과제앱에 학생+강사 명단 동기화
+function syncMembersToHwApp(cb) {
+  fetchHwMain(function(err, doc) {
+    if (err || !doc.fields) {
+      if (cb) cb(false, '과제 앱 연결 실패');
+      return;
+    }
+
+    // 기존 데이터 보존
+    var existing = doc.fields;
+
+    // 학원앱 학생 → 과제앱 student 형식 변환
+    var hwStudents = DB.stu.map(function(s) {
+      // 기존 과제앱 ID 보존 (있으면) or 새로 생성
+      var existingUsers = existing.users && existing.users.arrayValue && existing.users.arrayValue.values || [];
+      var found = existingUsers.find(function(u) {
+        var f = u.mapValue && u.mapValue.fields;
+        return f && f.name && f.name.stringValue === s.name && f.role && f.role.stringValue === 'student';
+      });
+      var stuId = found ? found.mapValue.fields.id.stringValue : 'stu_' + s.name.replace(/\s/g,'') + '_' + Date.now().toString(36);
+      var avatar = ['🎒','🎓','📝','✏️','📚','🖊️','📓','📗'][DB.stu.indexOf(s) % 8];
+      return {
+        mapValue: { fields: {
+          id: { stringValue: stuId },
+          name: { stringValue: s.name },
+          role: { stringValue: 'student' },
+          password: { stringValue: '1234' },
+          classId: { stringValue: s.class || '' },
+          avatar: { stringValue: avatar }
+        }}
+      };
+    });
+
+    // 학원앱 강사 → 과제앱 instructor 형식 변환
+    var hwTeachers = DB.cfg.teachers.map(function(t) {
+      var existingUsers = existing.users && existing.users.arrayValue && existing.users.arrayValue.values || [];
+      var found = existingUsers.find(function(u) {
+        var f = u.mapValue && u.mapValue.fields;
+        return f && f.name && f.name.stringValue === t.name && f.role && f.role.stringValue === 'instructor';
+      });
+      var instId = found ? found.mapValue.fields.id.stringValue : 'inst_' + t.name.replace(/\s/g,'') + '_' + Date.now().toString(36);
+      return {
+        mapValue: { fields: {
+          id: { stringValue: instId },
+          name: { stringValue: t.name },
+          role: { stringValue: 'instructor' },
+          password: { stringValue: t.pw || '1234' },
+          avatar: { stringValue: '📚' }
+        }}
+      };
+    });
+
+    // 기존 admin/manager 계정은 보존
+    var existingUsers = existing.users && existing.users.arrayValue && existing.users.arrayValue.values || [];
+    var adminsAndMgrs = existingUsers.filter(function(u) {
+      var role = u.mapValue && u.mapValue.fields && u.mapValue.fields.role && u.mapValue.fields.role.stringValue;
+      return role === 'admin' || role === 'manager';
+    });
+
+    // 최종 users 배열 = admin/manager + 강사 + 학생
+    var allUsers = adminsAndMgrs.concat(hwTeachers).concat(hwStudents);
+
+    // classList 도 업데이트 (학원앱 과목명 = 반 이름)
+    var classNames = DB.subj.map(function(s){ return s.name; });
+    var existingClassList = existing.classList && existing.classList.arrayValue && existing.classList.arrayValue.values || [];
+    var existingClasses = existingClassList.map(function(c){ return c.stringValue; });
+    // 기존 반 + 새 반 합치기
+    classNames.forEach(function(cn) {
+      if (existingClasses.indexOf(cn) === -1) existingClasses.push(cn);
+    });
+    var newClassList = existingClasses.map(function(c){ return { stringValue: c }; });
+
+    // body 구성 (기존 필드 모두 유지 + users/classList 업데이트)
+    var body = { fields: {} };
+    Object.keys(existing).forEach(function(k){ body.fields[k] = existing[k]; });
+    body.fields.users = { arrayValue: { values: allUsers } };
+    body.fields.classList = { arrayValue: { values: newClassList } };
+    body.fields.lastUpdated = { stringValue: new Date().toISOString() };
+
+    // PATCH
+    fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (d.name) {
+        if (cb) cb(true, '강사 ' + hwTeachers.length + '명, 학생 ' + hwStudents.length + '명 동기화됨');
+      } else {
+        if (cb) cb(false, JSON.stringify(d).slice(0,100));
+      }
+    })
+    .catch(function(e){ if (cb) cb(false, e.toString()); });
+  });
+}
+
+// 동기화 모달 열기
+function openSyncModal() {
+  openModal('ov-sync');
+  document.getElementById('sync-status').textContent = '';
+  document.getElementById('sync-status').style.display = 'none';
+  // 현재 학원앱 인원 표시
+  document.getElementById('sync-stu-count').textContent = DB.stu.length;
+  document.getElementById('sync-tea-count').textContent = DB.cfg.teachers.length;
+}
+
+// 동기화 실행
+function doSync() {
+  var btn = document.getElementById('sync-btn');
+  btn.disabled = true;
+  btn.textContent = '동기화 중...';
+  syncMembersToHwApp(function(ok, msg) {
+    btn.disabled = false;
+    btn.textContent = '🔄 지금 동기화하기';
+    var el = document.getElementById('sync-status');
+    el.style.display = 'block';
+    el.style.color = ok ? 'var(--g)' : 'var(--rd)';
+    el.textContent = ok ? '✓ ' + msg : '✗ ' + msg;
+    if (ok) toast('📋 과제 앱 명단 동기화 완료 ✓');
+  });
+}
 
 // ═══ 평가 기간 조회 + 25일 알림 ═══
 function getYearMonth() {
@@ -1274,7 +1439,8 @@ function renderAdminHome() {
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>';
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 과제앱 명단 동기화</button></div>';
 
   // 통계
   h += '<div class="sg4">'
