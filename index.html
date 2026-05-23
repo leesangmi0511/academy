@@ -773,6 +773,36 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 과제 앱 → 학원 앱 명단 불러오기 모달 -->
+<div class="ov" id="ov-import" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">📥 과제 앱에서 명단 불러오기</div>
+    <div style="background:var(--s2);border-radius:var(--rs);padding:14px;margin-bottom:14px">
+      <div style="font-size:12px;color:var(--t2);margin-bottom:8px">과제 앱 현재 인원</div>
+      <div style="display:flex;gap:16px;margin-bottom:8px">
+        <div style="text-align:center">
+          <div style="font-size:22px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace" id="import-inst-count">...</div>
+          <div style="font-size:11px;color:var(--t2)">👩‍🏫 강사</div>
+        </div>
+        <div style="text-align:center">
+          <div style="font-size:22px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace" id="import-stu-count">...</div>
+          <div style="font-size:11px;color:var(--t2)">👨‍🎓 학생</div>
+        </div>
+      </div>
+      <div id="import-preview" style="font-size:11px;color:var(--t3);line-height:1.5"></div>
+    </div>
+    <div style="font-size:12px;color:var(--t2);margin-bottom:14px;line-height:1.7">
+      · 과제 앱의 강사·학생 명단을 학원 앱으로 불러와요.<br>
+      · 이미 동일 이름이 있으면 <b>자동으로 스킵</b>됩니다.<br>
+      · 강사 초기 비밀번호: <b>7193455</b><br>
+      · 불러온 학생의 담당 강사는 직접 배정해 주세요.
+    </div>
+    <div id="import-status" style="display:none;font-size:13px;padding:10px;background:var(--s2);border-radius:var(--rs);margin-bottom:12px;text-align:center;line-height:1.6"></div>
+    <button class="btn" id="import-btn" onclick="importFromHwApp()">📥 과제앱에서 불러오기</button>
+    <button class="btn ghost" onclick="closeModal('ov-import')">닫기</button>
+  </div>
+</div>
+
 <!-- 과제 앱 명단 동기화 모달 -->
 <div class="ov" id="ov-sync" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div>
@@ -1049,6 +1079,124 @@ function syncMembersToHwApp(cb) {
 }
 
 // 동기화 모달 열기
+
+// ═══ 과제 앱 → 학원 앱 명단 불러오기 ═══
+function importFromHwApp() {
+  var btn = document.getElementById('import-btn');
+  btn.disabled = true;
+  btn.textContent = '불러오는 중...';
+  document.getElementById('import-status').style.display = 'none';
+
+  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
+  .then(function(r){ return r.json(); })
+  .then(function(doc){
+    if (!doc.fields) throw new Error('데이터 없음');
+
+    var users = (doc.fields.users && doc.fields.users.arrayValue && doc.fields.users.arrayValue.values) || [];
+
+    // 과제앱 강사(instructor) 목록
+    var hwInstructors = users.filter(function(u){
+      var f = u.mapValue && u.mapValue.fields;
+      return f && f.role && f.role.stringValue === 'instructor';
+    });
+
+    // 과제앱 학생(student) 목록
+    var hwStudents = users.filter(function(u){
+      var f = u.mapValue && u.mapValue.fields;
+      return f && f.role && f.role.stringValue === 'student';
+    });
+
+    var addedTeachers = 0, addedStudents = 0, skippedTeachers = 0, skippedStudents = 0;
+
+    // ── 강사 추가 (이미 있으면 스킵)
+    hwInstructors.forEach(function(u){
+      var f = u.mapValue.fields;
+      var name = f.name && f.name.stringValue;
+      if (!name) return;
+      var exists = DB.cfg.teachers.find(function(t){ return t.name === name; });
+      if (exists) { skippedTeachers++; return; }
+      DB.cfg.teachers.push({
+        name: name,
+        pw: f.password && f.password.stringValue || '7193455',
+        phone: ''
+      });
+      addedTeachers++;
+    });
+
+    // ── 학생 추가 (이미 있으면 스킵)
+    hwStudents.forEach(function(u){
+      var f = u.mapValue.fields;
+      var name = f.name && f.name.stringValue;
+      if (!name) return;
+      var exists = DB.stu.find(function(s){ return s.name === name; });
+      if (exists) { skippedStudents++; return; }
+      DB.stu.push({
+        name: name,
+        teacher: '',
+        class: f.classId && f.classId.stringValue || '',
+        consultHistory: [],
+        textbookStatus: {}
+      });
+      addedStudents++;
+    });
+
+    saveAll();
+    renderHome();
+    renderProgress();
+
+    btn.disabled = false;
+    btn.textContent = '📥 과제앱에서 불러오기';
+
+    var el = document.getElementById('import-status');
+    el.style.display = 'block';
+    el.style.color = 'var(--g)';
+    el.innerHTML =
+      '✓ 강사 ' + addedTeachers + '명 추가 (중복 ' + skippedTeachers + '명 스킵)<br>' +
+      '✓ 학생 ' + addedStudents + '명 추가 (중복 ' + skippedStudents + '명 스킵)';
+
+    toast('📥 과제 앱 명단을 불러왔어요 ✓');
+
+    // 불러온 미리보기 업데이트
+    document.getElementById('import-inst-count').textContent = hwInstructors.length;
+    document.getElementById('import-stu-count').textContent = hwStudents.length;
+  })
+  .catch(function(e){
+    btn.disabled = false;
+    btn.textContent = '📥 과제앱에서 불러오기';
+    var el = document.getElementById('import-status');
+    el.style.display = 'block';
+    el.style.color = 'var(--rd)';
+    el.textContent = '✗ 불러오기 실패: ' + e.message;
+  });
+}
+
+// 불러오기 모달 열기 (미리보기 포함)
+function openImportModal() {
+  document.getElementById('import-status').style.display = 'none';
+  document.getElementById('import-inst-count').textContent = '...';
+  document.getElementById('import-stu-count').textContent = '...';
+  openModal('ov-import');
+
+  // 과제앱 인원 미리보기
+  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
+  .then(function(r){ return r.json(); })
+  .then(function(doc){
+    var users = (doc.fields && doc.fields.users && doc.fields.users.arrayValue && doc.fields.users.arrayValue.values) || [];
+    var insts = users.filter(function(u){ var f=u.mapValue&&u.mapValue.fields; return f&&f.role&&f.role.stringValue==='instructor'; });
+    var stus = users.filter(function(u){ var f=u.mapValue&&u.mapValue.fields; return f&&f.role&&f.role.stringValue==='student'; });
+    document.getElementById('import-inst-count').textContent = insts.length;
+    document.getElementById('import-stu-count').textContent = stus.length;
+    // 강사 이름 미리보기
+    var instNames = insts.map(function(u){ return u.mapValue.fields.name.stringValue; }).join(', ');
+    var el = document.getElementById('import-preview');
+    if (el) el.textContent = instNames ? '강사: ' + instNames : '';
+  })
+  .catch(function(){ 
+    document.getElementById('import-inst-count').textContent = '연결 실패';
+    document.getElementById('import-stu-count').textContent = '연결 실패';
+  });
+}
+
 function openSyncModal() {
   openModal('ov-sync');
   document.getElementById('sync-status').textContent = '';
@@ -1440,7 +1588,7 @@ function renderAdminHome() {
      + '</div>'
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 과제앱 명단 동기화</button></div>';
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>';
 
   // 통계
   h += '<div class="sg4">'
