@@ -448,6 +448,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 위험·보완 처리 모달 --><div class="ov" id="ov-risk" onclick="ovClose(event,this)"><div class="modal"><div class="mh"></div><div class="mt2">⚠ 위험·보완 처리</div><div id="risk-body"></div><button class="btn ghost" onclick="closeModal('ov-risk')">닫기</button></div></div>
 <!-- 상담 기록 -->
 <div class="ov" id="ov-consult" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2" id="cm-title">상담 기록</div>
@@ -455,6 +456,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <label class="fl">상담 일자</label><input class="fi" id="cm-date" type="date">
     <label class="fl">상담자</label><input class="fi" id="cm-counselor" placeholder="예: 김선생님">
     <label class="fl">상담 방식</label><select class="fi" id="cm-method"><option value="">선택 안 함</option><option value="대면상담">대면상담</option><option value="전화상담">전화상담</option><option value="문자상담">문자상담</option></select>
+    <label class="fl">위험도 체크</label><select class="fi" id="cm-risk"><option value="일상 체크">일상 체크</option><option value="보완 요구">보완 요구</option><option value="위험 감지">위험 감지</option></select>
     <label class="fl">학생 상태</label>
     <div class="moodrow">
       <button class="mb" data-m="매우좋음" onclick="selMood(this)"><span class="me">😄</span><span class="mlab">매우좋음</span></button>
@@ -950,7 +952,7 @@ function renderHome() {
   if (ME.role === 'owner' || ME.role === 'admin') renderAdminHome();
   else renderTeacherHome();
   // 25일 이후 평가 알림 체크
-  setTimeout(checkEvalReminder, 2000);
+  injectRiskBanner();setTimeout(checkEvalReminder, 2000);
 }
 
 // 강사 필터 칩 렌더 (관리자 전용)
@@ -1660,6 +1662,78 @@ function setRankTab(tab) {
   else{renderAdminHome();}
 }
 
+function riskPending(){
+  var out=[];
+  (DB.stu||[]).forEach(function(s,si){
+    (s.consultHistory||[]).forEach(function(rec,ri){
+      if((rec.risk==='위험 감지'||rec.risk==='보완 요구') && rec.rstat!=='done'){
+        out.push({si:si,ri:ri,name:s.name,rec:rec});
+      }
+    });
+  });
+  return out;
+}
+function riskBanner(){
+  if(!(ME&&(ME.role==='owner'||ME.role==='admin'))) return '';
+  var p=riskPending();
+  if(!p.length) return '';
+  var danger=0,warn=0;
+  p.forEach(function(x){ if(x.rec.risk==='위험 감지') danger++; else warn++; });
+  var seg=[];
+  if(danger) seg.push('위험 '+danger+'건');
+  if(warn) seg.push('보완 '+warn+'건');
+  return '<div onclick="openRiskModal()" style="cursor:pointer;background:var(--rdl);border:1px solid var(--rd);border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
+    +'<span style="font-size:18px">⚠</span>'
+    +'<div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--rd)">미처리 상담 '+p.length+'건</div>'
+    +'<div style="font-size:11px;color:var(--t2)">'+seg.join(' · ')+' — 눌러서 처리/보류</div></div>'
+    +'<span style="color:var(--rd);font-size:18px;font-weight:700">›</span></div>';
+}
+function injectRiskBanner(){
+  var b=riskBanner(); if(!b) return;
+  var el=document.getElementById('home-body');
+  if(el) el.insertAdjacentHTML('afterbegin', b);
+}
+function openRiskModal(){ renderRiskModal(); openModal('ov-risk'); }
+function renderRiskModal(){
+  var p=riskPending();
+  var h='';
+  if(!p.length){ h='<div class="empty">미처리 건이 없어요 ✓</div>'; }
+  else { p.forEach(function(x){
+    var rec=x.rec;
+    var isD=rec.risk==='위험 감지';
+    var col=isD?'var(--rd)':'var(--am)';
+    var bg=isD?'var(--rdl)':'var(--aml)';
+    var stat=rec.rstat==='hold'?'보류 중':'미확인';
+    h+='<div style="border:1px solid var(--s3);border-radius:12px;padding:12px;margin-bottom:10px">'
+      +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+      +'<span style="font-size:11px;font-weight:700;color:'+col+';background:'+bg+';padding:2px 8px;border-radius:20px">'+rec.risk+'</span>'
+      +'<span style="font-size:13px;font-weight:600">'+x.name+'</span>'
+      +'<span style="font-size:11px;color:var(--t3);margin-left:auto">'+rec.date+(rec.counselor?' · '+rec.counselor:'')+'</span></div>'
+      +(rec.note?'<div style="font-size:12px;color:var(--t2);margin:4px 0;line-height:1.5">'+rec.note+'</div>':'')
+      +'<div style="font-size:11px;color:var(--t3);margin-bottom:8px">상태: '+stat+'</div>'
+      +'<div style="display:flex;gap:8px">'
+      +'<button class="btn sm" onclick="setRiskStatus('+x.si+','+x.ri+',1)">처리</button>'
+      +'<button class="btn sm ghost" onclick="setRiskStatus('+x.si+','+x.ri+',2)">보류</button>'
+      +'</div></div>';
+  }); }
+  document.getElementById('risk-body').innerHTML=h;
+}
+function setRiskStatus(si,ri,code){
+  if(!(ME&&(ME.role==='owner'||ME.role==='admin'))){ toast('권한이 없어요','var(--rd)'); return; }
+  if(!DB.stu[si]||!DB.stu[si].consultHistory||!DB.stu[si].consultHistory[ri]) return;
+  DB.stu[si].consultHistory[ri].rstat = code===1?'done':'hold';
+  saveAll();
+  renderRiskModal();
+  toast(code===1?'처리 완료 ✓':'보류 처리됨');
+  if(curTab==='home') renderHome();
+}
+function riskNotify(){
+  if(!(ME&&(ME.role==='owner'||ME.role==='admin'))) return;
+  var p=riskPending();
+  if(!p.length) return;
+  showDirectNotif('ROUTETOP 위험 감지', '미처리 상담 '+p.length+'건이 있어요. 확인해 주세요.');
+}
+
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
@@ -2108,7 +2182,7 @@ function showStuDetail(idx) {
   h+='<button class="btn" style="margin-bottom:13px" onclick="openConsult('+idx+')">+ 상담 기록 입력</button>';
   h+='<div class="ct">상담 기록 ('+hist.length+'회)</div>';
   if(!hist.length){h+='<div class="empty">아직 기록이 없습니다.</div>';}
-  else{hist.forEach(function(rec){h+='<div class="hr2"><div style="display:flex;flex-direction:column;align-items:center;gap:3px"><div class="tld"></div><div style="flex:1;width:1px;background:var(--s3);min-height:14px"></div></div><div style="flex:1;padding-left:3px"><div style="font-size:11px;color:var(--t3);margin-bottom:2px">'+rec.date+(rec.counselor?' · '+rec.counselor:'')+'</div><div style="font-size:13px;font-weight:500">'+(MOOD_E[rec.mood]||'')+' '+(rec.mood||'')+(rec.method?' · '+rec.method:'')+'</div>'+(rec.note?'<div style="font-size:12px;color:var(--t2);margin-top:2px;line-height:1.5">'+rec.note+'</div>':'')+'</div></div>';});}
+  else{hist.forEach(function(rec){h+='<div class="hr2"><div style="display:flex;flex-direction:column;align-items:center;gap:3px"><div class="tld"></div><div style="flex:1;width:1px;background:var(--s3);min-height:14px"></div></div><div style="flex:1;padding-left:3px"><div style="font-size:11px;color:var(--t3);margin-bottom:2px">'+rec.date+(rec.counselor?' · '+rec.counselor:'')+'</div><div style="font-size:13px;font-weight:500">'+(MOOD_E[rec.mood]||'')+' '+(rec.mood||'')+(rec.method?' · '+rec.method:'')+((rec.risk&&rec.risk!=='일상 체크')?' · '+rec.risk+(rec.rstat==='done'?'(처리됨)':rec.rstat==='hold'?'(보류)':'(미확인)'):'')+'</div>'+(rec.note?'<div style="font-size:12px;color:var(--t2);margin-top:2px;line-height:1.5">'+rec.note+'</div>':'')+'</div></div>';});}
   if(ME&&ME.role==='admin') h+='<button class="btn danger" style="margin-top:14px" onclick="doDelStu('+idx+')">학생 삭제</button>';
   document.getElementById('det-body').innerHTML=h;
   document.getElementById('det-back').onclick=function(){goTab(prevTab);};
@@ -2415,7 +2489,7 @@ function openConsult(idx) {
   var next=new Date(); next.setDate(next.getDate()+60);
   document.getElementById('cm-next').value=next.toISOString().slice(0,10);
   document.querySelectorAll('.mb').forEach(function(b){b.classList.remove('on');});
-  document.getElementById('cm-method').value='';openModal('ov-consult');
+  document.getElementById('cm-method').value='';if(document.getElementById('cm-risk'))document.getElementById('cm-risk').value='일상 체크';openModal('ov-consult');
 }
 function selMood(btn) { document.querySelectorAll('.mb').forEach(function(b){b.classList.remove('on');}); btn.classList.add('on'); }
 function doSaveConsult() {
@@ -2423,7 +2497,7 @@ function doSaveConsult() {
   var date=document.getElementById('cm-date').value;
   if(!date){toast('날짜를 입력해주세요','var(--rd)');return;}
   if(!DB.stu[idx].consultHistory) DB.stu[idx].consultHistory=[];
-  DB.stu[idx].consultHistory.push({date:date,method:document.getElementById('cm-method').value,counselor:document.getElementById('cm-counselor').value.trim(),mood:document.querySelector('.mb.on')?document.querySelector('.mb.on').dataset.m:'',note:document.getElementById('cm-note').value.trim()});
+  DB.stu[idx].consultHistory.push({date:date,risk:(document.getElementById('cm-risk')?document.getElementById('cm-risk').value:''),rstat:'',method:document.getElementById('cm-method').value,counselor:document.getElementById('cm-counselor').value.trim(),mood:document.querySelector('.mb.on')?document.querySelector('.mb.on').dataset.m:'',note:document.getElementById('cm-note').value.trim()});
   var next=document.getElementById('cm-next').value;
   if(next) DB.stu[idx].nextConsultDate=next;
   saveAll();closeModal('ov-consult');toast('저장됐어요 ✓');showStuDetail(idx);
@@ -2884,6 +2958,7 @@ function showDirectNotif(title, body) {
 }
 
 function checkConsultAndNotify() {
+  riskNotify();
   if (!ME) return;
   var list = myStu().filter(function(s){ return cSt(s).lv==='urgent'; });
   if (list.length === 0) return;
