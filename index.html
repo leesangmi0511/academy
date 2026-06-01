@@ -454,6 +454,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <input type="hidden" id="cm-idx">
     <label class="fl">상담 일자</label><input class="fi" id="cm-date" type="date">
     <label class="fl">상담자</label><input class="fi" id="cm-counselor" placeholder="예: 김선생님">
+    <label class="fl">상담 방식</label><select class="fi" id="cm-method"><option value="">선택 안 함</option><option value="대면상담">대면상담</option><option value="전화상담">전화상담</option><option value="문자상담">문자상담</option></select>
     <label class="fl">학생 상태</label>
     <div class="moodrow">
       <button class="mb" data-m="매우좋음" onclick="selMood(this)"><span class="me">😄</span><span class="mlab">매우좋음</span></button>
@@ -2107,7 +2108,7 @@ function showStuDetail(idx) {
   h+='<button class="btn" style="margin-bottom:13px" onclick="openConsult('+idx+')">+ 상담 기록 입력</button>';
   h+='<div class="ct">상담 기록 ('+hist.length+'회)</div>';
   if(!hist.length){h+='<div class="empty">아직 기록이 없습니다.</div>';}
-  else{hist.forEach(function(rec){h+='<div class="hr2"><div style="display:flex;flex-direction:column;align-items:center;gap:3px"><div class="tld"></div><div style="flex:1;width:1px;background:var(--s3);min-height:14px"></div></div><div style="flex:1;padding-left:3px"><div style="font-size:11px;color:var(--t3);margin-bottom:2px">'+rec.date+(rec.counselor?' · '+rec.counselor:'')+'</div><div style="font-size:13px;font-weight:500">'+(MOOD_E[rec.mood]||'')+' '+(rec.mood||'')+'</div>'+(rec.note?'<div style="font-size:12px;color:var(--t2);margin-top:2px;line-height:1.5">'+rec.note+'</div>':'')+'</div></div>';});}
+  else{hist.forEach(function(rec){h+='<div class="hr2"><div style="display:flex;flex-direction:column;align-items:center;gap:3px"><div class="tld"></div><div style="flex:1;width:1px;background:var(--s3);min-height:14px"></div></div><div style="flex:1;padding-left:3px"><div style="font-size:11px;color:var(--t3);margin-bottom:2px">'+rec.date+(rec.counselor?' · '+rec.counselor:'')+'</div><div style="font-size:13px;font-weight:500">'+(MOOD_E[rec.mood]||'')+' '+(rec.mood||'')+(rec.method?' · '+rec.method:'')+'</div>'+(rec.note?'<div style="font-size:12px;color:var(--t2);margin-top:2px;line-height:1.5">'+rec.note+'</div>':'')+'</div></div>';});}
   if(ME&&ME.role==='admin') h+='<button class="btn danger" style="margin-top:14px" onclick="doDelStu('+idx+')">학생 삭제</button>';
   document.getElementById('det-body').innerHTML=h;
   document.getElementById('det-back').onclick=function(){goTab(prevTab);};
@@ -2414,7 +2415,7 @@ function openConsult(idx) {
   var next=new Date(); next.setDate(next.getDate()+60);
   document.getElementById('cm-next').value=next.toISOString().slice(0,10);
   document.querySelectorAll('.mb').forEach(function(b){b.classList.remove('on');});
-  openModal('ov-consult');
+  document.getElementById('cm-method').value='';openModal('ov-consult');
 }
 function selMood(btn) { document.querySelectorAll('.mb').forEach(function(b){b.classList.remove('on');}); btn.classList.add('on'); }
 function doSaveConsult() {
@@ -2422,7 +2423,7 @@ function doSaveConsult() {
   var date=document.getElementById('cm-date').value;
   if(!date){toast('날짜를 입력해주세요','var(--rd)');return;}
   if(!DB.stu[idx].consultHistory) DB.stu[idx].consultHistory=[];
-  DB.stu[idx].consultHistory.push({date:date,counselor:document.getElementById('cm-counselor').value.trim(),mood:document.querySelector('.mb.on')?document.querySelector('.mb.on').dataset.m:'',note:document.getElementById('cm-note').value.trim()});
+  DB.stu[idx].consultHistory.push({date:date,method:document.getElementById('cm-method').value,counselor:document.getElementById('cm-counselor').value.trim(),mood:document.querySelector('.mb.on')?document.querySelector('.mb.on').dataset.m:'',note:document.getElementById('cm-note').value.trim()});
   var next=document.getElementById('cm-next').value;
   if(next) DB.stu[idx].nextConsultDate=next;
   saveAll();closeModal('ov-consult');toast('저장됐어요 ✓');showStuDetail(idx);
