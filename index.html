@@ -889,16 +889,19 @@ var MOOD_E = {매우좋음:'😄',좋음:'🙂',보통:'😐',관심필요:'😟
 // ═══════════════════════════════════════
 // 저장
 // ═══════════════════════════════════════
+var _lastLocalSave = 0;  // 마지막 로컬 변경 시각
 function saveAll() {
   localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg));
   localStorage.setItem('ac_subj', JSON.stringify(DB.subj));
   localStorage.setItem('ac_stu', JSON.stringify(DB.stu));
   localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{}));
+  _lastLocalSave = Date.now();  // 변경 시각 기록 → 폴링 덮어쓰기 방지
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
-    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu})
+    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}})
+      .then(function(){ _lastLocalSave = Date.now(); })
       .catch(function(e) { console.warn('FB save error:', e); });
-  }, 500);
+  }, 400);
 }
 
 // ═══════════════════════════════════════
@@ -3237,7 +3240,9 @@ _loadFirebase().then(function() {
     window._fsUnsubscribe = _FS.onSnapshot('academy/data', function(snap) {
       var d2 = _FS.docToObj(snap);
       if (!d2) return;
-      DB.cfg=d2.cfg||DB.cfg; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu;
+      // 최근 15초 내 로컬 변경이 있으면 폴링 데이터로 덮어쓰지 않음 (방금 추가한 내용 보호)
+      if (Date.now() - _lastLocalSave < 15000) return;
+      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory;
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
