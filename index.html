@@ -664,7 +664,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 <div class="ov" id="ov-admin-eval" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div>
     <div class="mt2">👔 관리자 평가</div>
-    <div style="font-size:13px;color:var(--acc);font-weight:600;margin-bottom:12px;text-align:center">관리자 종합 평가</div>
+    <div id="admineval-target-name" style="font-size:13px;color:var(--acc);font-weight:600;margin-bottom:12px;text-align:center">관리자 종합 평가</div>
     <div style="margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--s3)">
         <div style="flex:1;font-size:13px;line-height:1.4">1. 솔선수범이 되는가</div>
@@ -1709,9 +1709,41 @@ var ADMIN_EVAL_ITEMS = [
   '다음 관리자를 양성하고 있는가','학원에 협조적인가'
 ];
 
+var currentAdminEvalTarget = null; // 평가 중인 관리자 이름
+
 function openAdminEval() {
-  // 기존 평가 로드
-  currentAdminEvalData = DB.cfg.adminEvalScores ? Object.assign({}, DB.cfg.adminEvalScores) : {};
+  // 관리자 명단 확인
+  var admins = DB.cfg.admins || [];
+  if (!admins.length) {
+    toast('등록된 관리자가 없어요. 먼저 [관리자 명단]에서 추가하세요.', 'var(--rd)');
+    return;
+  }
+  // 관리자 선택 시트 생성
+  var h = '<div class="ov" id="ov-admineval-menu" onclick="ovClose(event,this)" style="display:flex">'
+        + '<div class="modal"><div class="mh"></div><div class="mt2">👔 관리자 평가 선택</div>'
+        + '<div style="font-size:12px;color:var(--t2);margin-bottom:12px;text-align:center">평가할 관리자를 선택하세요</div>';
+  admins.forEach(function(a){
+    var score = (a.adminEvalTotal !== undefined) ? ' · '+a.adminEvalTotal+'점' : '';
+    var date = a.adminEvalDate ? ' ('+a.adminEvalDate+')' : '';
+    h += '<button onclick="document.getElementById(\'ov-admineval-menu\').remove();openAdminEvalFor(\''+a.name+'\')" '
+       + 'style="width:100%;text-align:left;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
+       + '<span style="font-size:14px;font-weight:600">'+a.name+'</span>'
+       + '<span style="font-size:11px;color:var(--t2)">'+score+date+'</span>'
+       + '</button>';
+  });
+  h += '<button class="btn ghost" onclick="document.getElementById(\'ov-admineval-menu\').remove()">닫기</button>'
+     + '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+
+function openAdminEvalFor(adminName) {
+  currentAdminEvalTarget = adminName;
+  var a = DB.cfg.admins.find(function(x){ return x.name === adminName; });
+  // 해당 관리자의 기존 평가 로드
+  currentAdminEvalData = (a && a.adminEvalScores) ? Object.assign({}, a.adminEvalScores) : {};
+  // 모달 제목에 관리자 이름 표시
+  var titleEl = document.getElementById('admineval-target-name');
+  if (titleEl) titleEl.textContent = adminName + ' 관리자 평가';
   for(var i=0; i<10; i++) updateAdminEvalItemUI(i);
   updateAdminEvalScorePreview();
   openModal('ov-admin-eval');
@@ -1750,17 +1782,23 @@ function updateAdminEvalScorePreview() {
 }
 
 function saveAdminEval() {
-  DB.cfg.adminEvalScores = Object.assign({}, currentAdminEvalData);
-  DB.cfg.adminEvalTotal = calcAdminEvalScore(currentAdminEvalData, 10);
-  DB.cfg.adminEvalDate = today();
-  // 월별 히스토리 저장
+  if (!currentAdminEvalTarget) { toast('관리자를 선택해 주세요', 'var(--rd)'); return; }
+  var a = DB.cfg.admins.find(function(x){ return x.name === currentAdminEvalTarget; });
+  if (!a) { toast('관리자를 찾을 수 없어요', 'var(--rd)'); return; }
+  var total = calcAdminEvalScore(currentAdminEvalData, 10);
+  // 해당 관리자에 저장
+  a.adminEvalScores = Object.assign({}, currentAdminEvalData);
+  a.adminEvalTotal = total;
+  a.adminEvalDate = today();
+  // 월별 히스토리 저장 (관리자별)
   var ym = getYearMonth();
   if(!DB.evalHistory) DB.evalHistory = {};
   if(!DB.evalHistory[ym]) DB.evalHistory[ym] = {};
-  DB.evalHistory[ym].admin = DB.cfg.adminEvalTotal;
+  if(!DB.evalHistory[ym].admins) DB.evalHistory[ym].admins = {};
+  DB.evalHistory[ym].admins[currentAdminEvalTarget] = total;
   saveAll();
   closeModal('ov-admin-eval');
-  toast('👔 관리자 평가가 저장됐어요 ✓');
+  toast('👔 '+currentAdminEvalTarget+' 관리자 평가가 저장됐어요 ✓');
   renderAdminHome();
 }
 
@@ -1906,16 +1944,15 @@ function renderAdminHome() {
 
   // 원장: 관리자 평가 현황 카드
   if(ME.role==='owner') {
-    var aes = DB.cfg.adminEvalTotal;
-    var aed = DB.cfg.adminEvalDate;
+    var admins = DB.cfg.admins || [];
+    var evaluatedCount = admins.filter(function(a){ return a.adminEvalTotal !== undefined; }).length;
     h += '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">'
        + '<div>'
          + '<div style="font-size:11px;color:var(--t2);margin-bottom:3px">👔 관리자 평가</div>'
-         + '<div style="font-size:13px;color:var(--t3)">'+(aed?aed+' 평가':'아직 평가 없음')+'</div>'
+         + '<div style="font-size:13px;color:var(--t3)">'+(admins.length ? '관리자 '+admins.length+'명 중 '+evaluatedCount+'명 평가 완료' : '등록된 관리자 없음')+'</div>'
        + '</div>'
        + '<div style="display:flex;align-items:center;gap:10px">'
-         + (aes!==undefined?'<span style="font-size:24px;font-weight:800;color:var(--pu);font-family:DM Mono,monospace">'+aes+'점</span>':'')
-         + '<button onclick="openAdminEval()" style="font-size:12px;color:var(--pu);background:var(--s2);border:1px solid var(--pu);border-radius:var(--rs);padding:6px 12px;cursor:pointer">'+(aes!==undefined?'재평가':'평가하기')+'</button>'
+         + '<button onclick="openAdminEval()" style="font-size:12px;color:var(--pu);background:var(--s2);border:1px solid var(--pu);border-radius:var(--rs);padding:6px 12px;cursor:pointer">평가하기</button>'
        + '</div>'
        + '</div>';
   }
