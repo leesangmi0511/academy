@@ -805,6 +805,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     </div>
     <div id="import-status" style="display:none;font-size:13px;padding:10px;background:var(--s2);border-radius:var(--rs);margin-bottom:12px;text-align:center;line-height:1.6"></div>
     <button class="btn" id="import-btn" onclick="importFromHwApp()">📥 과제앱에서 불러오기</button>
+    <button class="btn" style="background:var(--acc-l);color:var(--acc);border:1.5px solid var(--acc);margin-top:8px" onclick="reassignAllStudents()">🔄 담당 강사 자동 재배정</button>
     <button class="btn ghost" onclick="closeModal('ov-import')">닫기</button>
   </div>
 </div>
@@ -1105,6 +1106,62 @@ function syncMembersToHwApp(cb) {
 // 동기화 모달 열기
 
 // ═══ 과제 앱 → 학원 앱 명단 불러오기 ═══
+
+// ═══ classId 끝글자로 담당 강사 자동 매칭 ═══
+// 예: "M1-수지(월수금)" → "수지" → 끝글자 "지" → 김지혜
+function matchTeacherByClassId(classId) {
+  if (!classId) return '';
+  // "수X" 부분 추출: - 다음 ( 전까지
+  var m = classId.match(/-([^(]+)/);
+  if (!m) return '';
+  var part = m[1].trim();        // 예: "수지"
+  var lastChar = part.slice(-1); // 예: "지"
+
+  // 끝글자 → 강사 이름 매핑 (중복 글자는 명시적으로 지정)
+  var explicitMap = {
+    '민': '이영민',  // 수민 → 이영민 (오광민 아님)
+    '오': '오광민'   // 수오 → 오광민
+  };
+  if (explicitMap[lastChar]) {
+    // 해당 강사가 실제 등록돼 있으면 반환
+    if (DB.cfg.teachers.find(function(t){ return t.name === explicitMap[lastChar]; }))
+      return explicitMap[lastChar];
+  }
+
+  // 일반 매칭: 끝글자가 이름에 포함된 강사 찾기
+  var matched = DB.cfg.teachers.filter(function(t){ return t.name.indexOf(lastChar) > -1; });
+  if (matched.length === 1) return matched[0].name;
+  // 여러 명이면 explicitMap 우선, 없으면 첫 번째
+  if (matched.length > 1) {
+    if (explicitMap[lastChar]) {
+      var ex = matched.find(function(t){ return t.name === explicitMap[lastChar]; });
+      if (ex) return ex.name;
+    }
+    return matched[0].name;
+  }
+  return '';
+}
+
+// 기존 학생 전체 담당 강사 재배정
+function reassignAllStudents() {
+  var reassigned = 0, failed = 0, failedClasses = {};
+  DB.stu.forEach(function(s){
+    var t = matchTeacherByClassId(s.class);
+    if (t) {
+      if (s.teacher !== t) { s.teacher = t; reassigned++; }
+    } else {
+      failed++;
+      if (s.class) failedClasses[s.class] = (failedClasses[s.class]||0)+1;
+    }
+  });
+  saveAll();
+  renderHome();
+  renderProgress();
+  var failMsg = Object.keys(failedClasses).length ? '\n미배정 반: ' + Object.keys(failedClasses).slice(0,5).join(', ') : '';
+  toast('✓ ' + reassigned + '명 담당 강사 배정 완료' + (failed ? ' (' + failed + '명 실패)' : ''));
+  return { reassigned: reassigned, failed: failed, failedClasses: failedClasses };
+}
+
 function importFromHwApp() {
   var btn = document.getElementById('import-btn');
   btn.disabled = true;
@@ -1154,10 +1211,11 @@ function importFromHwApp() {
       if (!name) return;
       var exists = DB.stu.find(function(s){ return s.name === name; });
       if (exists) { skippedStudents++; return; }
+      var stuClass = f.classId && f.classId.stringValue || '';
       DB.stu.push({
         name: name,
-        teacher: '',
-        class: f.classId && f.classId.stringValue || '',
+        teacher: matchTeacherByClassId(stuClass),
+        class: stuClass,
         consultHistory: [],
         textbookStatus: {}
       });
