@@ -1111,27 +1111,37 @@ function syncMembersToHwApp(cb) {
 // 예: "M1-수지(월수금)" → "수지" → 끝글자 "지" → 김지혜
 function matchTeacherByClassId(classId) {
   if (!classId) return '';
-  // "수X" 부분 추출: - 다음 ( 전까지
-  var m = classId.match(/-([^(]+)/);
-  if (!m) return '';
-  var part = m[1].trim();        // 예: "수지"
-  var lastChar = part.slice(-1); // 예: "지"
-
-  // 끝글자 → 강사 이름 매핑 (중복 글자는 명시적으로 지정)
   var explicitMap = {
     '민': '이영민',  // 수민 → 이영민 (오광민 아님)
     '오': '오광민'   // 수오 → 오광민
   };
+
+  // 0) 강사 이름 전체가 classId에 포함된 경우 (예: "박강식T")
+  var fullMatch = DB.cfg.teachers.filter(function(t){ return classId.indexOf(t.name) > -1; });
+  if (fullMatch.length === 1) return fullMatch[0].name;
+
+  // 1) "수X" 부분 추출
+  // 패턴 A: "-수지(" 또는 "-수지" 형태
+  // 패턴 B: "수지(고등)" 처럼 - 없이 바로 (
+  // 패턴 C: "수상 화목" 처럼 공백 구분
+  var part = '';
+  var mA = classId.match(/-\s*([^\s(]+)/);
+  if (mA) part = mA[1].trim();
+  if (!part) {
+    var mB = classId.match(/(수[가-힣])/);
+    if (mB) part = mB[1];
+  }
+  if (!part) return '';
+
+  var lastChar = part.slice(-1);
+
   if (explicitMap[lastChar]) {
-    // 해당 강사가 실제 등록돼 있으면 반환
     if (DB.cfg.teachers.find(function(t){ return t.name === explicitMap[lastChar]; }))
       return explicitMap[lastChar];
   }
 
-  // 일반 매칭: 끝글자가 이름에 포함된 강사 찾기
   var matched = DB.cfg.teachers.filter(function(t){ return t.name.indexOf(lastChar) > -1; });
   if (matched.length === 1) return matched[0].name;
-  // 여러 명이면 explicitMap 우선, 없으면 첫 번째
   if (matched.length > 1) {
     if (explicitMap[lastChar]) {
       var ex = matched.find(function(t){ return t.name === explicitMap[lastChar]; });
