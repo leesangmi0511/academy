@@ -1856,6 +1856,7 @@ function riskNotify(){
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
+  var urgRate = ST.length ? Math.round(urgStu.length/ST.length*100) : 0;
   var rates = S.map(calcRate);
   var avgR = S.length ? Math.round(rates.reduce(function(a,b){return a+b;},0)/S.length) : 0;
   var h = '';
@@ -1877,7 +1878,7 @@ function renderAdminHome() {
      + '<div class="sc"><div class="sv" style="color:var(--acc)">'+T.length+'</div><div class="sl-val">강사</div></div>'
      + '<div class="sc"><div class="sv" style="color:var(--pu)">'+S.length+'</div><div class="sl-val">과목</div></div>'
      + (ME.role==='owner' ? '<div class="sc"><div class="sv" style="color:var(--g)">'+ST.length+'</div><div class="sl-val">학생</div></div>' : '')
-     + '<div class="sc"><div class="sv" style="color:var(--rd)">'+urgStu.length+'</div><div class="sl-val">상담필요</div></div>'
+     + '<div class="sc"><div class="sv" style="color:var(--rd)">'+(ME.role==='owner'?urgStu.length:urgRate+'%')+'</div><div class="sl-val">상담필요</div></div>'
      + '</div>';
 
   // 차트
