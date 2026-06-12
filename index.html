@@ -1164,12 +1164,42 @@ function reassignAllStudents() {
       if (s.class) failedClasses[s.class] = (failedClasses[s.class]||0)+1;
     }
   });
+  // 학생들의 반(class)을 과목(subj)으로 자동 생성
+  var createdSubj = ensureSubjectsFromClasses();
   saveAll();
   renderHome();
   renderProgress();
-  var failMsg = Object.keys(failedClasses).length ? '\n미배정 반: ' + Object.keys(failedClasses).slice(0,5).join(', ') : '';
-  toast('✓ ' + reassigned + '명 담당 강사 배정 완료' + (failed ? ' (' + failed + '명 실패)' : ''));
-  return { reassigned: reassigned, failed: failed, failedClasses: failedClasses };
+  toast('✓ ' + reassigned + '명 배정 완료' + (createdSubj ? ', 과목 ' + createdSubj + '개 생성' : '') + (failed ? ' (' + failed + '명 실패)' : ''));
+  return { reassigned: reassigned, failed: failed, failedClasses: failedClasses, createdSubj: createdSubj };
+}
+
+// 학생들의 반(class)을 과목(subj)으로 자동 생성 (없는 것만)
+function ensureSubjectsFromClasses() {
+  var created = 0;
+  // 현재 존재하는 과목명 집합
+  var existing = {};
+  DB.subj.forEach(function(s){ existing[s.name] = true; });
+  // 학생들의 고유 반 목록
+  var classMap = {}; // 반이름 → 담당강사
+  DB.stu.forEach(function(s){
+    if (!s.class) return;
+    if (!classMap[s.class]) classMap[s.class] = s.teacher || matchTeacherByClassId(s.class) || '';
+  });
+  // 없는 반을 과목으로 생성
+  Object.keys(classMap).forEach(function(cls){
+    if (existing[cls]) return;
+    DB.subj.push({
+      name: cls,
+      teacher: classMap[cls],
+      startPage: 1,
+      currentPage: 1,
+      totalPages: 100,
+      endDate: '',
+      history: []
+    });
+    created++;
+  });
+  return created;
 }
 
 function importFromHwApp() {
@@ -1232,6 +1262,9 @@ function importFromHwApp() {
       addedStudents++;
     });
 
+    // 불러온 학생들의 반을 과목으로 자동 생성
+    var createdSubj = ensureSubjectsFromClasses();
+
     saveAll();
     renderHome();
     renderProgress();
@@ -1244,7 +1277,8 @@ function importFromHwApp() {
     el.style.color = 'var(--g)';
     el.innerHTML =
       '✓ 강사 ' + addedTeachers + '명 추가 (중복 ' + skippedTeachers + '명 스킵)<br>' +
-      '✓ 학생 ' + addedStudents + '명 추가 (중복 ' + skippedStudents + '명 스킵)';
+      '✓ 학생 ' + addedStudents + '명 추가 (중복 ' + skippedStudents + '명 스킵)<br>' +
+      '✓ 과목 ' + createdSubj + '개 자동 생성';
 
     toast('📥 과제 앱 명단을 불러왔어요 ✓');
 
@@ -1839,10 +1873,10 @@ function renderAdminHome() {
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>';
 
   // 통계
-  h += '<div class="sg4">'
+  h += '<div class="'+(ME.role==='owner'?'sg4':'sg3')+'">'
      + '<div class="sc"><div class="sv" style="color:var(--acc)">'+T.length+'</div><div class="sl-val">강사</div></div>'
      + '<div class="sc"><div class="sv" style="color:var(--pu)">'+S.length+'</div><div class="sl-val">과목</div></div>'
-     + '<div class="sc"><div class="sv" style="color:var(--g)">'+ST.length+'</div><div class="sl-val">학생</div></div>'
+     + (ME.role==='owner' ? '<div class="sc"><div class="sv" style="color:var(--g)">'+ST.length+'</div><div class="sl-val">학생</div></div>' : '')
      + '<div class="sc"><div class="sv" style="color:var(--rd)">'+urgStu.length+'</div><div class="sl-val">상담필요</div></div>'
      + '</div>';
 
