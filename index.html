@@ -324,6 +324,10 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <input class="fi" id="li-tid" placeholder="강사 아이디 (한글 이름)">
     <input class="fi" id="li-tpw" type="password" placeholder="비밀번호">
   </div>
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--t2);margin-bottom:12px;cursor:pointer;user-select:none">
+    <input type="checkbox" id="li-autologin" checked style="width:16px;height:16px;accent-color:var(--acc);cursor:pointer">
+    자동 로그인 (이 기기에서 계속 로그인)
+  </label>
   <button class="btn" onclick="doLogin()">로그인</button>
   <div id="li-err" style="font-size:12px;color:var(--rd);text-align:center;min-height:18px;margin-bottom:8px"></div>
   <div style="display:flex;flex-direction:column;gap:8px;align-items:center;margin-top:8px">
@@ -2765,12 +2769,62 @@ function doLogin() {
     ME={role:'teacher',name:name};
   }
   err.textContent='';
+  // 자동 로그인 정보 저장
+  var autoChk = document.getElementById('li-autologin');
+  if(autoChk && autoChk.checked){
+    var cred = {role:ME.role, name:ME.name};
+    if(loginRole==='owner') cred.pw = document.getElementById('li-opw').value;
+    else if(loginRole==='admin') cred.pw = document.getElementById('li-apw').value;
+    else cred.pw = document.getElementById('li-tpw').value;
+    localStorage.setItem('ac_autologin', JSON.stringify(cred));
+  } else {
+    localStorage.removeItem('ac_autologin');
+  }
   document.getElementById('login').style.display='none';
   if(ME.role==='admin'||ME.role==='owner') document.getElementById('btn-reset').style.display='inline';
   goTab('home');
 }
+
+// 저장된 자동 로그인 정보로 자동 로그인 시도
+function tryAutoLogin() {
+  var saved = localStorage.getItem('ac_autologin');
+  if(!saved) return false;
+  var cred;
+  try { cred = JSON.parse(saved); } catch(e){ return false; }
+  if(!cred || !cred.role) return false;
+
+  if(cred.role==='owner'){
+    var ownerPw = DB.cfg.ownerPw||'7193455';
+    if(cred.pw !== ownerPw) return false;
+    ME = {role:'owner', name:'원장'};
+  } else if(cred.role==='admin'){
+    var admins = DB.cfg.admins||[];
+    var fa = admins.find(function(a){return a.name===cred.name;});
+    if(fa){
+      if(fa.pw !== cred.pw) return false;
+      ME = {role:'admin', name:fa.name};
+    } else {
+      if(!DB.cfg.adminPw || cred.pw !== DB.cfg.adminPw) return false;
+      ME = {role:'admin', name:'관리자'};
+    }
+  } else if(cred.role==='teacher'){
+    var t = (DB.cfg.teachers||[]).find(function(t){return t.name===cred.name;});
+    if(!t) return false;
+    var tPw = t.pw||'7193455';
+    if(tPw !== cred.pw) return false;
+    ME = {role:'teacher', name:cred.name};
+  } else {
+    return false;
+  }
+  // 로그인 성공
+  document.getElementById('login').style.display='none';
+  if(ME.role==='admin'||ME.role==='owner') document.getElementById('btn-reset').style.display='inline';
+  goTab('home');
+  return true;
+}
 function logout() {
   ME=null;
+  localStorage.removeItem('ac_autologin');  // 자동 로그인 해제
   document.getElementById('login').style.display='flex';
   document.getElementById('li-opw').value='';
   document.getElementById('li-aid').value='';
@@ -3236,6 +3290,8 @@ _loadFirebase().then(function() {
   _FS.get('academy/data').then(function(doc) {
     var d = _FS.docToObj(doc);
     applyDB(d);
+    // 데이터 로드 후 자동 로그인 시도
+    tryAutoLogin();
     // 30초마다 실시간 동기화 (롱폴링)
     window._fsUnsubscribe = _FS.onSnapshot('academy/data', function(snap) {
       var d2 = _FS.docToObj(snap);
@@ -3253,6 +3309,7 @@ _loadFirebase().then(function() {
   }).catch(function(e) {
     console.warn('FB load failed:', e);
     applyDB(null);
+    tryAutoLogin();  // 오프라인에서도 자동 로그인
   });
   // 10초 타임아웃
   setTimeout(function(){
