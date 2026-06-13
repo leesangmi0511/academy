@@ -923,8 +923,8 @@ var calY, calM, calSel;
 var cFilter = 'all';
 var teacherFilter = ''; // 강사 필터 (전체 탭 공통)
 var rankTab = 'progress';
-var hwData = null; // 순위 기준: progress | consult | students | homework
-var hwData = null;
+var hwData = null; var hwDataT = 0; // 순위 기준: progress | consult | students | homework
+
 var suTeachers = [];
 var fgRole2 = null, fgTIdx = -1;
 var saveTimer = null;
@@ -1565,7 +1565,7 @@ function setTFilter(name) {
 
 var HW_API='https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(default)/documents/appData/main';
 var HW_KEY='AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
-function loadHwData(cb){if(hwData){if(cb)cb(hwData);return;}fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
+function loadHwData(cb){if(hwData&&Date.now()-hwDataT<60000){if(cb)cb(hwData);return;}hwDataT=Date.now();fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
 function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var sp=hwData.fields.studentProgress;if(!sp||!sp.mapValue||!sp.mapValue.fields)return 0;var spFields=sp.mapValue.fields;if(!stuList||!stuList.length)return 0;var totalDone=0,totalAll=0;var hwUsers=hwData.fields.users?hwData.fields.users.arrayValue.values||[]:[];stuList.forEach(function(stu){var hwUser=hwUsers.find(function(u){var f=u.mapValue?u.mapValue.fields:null;return f&&(f.name?f.name.stringValue:'')===stu.name;});if(!hwUser)return;var hwId=(hwUser.mapValue.fields.id||{}).stringValue||'';if(!hwId||!spFields[hwId])return;var stuSp=spFields[hwId].mapValue?spFields[hwId].mapValue.fields:null;if(!stuSp)return;Object.keys(stuSp).forEach(function(key){var vals=stuSp[key].arrayValue?stuSp[key].arrayValue.values||[]:[];totalAll++;if(vals.filter(function(v){return v.stringValue&&v.stringValue!=='t0';}).length>0)totalDone++;});});return totalAll>0?Math.round(totalDone/totalAll*100):0;}
 
 // ═══ 강사 평가 ═══
@@ -1620,7 +1620,7 @@ function syncMembersToHwApp(cb) {
           id: { stringValue: stuId },
           name: { stringValue: s.name },
           role: { stringValue: 'student' },
-          password: { stringValue: '1234' },
+          password: { stringValue: (found && found.mapValue.fields.password ? found.mapValue.fields.password.stringValue : '1234') },
           classId: { stringValue: s.class || '' },
           avatar: { stringValue: avatar }
         }}
