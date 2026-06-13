@@ -292,12 +292,17 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
       <div id="cal-evlist"><div class="empty">날짜를 선택하면 일정이 표시됩니다.</div></div>
     </div>
     <div class="screen" id="sc-detail"><button class="back" id="det-back"><svg class="ic" style="width:15px;height:15px" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>돌아가기</button><div id="det-body"></div></div>
+    <div class="screen" id="sc-tuition">
+      <div style="padding:14px 0 8px"><div style="font-size:21px;font-weight:700">💳 수강료 관리</div></div>
+      <div id="tuition-body"></div>
+    </div>
   </div>
   <div class="tabbar">
     <div class="ti on" id="tab-home" onclick="goTab('home')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div><div class="tlb">현황</div></div>
     <div class="ti" id="tab-progress" onclick="goTab('progress')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="tlb">진도</div></div>
     <div class="ti" id="tab-consult" onclick="goTab('consult')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></div><div class="tlb">상담</div></div>
     <div class="ti" id="tab-calendar" onclick="goTab('calendar')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="tlb">일정</div></div>
+    <div class="ti" id="tab-tuition" onclick="goTab('tuition')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div><div class="tlb">수강료</div></div>
   </div>
 </div>
 
@@ -867,6 +872,26 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 수강료 설정 모달 -->
+<div class="ov" id="ov-tuition-set" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">💳 수강료 설정</div>
+    <div style="font-size:14px;font-weight:600;color:var(--acc);text-align:center;margin-bottom:14px" id="tset-name"></div>
+    <input type="hidden" id="tset-idx">
+    <label class="fl">월 수강료 (원)</label>
+    <input class="fi" id="tset-amount" type="number" inputmode="numeric" placeholder="예: 350000">
+    <label class="fl">납부 예정일 (매월 며칠)</label>
+    <input class="fi" id="tset-dueday" type="number" inputmode="numeric" min="1" max="31" placeholder="예: 5">
+    <label class="fl">결제 링크 (선택)</label>
+    <input class="fi" id="tset-link" type="url" placeholder="토스/카카오페이 결제 링크 붙여넣기">
+    <div style="font-size:11px;color:var(--t3);margin:6px 0 14px;line-height:1.6">
+      💡 토스페이먼츠·카카오페이·네이버페이에서 만든 결제 링크를 붙여넣으면, [🔗 결제 링크] 버튼으로 학부모에게 결제 안내를 보낼 수 있어요.
+    </div>
+    <button class="btn" onclick="saveTuitionSet()">저장</button>
+    <button class="btn ghost" onclick="closeModal('ov-tuition-set')">취소</button>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -955,8 +980,229 @@ function goTab(name) {
   if (name === 'progress') renderProgress();
   if (name === 'consult')  renderConsult();
   if (name === 'calendar') { if(!calY){var n=new Date();calY=n.getFullYear();calM=n.getMonth();} renderCal(); }
+  if (name === 'tuition')  renderTuition();
 }
 function goBack() { goTab(prevTab); }
+
+// ═══════════════════════════════════════
+// 수강료 관리
+// ═══════════════════════════════════════
+var tuitionMonth = null; // 조회 중인 월 (YYYY-MM)
+
+function getTuitionMonth() {
+  if (!tuitionMonth) {
+    var d = new Date();
+    tuitionMonth = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+  }
+  return tuitionMonth;
+}
+
+// 학생의 해당 월 납부 상태 가져오기
+function getStuPayStatus(stu, ym) {
+  if (!stu.tuition) return { status: '미설정', amount: 0 };
+  var paid = (stu.tuition.paidMonths || {})[ym];
+  return {
+    status: paid ? '완납' : '미납',
+    amount: stu.tuition.amount || 0,
+    paidDate: paid || null
+  };
+}
+
+function renderTuition() {
+  if (!ME) return;
+  var ym = getTuitionMonth();
+  var body = document.getElementById('tuition-body');
+
+  // 권한별 학생 목록 (강사는 본인 담당만)
+  var stuList;
+  if (ME.role === 'teacher') stuList = DB.stu.filter(function(s){ return s.teacher === ME.name; });
+  else stuList = DB.stu;
+
+  // 통계 계산
+  var totalSet = 0, paidCount = 0, unpaidCount = 0, expectedTotal = 0, collectedTotal = 0;
+  stuList.forEach(function(s){
+    if (s.tuition && s.tuition.amount) {
+      totalSet++;
+      expectedTotal += s.tuition.amount;
+      var ps = getStuPayStatus(s, ym);
+      if (ps.status === '완납') { paidCount++; collectedTotal += ps.amount; }
+      else unpaidCount++;
+    }
+  });
+  var collectRate = totalSet ? Math.round(paidCount/totalSet*100) : 0;
+
+  var h = '';
+
+  // 월 선택 네비
+  h += '<div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:14px">'
+     + '<button onclick="mvTuitionMonth(-1)" style="background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);width:32px;height:32px;cursor:pointer;font-size:16px;color:var(--acc)">‹</button>'
+     + '<span style="font-size:16px;font-weight:700">'+ym.replace('-','년 ')+'월</span>'
+     + '<button onclick="mvTuitionMonth(1)" style="background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);width:32px;height:32px;cursor:pointer;font-size:16px;color:var(--acc)">›</button>'
+     + '</div>';
+
+  // 통계 카드
+  h += '<div class="sg3" style="margin-bottom:14px">'
+     + '<div class="sc"><div class="sv" style="color:var(--g)">'+collectRate+'%</div><div class="sl-val">수납률</div></div>'
+     + '<div class="sc"><div class="sv" style="color:var(--acc)">'+paidCount+'</div><div class="sl-val">완납</div></div>'
+     + '<div class="sc"><div class="sv" style="color:var(--rd)">'+unpaidCount+'</div><div class="sl-val">미납</div></div>'
+     + '</div>';
+
+  // 원장만 금액 합계 표시
+  if (ME.role === 'owner') {
+    h += '<div style="background:var(--acc-l);border-radius:var(--rs);padding:12px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">'
+       + '<div><div style="font-size:11px;color:var(--t2)">수납 완료</div><div style="font-size:18px;font-weight:800;color:var(--g);font-family:DM Mono,monospace">'+collectedTotal.toLocaleString()+'원</div></div>'
+       + '<div style="text-align:right"><div style="font-size:11px;color:var(--t2)">예상 총액</div><div style="font-size:18px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace">'+expectedTotal.toLocaleString()+'원</div></div>'
+       + '</div>';
+  }
+
+  // 검색
+  h += '<input id="tuition-search" oninput="renderTuitionList()" placeholder="🔍 학생 이름 검색..." style="width:100%;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:10px 12px;font-size:13px;margin-bottom:12px;box-sizing:border-box">';
+
+  // 학생 목록
+  h += '<div id="tuition-list"></div>';
+
+  body.innerHTML = h;
+  renderTuitionList();
+}
+
+function renderTuitionList() {
+  var ym = getTuitionMonth();
+  var searchEl = document.getElementById('tuition-search');
+  var kw = searchEl ? searchEl.value.trim() : '';
+
+  var stuList;
+  if (ME.role === 'teacher') stuList = DB.stu.filter(function(s){ return s.teacher === ME.name; });
+  else stuList = DB.stu;
+  if (kw) stuList = stuList.filter(function(s){ return s.name.indexOf(kw) > -1; });
+
+  // 미납 먼저, 완납 나중 정렬
+  stuList = stuList.slice().sort(function(a,b){
+    var pa = getStuPayStatus(a, ym).status === '완납' ? 1 : 0;
+    var pb = getStuPayStatus(b, ym).status === '완납' ? 1 : 0;
+    return pa - pb;
+  });
+
+  var listEl = document.getElementById('tuition-list');
+  if (!stuList.length) { listEl.innerHTML = '<div class="empty">학생이 없어요.</div>'; return; }
+
+  var h = '';
+  stuList.forEach(function(s){
+    var realIdx = DB.stu.indexOf(s);
+    var ps = getStuPayStatus(s, ym);
+    var hasAmount = s.tuition && s.tuition.amount;
+    var statusColor = ps.status === '완납' ? 'var(--g)' : (ps.status === '미납' ? 'var(--rd)' : 'var(--t3)');
+    var statusBg = ps.status === '완납' ? 'var(--gl)' : (ps.status === '미납' ? 'var(--rdl)' : 'var(--s2)');
+
+    h += '<div style="background:var(--s2);border-radius:var(--rs);padding:12px;margin-bottom:8px">'
+       + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:'+(hasAmount?'8px':'0')+'">'
+         + '<div style="flex:1;min-width:0">'
+           + '<div style="font-size:14px;font-weight:600">'+s.name+'</div>'
+           + '<div style="font-size:11px;color:var(--t2);margin-top:1px">'+(s.class||'반 미지정')+(hasAmount?' · '+s.tuition.amount.toLocaleString()+'원':'')+'</div>'
+         + '</div>'
+         + '<span style="font-size:11px;font-weight:600;color:'+statusColor+';background:'+statusBg+';padding:4px 10px;border-radius:20px">'+ps.status+'</span>'
+       + '</div>';
+
+    if (hasAmount) {
+      h += '<div style="display:flex;gap:6px">';
+      if (ps.status === '완납') {
+        h += '<button onclick="toggleTuitionPaid('+realIdx+')" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:7px;cursor:pointer">납부 취소</button>';
+      } else {
+        h += '<button onclick="toggleTuitionPaid('+realIdx+')" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:7px;cursor:pointer;font-weight:600">✓ 납부 완료</button>';
+        if (s.tuition.payLink) {
+          h += '<button onclick="sendPayLink('+realIdx+')" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:7px;cursor:pointer;font-weight:600">🔗 결제 링크</button>';
+        }
+      }
+      h += '<button onclick="openTuitionSet('+realIdx+')" style="font-size:12px;color:var(--t2);background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:7px 12px;cursor:pointer">설정</button>';
+      h += '</div>';
+    } else {
+      h += '<button onclick="openTuitionSet('+realIdx+')" style="width:100%;font-size:12px;color:var(--acc);background:var(--s1);border:1px solid var(--acc);border-radius:var(--rs);padding:7px;cursor:pointer;margin-top:4px">+ 수강료 설정</button>';
+    }
+    h += '</div>';
+  });
+  listEl.innerHTML = h;
+}
+
+function mvTuitionMonth(delta) {
+  var ym = getTuitionMonth();
+  var parts = ym.split('-');
+  var d = new Date(parseInt(parts[0]), parseInt(parts[1])-1+delta, 1);
+  tuitionMonth = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+  renderTuition();
+}
+
+// 납부 완료/취소 토글
+function toggleTuitionPaid(idx) {
+  var s = DB.stu[idx];
+  if (!s.tuition) return;
+  if (!s.tuition.paidMonths) s.tuition.paidMonths = {};
+  var ym = getTuitionMonth();
+  if (s.tuition.paidMonths[ym]) {
+    delete s.tuition.paidMonths[ym];
+    toast(s.name + ' 납부 취소됨');
+  } else {
+    s.tuition.paidMonths[ym] = today();
+    toast('✓ ' + s.name + ' 납부 완료 처리됨');
+  }
+  saveAll();
+  renderTuition();
+}
+
+// 수강료 설정 모달
+function openTuitionSet(idx) {
+  var s = DB.stu[idx];
+  document.getElementById('tset-idx').value = idx;
+  document.getElementById('tset-name').textContent = s.name;
+  document.getElementById('tset-amount').value = (s.tuition && s.tuition.amount) ? s.tuition.amount : '';
+  document.getElementById('tset-dueday').value = (s.tuition && s.tuition.dueDay) ? s.tuition.dueDay : '';
+  document.getElementById('tset-link').value = (s.tuition && s.tuition.payLink) ? s.tuition.payLink : '';
+  openModal('ov-tuition-set');
+}
+
+function saveTuitionSet() {
+  var idx = parseInt(document.getElementById('tset-idx').value);
+  var s = DB.stu[idx];
+  var amount = parseInt(document.getElementById('tset-amount').value) || 0;
+  var dueDay = parseInt(document.getElementById('tset-dueday').value) || 0;
+  var link = document.getElementById('tset-link').value.trim();
+
+  if (!s.tuition) s.tuition = { paidMonths: {} };
+  s.tuition.amount = amount;
+  s.tuition.dueDay = dueDay;
+  s.tuition.payLink = link;
+  if (!s.tuition.paidMonths) s.tuition.paidMonths = {};
+
+  saveAll();
+  closeModal('ov-tuition-set');
+  toast('✓ ' + s.name + ' 수강료 설정 저장됨');
+  renderTuition();
+}
+
+// 결제 링크 보내기 (복사/공유)
+function sendPayLink(idx) {
+  var s = DB.stu[idx];
+  if (!s.tuition || !s.tuition.payLink) { toast('결제 링크가 없어요', 'var(--rd)'); return; }
+  var ym = getTuitionMonth();
+  var amount = (s.tuition.amount||0).toLocaleString();
+  var msg = '[ROUTETOP 학원] ' + s.name + ' 학생 ' + ym.replace('-','년 ') + '월 수강료 ' + amount + '원 결제 안내\n\n아래 링크에서 결제해 주세요:\n' + s.tuition.payLink;
+
+  // 클립보드 복사 시도
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(msg).then(function(){
+      toast('📋 결제 안내 메시지가 복사됐어요');
+    }).catch(function(){
+      promptCopy(msg);
+    });
+  } else {
+    promptCopy(msg);
+  }
+}
+
+function promptCopy(msg) {
+  // 폴백: 링크 열기
+  window.open(msg.split('\n').pop(), '_blank');
+}
+
+
 
 // ═══════════════════════════════════════
 // 렌더: 홈
