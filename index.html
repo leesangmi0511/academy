@@ -260,8 +260,8 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 .toast{position:fixed;bottom:82px;left:50%;transform:translateX(-50%) translateY(14px);background:var(--g);color:#fff;padding:9px 18px;border-radius:18px;font-size:13px;font-weight:500;opacity:0;transition:all .25s;z-index:9998;pointer-events:none;white-space:nowrap}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 #login{position:fixed;inset:0;z-index:300;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 28px;max-width:430px;margin:0 auto;overflow-y:auto}
-.role-tabs{display:flex;gap:8px;margin-bottom:16px;width:100%}
-.role-tab{flex:1;padding:11px;border:1px solid var(--s3);border-radius:var(--rs);background:transparent;color:var(--t2);font-size:13px;font-family:'Noto Sans KR',sans-serif;cursor:pointer;text-align:center}
+.role-tabs{display:flex;gap:5px;margin-bottom:16px;width:100%}
+.role-tab{flex:1;padding:11px 4px;border:1px solid var(--s3);border-radius:var(--rs);background:transparent;color:var(--t2);font-size:12px;font-family:'Noto Sans KR',sans-serif;cursor:pointer;text-align:center;white-space:nowrap}
 .role-tab.on{background:var(--acc-l);border-color:var(--acc);color:var(--acc);font-weight:500}
 </style>
 </head>
@@ -315,11 +315,16 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   <div style="font-size:11px;color:var(--t3);letter-spacing:3px;margin-bottom:28px">ACADEMY</div>
   <div class="role-tabs">
     <div class="role-tab" id="rtab-owner" onclick="selRole('owner')">원장</div>
+    <div class="role-tab" id="rtab-staff" onclick="selRole('staff')">행정팀</div>
     <div class="role-tab on" id="rtab-admin" onclick="selRole('admin')">관리자</div>
     <div class="role-tab" id="rtab-teacher" onclick="selRole('teacher')">강사</div>
   </div>
   <div id="lf-owner" style="display:none">
     <input class="fi" id="li-opw" type="password" placeholder="원장 비밀번호">
+  </div>
+  <div id="lf-staff" style="display:none">
+    <input class="fi" id="li-sid" placeholder="행정팀 아이디 (이름)">
+    <input class="fi" id="li-spw" type="password" placeholder="비밀번호">
   </div>
   <div id="lf-admin">
     <input class="fi" id="li-aid" placeholder="관리자 아이디 (이름)">
@@ -794,6 +799,17 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 행정팀 명단 모달 (원장 전용) -->
+<div class="ov" id="ov-staff-list" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div>
+    <div class="mt2">🗂️ 행정팀 명단 관리</div>
+    <div style="font-size:12px;color:var(--t2);margin-bottom:12px">원장 전용 · 행정팀 계정을 추가/삭제할 수 있어요. 행정팀은 원장과 같은 권한이며, 전체 학생 인원수만 볼 수 없어요.</div>
+    <div id="staff-list-body"></div>
+    <button class="btn sm" style="margin-bottom:12px;width:100%" onclick="addStaffToList()">+ 행정팀 추가</button>
+    <button class="btn ghost" onclick="closeModal('ov-staff-list')">닫기</button>
+  </div>
+</div>
+
 <!-- 과제 앱 → 학원 앱 명단 불러오기 모달 -->
 <div class="ov" id="ov-import" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div>
@@ -959,8 +975,8 @@ function cSt(s) {
 function stC(l)  { return l==='urgent' ? 'var(--rd)' : l==='upcoming' ? 'var(--am)' : 'var(--g)'; }
 function stBg(l) { return l==='urgent' ? 'var(--rdl)' : l==='upcoming' ? 'var(--aml)' : 'var(--gl)'; }
 function stI(l)  { return l==='urgent' ? '⚠' : l==='upcoming' ? '◷' : '✓'; }
-function mySubj() { return ME && (ME.role==='admin'||ME.role==='owner') ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
-function myStu()  { return ME && (ME.role==='admin'||ME.role==='owner') ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
+function mySubj() { return isAdminLevel() ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
+function myStu()  { return isAdminLevel() ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
 function gSI(s)  { return DB.subj.indexOf(s); }
 function gStI(s) { return DB.stu.indexOf(s); }
 
@@ -981,6 +997,12 @@ function goTab(name) {
   if (name === 'consult')  renderConsult();
   if (name === 'calendar') { if(!calY){var n=new Date();calY=n.getFullYear();calM=n.getMonth();} renderCal(); }
   if (name === 'tuition')  renderTuition();
+}
+
+// 역할에 따라 탭 표시/숨김 (수강료는 원장/행정팀만)
+function updateTabVisibility() {
+  var tuiTab = document.getElementById('tab-tuition');
+  if (tuiTab) tuiTab.style.display = isOwnerLevel() ? '' : 'none';
 }
 function goBack() { goTab(prevTab); }
 
@@ -1010,13 +1032,14 @@ function getStuPayStatus(stu, ym) {
 
 function renderTuition() {
   if (!ME) return;
-  var ym = getTuitionMonth();
   var body = document.getElementById('tuition-body');
-
-  // 권한별 학생 목록 (강사는 본인 담당만)
-  var stuList;
-  if (ME.role === 'teacher') stuList = DB.stu.filter(function(s){ return s.teacher === ME.name; });
-  else stuList = DB.stu;
+  // 수강료는 원장/행정팀만 접근 가능
+  if (!isOwnerLevel()) {
+    body.innerHTML = '<div class="empty" style="padding:40px 20px;text-align:center;color:var(--t3)">🔒 수강료 관리는 원장·행정팀만 볼 수 있어요.</div>';
+    return;
+  }
+  var ym = getTuitionMonth();
+  var stuList = DB.stu;
 
   // 통계 계산
   var totalSet = 0, paidCount = 0, unpaidCount = 0, expectedTotal = 0, collectedTotal = 0;
@@ -1047,8 +1070,8 @@ function renderTuition() {
      + '<div class="sc"><div class="sv" style="color:var(--rd)">'+unpaidCount+'</div><div class="sl-val">미납</div></div>'
      + '</div>';
 
-  // 원장만 금액 합계 표시
-  if (ME.role === 'owner') {
+  // 원장/행정팀 금액 합계 표시
+  if (isOwnerLevel()) {
     h += '<div style="background:var(--acc-l);border-radius:var(--rs);padding:12px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">'
        + '<div><div style="font-size:11px;color:var(--t2)">수납 완료</div><div style="font-size:18px;font-weight:800;color:var(--g);font-family:DM Mono,monospace">'+collectedTotal.toLocaleString()+'원</div></div>'
        + '<div style="text-align:right"><div style="font-size:11px;color:var(--t2)">예상 총액</div><div style="font-size:18px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace">'+expectedTotal.toLocaleString()+'원</div></div>'
@@ -1070,9 +1093,7 @@ function renderTuitionList() {
   var searchEl = document.getElementById('tuition-search');
   var kw = searchEl ? searchEl.value.trim() : '';
 
-  var stuList;
-  if (ME.role === 'teacher') stuList = DB.stu.filter(function(s){ return s.teacher === ME.name; });
-  else stuList = DB.stu;
+  var stuList = DB.stu;
   if (kw) stuList = stuList.filter(function(s){ return s.name.indexOf(kw) > -1; });
 
   // 미납 먼저, 완납 나중 정렬
@@ -1207,9 +1228,17 @@ function promptCopy(msg) {
 // ═══════════════════════════════════════
 // 렌더: 홈
 // ═══════════════════════════════════════
+// 권한 헬퍼
+// isAdminLevel: 관리자급 이상 (원장/행정팀/관리자) - 전체 데이터 접근
+function isAdminLevel() { return ME && (ME.role==='owner'||ME.role==='staff'||ME.role==='admin'); }
+// isOwnerLevel: 원장급 (원장/행정팀) - 금액/관리자명단/평가 등 상위 권한
+function isOwnerLevel() { return ME && (ME.role==='owner'||ME.role==='staff'); }
+// 전체 학생 인원수를 볼 수 있는지 (원장만)
+function canSeeStudentCount() { return ME && ME.role==='owner'; }
+
 function renderHome() {
   if (!ME) return;
-  if (ME.role === 'owner' || ME.role === 'admin') renderAdminHome();
+  if (isAdminLevel()) renderAdminHome();
   else renderTeacherHome();
   // 25일 이후 평가 알림 체크
   injectRiskBanner();setTimeout(checkEvalReminder, 2000);
@@ -1747,6 +1776,75 @@ function changeAdminPw(idx) {
   toast(a.name+' 비밀번호 변경됐어요 ✓');
 }
 
+// ═══ 행정팀 명단 관리 (원장 전용) ═══
+function openStaffList() {
+  renderStaffListBody();
+  openModal('ov-staff-list');
+}
+
+function renderStaffListBody() {
+  var staff = DB.cfg.staff || [];
+  var h = '';
+  if(!staff.length) {
+    h = '<div style="text-align:center;color:var(--t3);font-size:13px;padding:12px 0;margin-bottom:12px">등록된 행정팀이 없어요.<br>추가 버튼으로 행정팀을 등록하세요.</div>';
+  } else {
+    staff.forEach(function(a, i) {
+      h += '<div style="background:var(--s2);border-radius:var(--rs);padding:12px;margin-bottom:8px">'
+         + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
+           + '<div style="width:32px;height:32px;border-radius:50%;background:var(--gl);color:var(--g);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">'+a.name.slice(0,1)+'</div>'
+           + '<div style="flex:1">'
+             + '<div style="font-size:14px;font-weight:600">'+a.name+'</div>'
+             + '<div style="font-size:11px;color:var(--t3)">등록일: '+(a.date||'—')+'</div>'
+           + '</div>'
+           + '<button onclick="deleteStaff('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:18px;padding:4px">✕</button>'
+         + '</div>'
+         + '<div style="display:flex;gap:8px">'
+           + '<input class="fi" style="flex:1;margin-bottom:0;font-size:12px" type="password" id="staff-pw-'+i+'" placeholder="새 비밀번호 입력" value="">'
+           + '<button onclick="changeStaffPw('+i+')" style="font-size:11px;color:var(--g);background:var(--gl);border:1px solid var(--g);border-radius:var(--rs);padding:6px 10px;cursor:pointer;white-space:nowrap">변경</button>'
+         + '</div>'
+         + '</div>';
+    });
+  }
+  document.getElementById('staff-list-body').innerHTML = h;
+}
+
+function addStaffToList() {
+  var name = prompt('행정팀 이름(아이디)을 입력하세요:');
+  if(!name || !name.trim()) return;
+  name = name.trim();
+  if(!DB.cfg.staff) DB.cfg.staff = [];
+  if(DB.cfg.staff.find(function(a){return a.name===name;})) {
+    toast('이미 등록된 이름이에요','var(--rd)'); return;
+  }
+  DB.cfg.staff.push({name:name, pw:'7193455', date:today()});
+  saveAll();
+  renderStaffListBody();
+  toast('행정팀 '+name+' 추가됐어요 ✓ (초기 비번 7193455)');
+}
+
+function deleteStaff(idx) {
+  var a = DB.cfg.staff[idx];
+  if(!a) return;
+  if(!confirm(a.name+' 행정팀을 삭제할까요?')) return;
+  DB.cfg.staff.splice(idx, 1);
+  saveAll();
+  renderStaffListBody();
+  toast('행정팀 삭제됐어요');
+}
+
+function changeStaffPw(idx) {
+  var a = DB.cfg.staff[idx];
+  if(!a) return;
+  var pw = document.getElementById('staff-pw-'+idx).value;
+  if(!pw) {toast('새 비밀번호를 입력하세요','var(--rd)'); return;}
+  DB.cfg.staff[idx].pw = pw;
+  saveAll();
+  document.getElementById('staff-pw-'+idx).value='';
+  toast(a.name+' 비밀번호 변경됐어요 ✓');
+}
+
+
+
 function openEvalPeriod() {
   var now = new Date();
   var ym = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
@@ -1833,7 +1931,7 @@ function calcPeriodAvg() {
 
 // 매달 25일 평가 알림 체크
 function checkEvalReminder() {
-  if(!ME || (ME.role!=='admin' && ME.role!=='owner')) return;
+  if(!isAdminLevel()) return;
   var now = new Date();
   var day = now.getDate();
   var ym = getYearMonth();
@@ -2090,7 +2188,7 @@ function riskPending(){
   return out;
 }
 function riskBanner(){
-  if(!(ME&&(ME.role==='owner'||ME.role==='admin'))) return '';
+  if(!isAdminLevel()) return '';
   var p=riskPending();
   if(!p.length) return '';
   var danger=0,warn=0;
@@ -2135,7 +2233,7 @@ function renderRiskModal(){
   document.getElementById('risk-body').innerHTML=h;
 }
 function setRiskStatus(si,ri,code){
-  if(!(ME&&(ME.role==='owner'||ME.role==='admin'))){ toast('권한이 없어요','var(--rd)'); return; }
+  if(!isAdminLevel()){ toast('권한이 없어요','var(--rd)'); return; }
   if(!DB.stu[si]||!DB.stu[si].consultHistory||!DB.stu[si].consultHistory[ri]) return;
   DB.stu[si].consultHistory[ri].rstat = code===1?'done':'hold';
   saveAll();
@@ -2144,7 +2242,7 @@ function setRiskStatus(si,ri,code){
   if(curTab==='home') renderHome();
 }
 function riskNotify(){
-  if(!(ME&&(ME.role==='owner'||ME.role==='admin'))) return;
+  if(!isAdminLevel()) return;
   var p=riskPending();
   if(!p.length) return;
   showDirectNotif('ROUTETOP 위험 감지', '미처리 상담 '+p.length+'건이 있어요. 확인해 주세요.');
@@ -2161,21 +2259,22 @@ function renderAdminHome() {
   // 유저배지
   h += '<div class="ubadge">'
      + '<div style="width:28px;height:28px;border-radius:7px;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">관</div>'
-     + '<span style="font-size:13px;font-weight:600;flex:1">'+(ME.role==='owner'?'원장':'관리자')+'</span>'
+     + '<span style="font-size:13px;font-weight:600;flex:1">'+(ME.role==='owner'?'원장':(ME.role==='staff'?ME.name+' (행정팀)':'관리자'))+'</span>'
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
+     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button></div>':'')
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>';
 
   // 통계
-  h += '<div class="'+(ME.role==='owner'?'sg4':'sg3')+'">'
+  h += '<div class="'+(canSeeStudentCount()?'sg4':'sg3')+'">'
      + '<div class="sc"><div class="sv" style="color:var(--acc)">'+T.length+'</div><div class="sl-val">강사</div></div>'
      + '<div class="sc"><div class="sv" style="color:var(--pu)">'+S.length+'</div><div class="sl-val">과목</div></div>'
-     + (ME.role==='owner' ? '<div class="sc"><div class="sv" style="color:var(--g)">'+ST.length+'</div><div class="sl-val">학생</div></div>' : '')
-     + '<div class="sc"><div class="sv" style="color:var(--rd)">'+(ME.role==='owner'?urgStu.length:urgRate+'%')+'</div><div class="sl-val">상담필요</div></div>'
+     + (canSeeStudentCount() ? '<div class="sc"><div class="sv" style="color:var(--g)">'+ST.length+'</div><div class="sl-val">학생</div></div>' : '')
+     + '<div class="sc"><div class="sv" style="color:var(--rd)">'+(canSeeStudentCount()?urgStu.length:urgRate+'%')+'</div><div class="sl-val">상담필요</div></div>'
      + '</div>';
 
   // 차트
@@ -2195,8 +2294,8 @@ function renderAdminHome() {
        + '<div style="text-align:right;font-size:11px;color:var(--t2);margin-top:4px">전체 평균 '+avgR+'%</div></div>';
   }
 
-  // 원장: 관리자 평가 현황 카드
-  if(ME.role==='owner') {
+  // 원장/행정팀: 관리자 평가 현황 카드
+  if(isOwnerLevel()) {
     var admins = DB.cfg.admins || [];
     var evaluatedCount = admins.filter(function(a){ return a.adminEvalTotal !== undefined; }).length;
     h += '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">'
@@ -2968,9 +3067,11 @@ var loginRole = 'admin';
 function selRole(r) {
   loginRole=r;
   document.getElementById('rtab-owner').className='role-tab'+(r==='owner'?' on':'');
+  document.getElementById('rtab-staff').className='role-tab'+(r==='staff'?' on':'');
   document.getElementById('rtab-admin').className='role-tab'+(r==='admin'?' on':'');
   document.getElementById('rtab-teacher').className='role-tab'+(r==='teacher'?' on':'');
   document.getElementById('lf-owner').style.display=r==='owner'?'':'none';
+  document.getElementById('lf-staff').style.display=r==='staff'?'':'none';
   document.getElementById('lf-admin').style.display=r==='admin'?'':'none';
   document.getElementById('lf-teacher').style.display=r==='teacher'?'':'none';
 }
@@ -2984,6 +3085,17 @@ function doLogin() {
     var ownerPw=DB.cfg.ownerPw||'7193455';
     if(document.getElementById('li-opw').value!==ownerPw){err.textContent='비밀번호가 틀렸습니다.';return;}
     ME={role:'owner',name:'원장'};
+  } else if(loginRole==='staff'){
+    // 행정팀 로그인
+    var sid = document.getElementById('li-sid').value.trim();
+    var spw = document.getElementById('li-spw').value;
+    if(!sid){err.textContent='아이디를 입력하세요.';return;}
+    if(!spw){err.textContent='비밀번호를 입력하세요.';return;}
+    var staffList = DB.cfg.staff||[];
+    var foundStaff = staffList.find(function(s){return s.name===sid;});
+    if(!foundStaff){err.textContent='존재하지 않는 아이디입니다.';return;}
+    if(foundStaff.pw!==spw){err.textContent='비밀번호가 틀렸습니다.';return;}
+    ME={role:'staff',name:foundStaff.name};
   } else if(loginRole==='admin'){
     var aid = document.getElementById('li-aid').value.trim();
     var apw = document.getElementById('li-apw').value;
@@ -3027,7 +3139,8 @@ function doLogin() {
     localStorage.removeItem('ac_autologin');
   }
   document.getElementById('login').style.display='none';
-  if(ME.role==='admin'||ME.role==='owner') document.getElementById('btn-reset').style.display='inline';
+  if(isAdminLevel()) document.getElementById('btn-reset').style.display='inline';
+  updateTabVisibility();
   goTab('home');
 }
 
@@ -3043,6 +3156,11 @@ function tryAutoLogin() {
     var ownerPw = DB.cfg.ownerPw||'7193455';
     if(cred.pw !== ownerPw) return false;
     ME = {role:'owner', name:'원장'};
+  } else if(cred.role==='staff'){
+    var staffList = DB.cfg.staff||[];
+    var fs = staffList.find(function(s){return s.name===cred.name;});
+    if(!fs || fs.pw !== cred.pw) return false;
+    ME = {role:'staff', name:fs.name};
   } else if(cred.role==='admin'){
     var admins = DB.cfg.admins||[];
     var fa = admins.find(function(a){return a.name===cred.name;});
@@ -3064,7 +3182,8 @@ function tryAutoLogin() {
   }
   // 로그인 성공
   document.getElementById('login').style.display='none';
-  if(ME.role==='admin'||ME.role==='owner') document.getElementById('btn-reset').style.display='inline';
+  if(isAdminLevel()) document.getElementById('btn-reset').style.display='inline';
+  updateTabVisibility();
   goTab('home');
   return true;
 }
@@ -3518,7 +3637,7 @@ _loadFirebase().then(function() {
   function setFbSt(msg,color){var el=document.getElementById('fb-status');if(el){el.textContent=msg;el.style.color=color||'var(--t3)';}}
   function applyDB(d) {
     if(d&&d.cfg){
-      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};
+      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
       DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","admins":[],"teachers":[]}')
@@ -3544,7 +3663,7 @@ _loadFirebase().then(function() {
       if (!d2) return;
       // 최근 15초 내 로컬 변경이 있으면 폴링 데이터로 덮어쓰지 않음 (방금 추가한 내용 보호)
       if (Date.now() - _lastLocalSave < 15000) return;
-      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory;
+      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory;
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
