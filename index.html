@@ -898,6 +898,8 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <input class="fi" id="tset-amount" type="number" inputmode="numeric" placeholder="예: 350000">
     <label class="fl">납부 예정일 (매월 며칠)</label>
     <input class="fi" id="tset-dueday" type="number" inputmode="numeric" min="1" max="31" placeholder="예: 5">
+    <label class="fl">학부모 연락처</label>
+    <input class="fi" id="tset-phone" type="tel" inputmode="numeric" placeholder="예: 01012345678">
     <label class="fl">결제 링크 (선택)</label>
     <input class="fi" id="tset-link" type="url" placeholder="토스/카카오페이 결제 링크 붙여넣기">
     <div style="font-size:11px;color:var(--t3);margin:6px 0 14px;line-height:1.6">
@@ -1078,8 +1080,11 @@ function renderTuition() {
        + '</div>';
   }
 
-  // 일괄 등록 버튼
-  h += '<button onclick="openBulkTuition()" style="width:100%;font-size:13px;font-weight:600;color:var(--acc);background:var(--acc-l);border:1.5px solid var(--acc);border-radius:var(--rs);padding:11px;cursor:pointer;margin-bottom:12px">📋 수강료 일괄 등록</button>';
+  // 일괄 등록 + 일괄 전송 버튼
+  h += '<div style="display:flex;gap:8px;margin-bottom:12px">'
+     + '<button onclick="openBulkTuition()" style="flex:1;font-size:13px;font-weight:600;color:var(--acc);background:var(--acc-l);border:1.5px solid var(--acc);border-radius:var(--rs);padding:11px 6px;cursor:pointer">📋 일괄 등록</button>'
+     + '<button onclick="openBulkSend()" style="flex:1;font-size:13px;font-weight:600;color:var(--g);background:var(--gl);border:1.5px solid var(--g);border-radius:var(--rs);padding:11px 6px;cursor:pointer">📤 링크 일괄 전송</button>'
+     + '</div>';
 
   // 검색
   h += '<input id="tuition-search" oninput="renderTuitionList()" placeholder="🔍 학생 이름 검색..." style="width:100%;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:10px 12px;font-size:13px;margin-bottom:12px;box-sizing:border-box">';
@@ -1288,6 +1293,159 @@ function applyBulkAll() {
   renderTuition();
 }
 
+// ═══ 결제 링크 일괄 전송 ═══
+function openBulkSend() {
+  var ym = getTuitionMonth();
+  // 대상: 미납 + 결제링크 보유 학생
+  var targets = DB.stu.filter(function(s){
+    if (!s.tuition || !s.tuition.amount || !s.tuition.payLink) return false;
+    return getStuPayStatus(s, ym).status !== '완납';
+  });
+
+  var withPhone = targets.filter(function(s){ return s.tuition.phone; });
+  var noPhone = targets.filter(function(s){ return !s.tuition.phone; });
+  var noLink = DB.stu.filter(function(s){
+    return s.tuition && s.tuition.amount && !s.tuition.payLink && getStuPayStatus(s, ym).status !== '완납';
+  });
+
+  var h = '<div class="ov" id="ov-bulk-send" onclick="ovClose(event,this)" style="display:flex">'
+        + '<div class="modal"><div class="mh"></div><div class="mt2">📤 결제 링크 일괄 전송</div>'
+        + '<div style="font-size:13px;color:var(--acc);font-weight:600;text-align:center;margin-bottom:14px">'+ym.replace('-','년 ')+'월 · 미납 '+targets.length+'명</div>';
+
+  if (!targets.length) {
+    h += '<div style="text-align:center;color:var(--t2);font-size:13px;padding:20px 0;line-height:1.7">전송할 대상이 없어요.<br><span style="font-size:11px;color:var(--t3)">미납 상태 + 결제 링크가 등록된 학생만 전송돼요.</span></div>';
+  } else {
+    // 방법 1: 문자(SMS) 일괄 전송
+    h += '<div style="font-size:13px;font-weight:700;color:var(--g);margin-bottom:6px">① 문자(SMS)로 전송</div>'
+       + '<div style="font-size:11px;color:var(--t3);margin-bottom:8px;line-height:1.6">연락처 등록된 <b>'+withPhone.length+'명</b>에게 문자앱을 열어 한 명씩 보내요. (핸드폰에서만 작동)</div>';
+    if (withPhone.length) {
+      h += '<button onclick="startBulkSms()" style="width:100%;font-size:13px;color:#fff;background:var(--g);border:none;border-radius:var(--rs);padding:10px;cursor:pointer;margin-bottom:6px">📱 문자앱으로 '+withPhone.length+'명 순차 전송</button>';
+    } else {
+      h += '<div style="font-size:11px;color:var(--rd);margin-bottom:6px">연락처가 등록된 학생이 없어요. [설정]에서 학부모 연락처를 입력하세요.</div>';
+    }
+    if (noPhone.length) {
+      h += '<div style="font-size:11px;color:var(--am);margin-bottom:12px">⚠ 연락처 미등록 '+noPhone.length+'명은 제외돼요.</div>';
+    } else {
+      h += '<div style="margin-bottom:12px"></div>';
+    }
+
+    // 방법 2: 전체 메시지 복사
+    h += '<div style="font-size:13px;font-weight:700;color:var(--acc);margin-bottom:6px">② 전체 안내문 복사</div>'
+       + '<div style="font-size:11px;color:var(--t3);margin-bottom:8px;line-height:1.6">미납 '+targets.length+'명의 결제 안내를 한 번에 복사해서 단톡방·문자에 붙여넣어요.</div>'
+       + '<button onclick="copyBulkMessage()" style="width:100%;font-size:13px;color:var(--acc);background:var(--acc-l);border:1.5px solid var(--acc);border-radius:var(--rs);padding:10px;cursor:pointer;margin-bottom:8px">📋 전체 안내문 복사 ('+targets.length+'명)</button>';
+
+    // 미리보기
+    var preview = makePayMessage(targets[0], ym);
+    h += '<div style="background:var(--s2);border-radius:var(--rs);padding:10px;font-size:11px;color:var(--t2);white-space:pre-wrap;line-height:1.6;max-height:120px;overflow-y:auto;margin-bottom:12px">'+preview.replace(/</g,'&lt;')+'</div>';
+  }
+
+  if (noLink.length) {
+    h += '<div style="font-size:11px;color:var(--t3);margin-bottom:12px;padding:8px;background:var(--s2);border-radius:var(--rs)">💡 결제 링크 미등록 '+noLink.length+'명은 전송 대상에서 빠져요. [설정]에서 결제 링크를 넣어주세요.</div>';
+  }
+
+  h += '<button class="btn ghost" onclick="document.getElementById(\'ov-bulk-send\').remove()">닫기</button>'
+     + '</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+
+// 결제 안내 메시지 생성
+function makePayMessage(s, ym) {
+  var amount = (s.tuition.amount||0).toLocaleString();
+  var monthLabel = ym.replace('-','년 ') + '월';
+  var due = s.tuition.dueDay ? ('\n납부 기한: 매월 ' + s.tuition.dueDay + '일') : '';
+  return '[ROUTETOP 학원] ' + s.name + ' 학생\n'
+       + monthLabel + ' 수강료 ' + amount + '원' + due + '\n\n'
+       + '아래 링크에서 결제해 주세요:\n' + s.tuition.payLink;
+}
+
+// 문자(SMS) 순차 전송
+var _bulkSmsQueue = [];
+var _bulkSmsIdx = 0;
+function startBulkSms() {
+  var ym = getTuitionMonth();
+  _bulkSmsQueue = DB.stu.filter(function(s){
+    if (!s.tuition || !s.tuition.amount || !s.tuition.payLink || !s.tuition.phone) return false;
+    return getStuPayStatus(s, ym).status !== '완납';
+  });
+  _bulkSmsIdx = 0;
+  if (!_bulkSmsQueue.length) { toast('전송 대상이 없어요', 'var(--rd)'); return; }
+  document.getElementById('ov-bulk-send').remove();
+  sendNextSms();
+}
+
+function sendNextSms() {
+  if (_bulkSmsIdx >= _bulkSmsQueue.length) {
+    toast('✓ 문자 전송 완료 ('+_bulkSmsQueue.length+'명)');
+    return;
+  }
+  var ym = getTuitionMonth();
+  var s = _bulkSmsQueue[_bulkSmsIdx];
+  var msg = makePayMessage(s, ym);
+  var phone = s.tuition.phone;
+  var idx = _bulkSmsIdx + 1;
+  var total = _bulkSmsQueue.length;
+
+  // 다음 학생 전송 확인 시트
+  var h = '<div class="ov" id="ov-sms-step" style="display:flex">'
+        + '<div class="modal"><div class="mh"></div>'
+        + '<div class="mt2">📱 문자 전송 ('+idx+'/'+total+')</div>'
+        + '<div style="text-align:center;margin-bottom:12px"><div style="font-size:16px;font-weight:700">'+s.name+'</div><div style="font-size:12px;color:var(--t2)">'+phone+'</div></div>'
+        + '<div style="background:var(--s2);border-radius:var(--rs);padding:10px;font-size:12px;color:var(--t2);white-space:pre-wrap;line-height:1.6;margin-bottom:14px">'+msg.replace(/</g,'&lt;')+'</div>'
+        + '<a href="sms:'+phone+'?body='+encodeURIComponent(msg)+'" onclick="setTimeout(nextSmsAfterSend,500)" style="display:block;text-align:center;font-size:14px;color:#fff;background:var(--g);border:none;border-radius:var(--rs);padding:12px;cursor:pointer;text-decoration:none;margin-bottom:8px">📤 '+s.name+' 문자 보내기</a>'
+        + '<button onclick="skipSms()" style="width:100%;font-size:13px;color:var(--t2);background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:9px;cursor:pointer;margin-bottom:8px">건너뛰기</button>'
+        + '<button class="btn ghost" onclick="cancelBulkSms()">중단</button>'
+        + '</div></div>';
+  var old = document.getElementById('ov-sms-step');
+  if (old) old.remove();
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+
+function nextSmsAfterSend() {
+  _bulkSmsIdx++;
+  sendNextSms();
+}
+function skipSms() {
+  _bulkSmsIdx++;
+  sendNextSms();
+}
+function cancelBulkSms() {
+  var el = document.getElementById('ov-sms-step');
+  if (el) el.remove();
+  toast('문자 전송을 중단했어요');
+}
+
+// 전체 안내문 복사
+function copyBulkMessage() {
+  var ym = getTuitionMonth();
+  var targets = DB.stu.filter(function(s){
+    if (!s.tuition || !s.tuition.amount || !s.tuition.payLink) return false;
+    return getStuPayStatus(s, ym).status !== '완납';
+  });
+  if (!targets.length) { toast('대상이 없어요', 'var(--rd)'); return; }
+  var full = targets.map(function(s){ return makePayMessage(s, ym); }).join('\n\n━━━━━━━━━━\n\n');
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(full).then(function(){
+      toast('📋 '+targets.length+'명 안내문이 복사됐어요');
+    }).catch(function(){ fallbackCopyText(full); });
+  } else {
+    fallbackCopyText(full);
+  }
+}
+
+function fallbackCopyText(text) {
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand('copy'); toast('📋 안내문이 복사됐어요'); }
+  catch(e) { toast('복사 실패 - 직접 복사해 주세요', 'var(--rd)'); }
+  document.body.removeChild(ta);
+}
+
+
+
 
 
 // 납부 완료/취소 토글
@@ -1314,6 +1472,7 @@ function openTuitionSet(idx) {
   document.getElementById('tset-name').textContent = s.name;
   document.getElementById('tset-amount').value = (s.tuition && s.tuition.amount) ? s.tuition.amount : '';
   document.getElementById('tset-dueday').value = (s.tuition && s.tuition.dueDay) ? s.tuition.dueDay : '';
+  document.getElementById('tset-phone').value = (s.tuition && s.tuition.phone) ? s.tuition.phone : (s.phone || '');
   document.getElementById('tset-link').value = (s.tuition && s.tuition.payLink) ? s.tuition.payLink : '';
   openModal('ov-tuition-set');
 }
@@ -1325,10 +1484,12 @@ function saveTuitionSet() {
   var dueDay = parseInt(document.getElementById('tset-dueday').value) || 0;
   var link = document.getElementById('tset-link').value.trim();
 
+  var phone = document.getElementById('tset-phone').value.trim().replace(/[^0-9]/g,'');
   if (!s.tuition) s.tuition = { paidMonths: {} };
   s.tuition.amount = amount;
   s.tuition.dueDay = dueDay;
   s.tuition.payLink = link;
+  s.tuition.phone = phone;
   if (!s.tuition.paidMonths) s.tuition.paidMonths = {};
 
   saveAll();
