@@ -1815,7 +1815,7 @@ function importFromHwApp() {
       return f && f.role && f.role.stringValue === 'student';
     });
 
-    var addedTeachers = 0, addedStudents = 0, skippedTeachers = 0, skippedStudents = 0;
+    var addedTeachers = 0, addedStudents = 0, skippedTeachers = 0, skippedStudents = 0, updatedStudents = 0;
 
     // ── 강사 추가 (이미 있으면 스킵)
     hwInstructors.forEach(function(u){
@@ -1837,9 +1837,19 @@ function importFromHwApp() {
       var f = u.mapValue.fields;
       var name = f.name && f.name.stringValue;
       if (!name) return;
-      var exists = DB.stu.find(function(s){ return s.name === name; });
-      if (exists) { skippedStudents++; return; }
       var stuClass = f.classId && f.classId.stringValue || '';
+      var exists = DB.stu.find(function(s){ return s.name === name; });
+      if (exists) {
+        // 이미 있는 학생: 반(class)이 바뀌었으면 업데이트 + 담당강사 재배정
+        if (stuClass && exists.class !== stuClass) {
+          exists.class = stuClass;
+          exists.teacher = matchTeacherByClassId(stuClass);
+          updatedStudents++;
+        } else {
+          skippedStudents++;
+        }
+        return;
+      }
       DB.stu.push({
         name: name,
         teacher: matchTeacherByClassId(stuClass),
@@ -1865,7 +1875,7 @@ function importFromHwApp() {
     el.style.color = 'var(--g)';
     el.innerHTML =
       '✓ 강사 ' + addedTeachers + '명 추가 (중복 ' + skippedTeachers + '명 스킵)<br>' +
-      '✓ 학생 ' + addedStudents + '명 추가 (중복 ' + skippedStudents + '명 스킵)<br>' +
+      '✓ 학생 ' + addedStudents + '명 추가, ' + updatedStudents + '명 반 변경 (중복 ' + skippedStudents + '명 스킵)<br>' +
       '✓ 과목 ' + createdSubj + '개 자동 생성';
 
     toast('📥 과제 앱 명단을 불러왔어요 ✓');
