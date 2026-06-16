@@ -1566,6 +1566,94 @@ function setTFilter(name) {
 var HW_API='https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(default)/documents/appData/main';
 var HW_KEY='AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
 function loadHwData(cb){if(hwData&&Date.now()-hwDataT<60000){if(cb)cb(hwData);return;}hwDataT=Date.now();fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
+
+// 과제앱 진도 → 학원앱 반(과목)별 차시 진도 계산
+// 반환: {done: 완료차시수, total: 전체배정차시수, lastPage: 마지막페이지} 또는 null
+function calcHwProgress(className){
+  if(!hwData||!hwData.fields||!className) return null;
+  var cur = hwData.fields.curriculum && hwData.fields.curriculum.arrayValue && hwData.fields.curriculum.arrayValue.values || [];
+  var sp = hwData.fields.studentProgress && hwData.fields.studentProgress.mapValue && hwData.fields.studentProgress.mapValue.fields || {};
+  var tbs = hwData.fields.textbooks && hwData.fields.textbooks.arrayValue && hwData.fields.textbooks.arrayValue.values || [];
+
+  // 1) 이 반(className)에 배정된 curriculum 찾기 (key = inst__반__교재, 2번째 파트가 반)
+  var matchedCur = cur.filter(function(c){
+    var key = c.mapValue.fields.key.stringValue || '';
+    var parts = key.split('__');
+    return parts.length>=2 && parts[1] === className;
+  });
+  if(!matchedCur.length) return null;
+
+  // 2) 배정된 전체 차시 목록 (curriculum key별로 lessonId 순서대로) + 페이지 정보 매핑
+  var totalLessons = 0;
+  var doneSet = {}; // 완료된 "curKey__lessonId" 모음
+  var lastLessonPage = 0;
+
+  matchedCur.forEach(function(c){
+    var cf = c.mapValue.fields;
+    var curKey = cf.key.stringValue; // inst__반__교재
+    var tbId = curKey.split('__')[2] || '';
+    var lessons = (cf.lessons && cf.lessons.arrayValue.values) || [];
+    totalLessons += lessons.length;
+
+    // 교재에서 차시별 페이지 정보 찾기 위한 맵
+    var lessonPageMap = {};
+    var tb = tbs.find(function(t){ return t.mapValue.fields.id && t.mapValue.fields.id.stringValue===tbId; });
+    if(tb){
+      var chapters = (tb.mapValue.fields.chapters && tb.mapValue.fields.chapters.arrayValue.values) || [];
+      chapters.forEach(function(ch, ci){
+        var chId = 'ch'+(ci+1);
+        var lessonsArr = (ch.mapValue.fields.lessons && ch.mapValue.fields.lessons.arrayValue.values) || [];
+        lessonsArr.forEach(function(ls){
+          var lf = ls.mapValue.fields;
+          var lsId = lf.id ? lf.id.stringValue : '';
+          var pages = lf.pages ? lf.pages.stringValue : '';
+          // pages 예: "8-17" → 끝페이지 17
+          var endPage = 0;
+          if(pages){ var m = pages.match(/(\d+)\s*$/); if(m) endPage = parseInt(m[1]); }
+          lessonPageMap[chId+'__'+lsId] = endPage;
+        });
+      });
+    }
+
+    // 3) 이 반의 학생 누구든 완료한 차시 찾기 (가장 빠른 진도 = 1명이라도 완료)
+    lessons.forEach(function(l){
+      var lessonId = l.mapValue.fields.lessonId.stringValue; // ch1__ls2
+      var taskKey = curKey + '__' + lessonId; // inst__반__교재__ch1__ls2
+      // studentProgress에서 이 taskKey를 가진 학생이 1명이라도 있으면 완료
+      var anyDone = Object.keys(sp).some(function(stuId){
+        var tasks = sp[stuId].mapValue ? sp[stuId].mapValue.fields : {};
+        return tasks[taskKey] !== undefined;
+      });
+      if(anyDone){
+        doneSet[taskKey] = true;
+        var pg = lessonPageMap[lessonId] || 0;
+        if(pg > lastLessonPage) lastLessonPage = pg;
+      }
+    });
+  });
+
+  var doneCount = Object.keys(doneSet).length;
+  return { done: doneCount, total: totalLessons, lastPage: lastLessonPage };
+}
+
+// 과제앱 진도를 학원앱 과목(subj)에 동기화
+function syncHwProgressToSubj(){
+  if(!hwData||!hwData.fields) return 0;
+  var updated = 0;
+  DB.subj.forEach(function(s){
+    var prog = calcHwProgress(s.name);
+    if(prog && prog.total>0){
+      s.hwDone = prog.done;
+      s.hwTotal = prog.total;
+      // 페이지 정보가 있으면 currentPage도 갱신 (단, 더 진행된 경우만)
+      if(prog.lastPage && prog.lastPage > (s.currentPage||0)){
+        s.currentPage = prog.lastPage;
+      }
+      updated++;
+    }
+  });
+  return updated;
+}
 function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var sp=hwData.fields.studentProgress;if(!sp||!sp.mapValue||!sp.mapValue.fields)return 0;var spFields=sp.mapValue.fields;if(!stuList||!stuList.length)return 0;var totalDone=0,totalAll=0;var hwUsers=hwData.fields.users?hwData.fields.users.arrayValue.values||[]:[];stuList.forEach(function(stu){var hwUser=hwUsers.find(function(u){var f=u.mapValue?u.mapValue.fields:null;return f&&(f.name?f.name.stringValue:'')===stu.name;});if(!hwUser)return;var hwId=(hwUser.mapValue.fields.id||{}).stringValue||'';if(!hwId||!spFields[hwId])return;var stuSp=spFields[hwId].mapValue?spFields[hwId].mapValue.fields:null;if(!stuSp)return;Object.keys(stuSp).forEach(function(key){var vals=stuSp[key].arrayValue?stuSp[key].arrayValue.values||[]:[];totalAll++;if(vals.filter(function(v){return v.stringValue&&v.stringValue!=='t0';}).length>0)totalDone++;});});return totalAll>0?Math.round(totalDone/totalAll*100):0;}
 
 // ═══ 강사 평가 ═══
@@ -2831,6 +2919,9 @@ function renderTeacherHome() {
 // ═══════════════════════════════════════
 function renderProgress() {
   if (!ME) return;
+  // 과제앱 진도 자동 동기화 (데이터 로드 후 1회 재렌더)
+  if(!hwData){ loadHwData(function(d){ if(d){ syncHwProgressToSubj(); if(curTab==='progress') renderProgress(); } }); }
+  else { syncHwProgressToSubj(); }
   var mySu = mySubj();
   document.getElementById('prog-sub').textContent = ME.role==='admin' ? '전체 과목' : '내 담당 과목';
   var h = '';
@@ -2856,7 +2947,7 @@ function renderProgress() {
          + '<div class="ic2" onclick="toggleSubjExpand('+gi+')" style="cursor:pointer;margin-bottom:0">'
          + '<div class="av" style="width:44px;height:44px;background:'+AVBG[gi%AVBG.length]+';color:'+cv+';font-size:13px">'+s.name.slice(0,2)+'</div>'
          + '<div class="ii"><div class="in">'+s.name+'</div>'
-         + '<div class="im">'+(s.teacher||'강사 미정')+' · '+(s.currentPage||s.startPage||1)+'p / '+s.totalPages+'p · 👥 '+subjStu.length+'명</div>'
+         + '<div class="im">'+(s.teacher||'강사 미정')+' · '+(s.currentPage||s.startPage||1)+'p / '+s.totalPages+'p · 👥 '+subjStu.length+'명'+(s.hwTotal?' · <span style="color:var(--acc);font-weight:600">🔗 '+s.hwDone+'/'+s.hwTotal+' 차시</span>':'')+'</div>'
          + '<div class="pt"><div class="pf" style="width:'+r+'%;background:'+pCol(r)+'"></div></div></div>'
          + '<div class="ir">'
          + '<span class="tag" style="background:'+pBg(r)+';color:'+pCol(r)+'">'+r+'%</span>'
