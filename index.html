@@ -1068,8 +1068,8 @@ function nbCardHtml(idx){
   var nb=nbStatus(s);
   if(!nb){
     return '<div class="card" style="margin-bottom:10px;border:1px dashed var(--s3)"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
-      +'<div><div style="font-size:13px;font-weight:600">🎒 신입생 상담</div><div style="font-size:11px;color:var(--t3);margin-top:2px">입학일 등록 → 담임(1주)·데스크(3주) 기한 관리</div></div>'
-      +'<button class="btn sm" style="flex-shrink:0" onclick="event.stopPropagation();openNewbie('+idx+')">신입생 등록</button></div></div>';
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">🎒 신입생 상담</div><div style="font-size:11px;color:var(--t3);margin-top:2px">입학일 등록 → 담임(1주)·데스크(3주) 기한 관리</div></div>'
+      +'<button class="btn sm" style="width:auto;padding:10px 14px;flex-shrink:0" onclick="event.stopPropagation();openNewbie('+idx+')">신입생 등록</button></div></div>';
   }
   function row(kind){
     var o=nb[kind];
@@ -1077,7 +1077,7 @@ function nbCardHtml(idx){
     var sub=o.done ? (o.date+(o.by?' · '+o.by:'')) : ('기한 '+(o.deadline?o.deadline.slice(5).replace('-','/'):'—'));
     var locked=(kind==='desk' && !isAdminLevel());
     var btn=locked ? '<span style="font-size:11px;color:var(--t3);flex-shrink:0">행정팀 담당</span>'
-      : '<button class="btn sm'+(o.done?' ghost':'')+'" style="flex-shrink:0" onclick="event.stopPropagation();openNbConsult('+idx+',\''+kind+'\')">'+(o.done?'수정':'완료 기록')+'</button>';
+      : '<button class="btn sm'+(o.done?' ghost':'')+'" style="width:auto;padding:8px 12px;flex-shrink:0" onclick="event.stopPropagation();openNbConsult('+idx+',\''+kind+'\')">'+(o.done?'수정':'완료 기록')+'</button>';
     return '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--s2)">'
       +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">'+NB_LB[kind]+' 상담 &nbsp;'+tag+'</div>'
       +'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+sub+'</div>'
