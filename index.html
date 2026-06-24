@@ -492,6 +492,30 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 신입생 등록 -->
+<div class="ov" id="ov-newbie" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div><div class="mt2" id="nb-title">신입생 등록</div>
+    <input type="hidden" id="nb-idx">
+    <label class="fl">입학일</label><input class="fi" id="nb-date" type="date">
+    <div style="font-size:12px;color:var(--t2);line-height:1.6;margin:4px 0 10px">등록하면 담임 상담 기한은 <b>입학 +7일</b>, 데스크(행정팀) 상담 기한은 <b>입학 +21일</b>로 자동 설정돼요.</div>
+    <button class="btn" onclick="doSaveNewbie()">저장</button>
+    <button class="btn ghost" onclick="closeModal('ov-newbie')">취소</button>
+  </div>
+</div>
+
+<!-- 신입생 상담 완료 기록 -->
+<div class="ov" id="ov-nbc" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div><div class="mt2" id="nbc-title">신입생 상담</div>
+    <input type="hidden" id="nbc-idx"><input type="hidden" id="nbc-kind">
+    <label class="fl">상담 일자</label><input class="fi" id="nbc-date" type="date">
+    <label class="fl">상담자</label><input class="fi" id="nbc-by" placeholder="예: 김선생님">
+    <label class="fl">상담 내용</label><textarea class="fta" id="nbc-note" placeholder="신입생 적응 상태, 학습 목표, 학부모 요청 등"></textarea>
+    <button class="btn" onclick="doSaveNbc()">완료로 기록</button>
+    <button class="btn ghost" id="nbc-undo" style="display:none" onclick="doUndoNbc()">완료 취소</button>
+    <button class="btn ghost" onclick="closeModal('ov-nbc')">닫기</button>
+  </div>
+</div>
+
 <!-- 계정 관리 (관리자) -->
 <div class="ov" id="ov-accounts" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2">계정 관리</div>
@@ -981,6 +1005,185 @@ function mySubj() { return isAdminLevel() ? DB.subj : DB.subj.filter(function(s)
 function myStu()  { return isAdminLevel() ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
 function gSI(s)  { return DB.subj.indexOf(s); }
 function gStI(s) { return DB.stu.indexOf(s); }
+
+// ═══════════════════════════════════════
+// 신입생 상담 (담임 +7일 / 데스크 +21일)
+// ═══════════════════════════════════════
+var NB_DAYS = { homeroom: 7, desk: 21 };
+var NB_LB   = { homeroom: '담임', desk: '데스크' };
+function nbDeadline(s, kind) {
+  if (!s.newbie || !s.newbie.enrollDate) return null;
+  var d = new Date(s.newbie.enrollDate); d.setHours(0,0,0,0);
+  d.setDate(d.getDate() + NB_DAYS[kind]);
+  return d.toISOString().slice(0,10);
+}
+function nbOne(s, kind) {
+  var rec = (s.newbie && s.newbie[kind]) ? s.newbie[kind] : {};
+  var deadline = nbDeadline(s, kind);
+  var dleft = deadline ? daysUntil(deadline) : null;
+  var lv, lb;
+  if (rec.done)            { lv='ok';       lb='완료'; }
+  else if (dleft === null) { lv='ok';       lb='—'; }
+  else if (dleft < 0)      { lv='urgent';   lb=(-dleft)+'일 초과'; }
+  else if (dleft <= 2)     { lv='upcoming'; lb='D-'+dleft+' 임박'; }
+  else                     { lv='wait';     lb='D-'+dleft; }
+  return {done:!!rec.done, date:rec.date||'', note:rec.note||'', by:rec.by||'', deadline:deadline, dleft:dleft, lv:lv, lb:lb};
+}
+function nbStatus(s) {
+  if (!s.newbie || !s.newbie.enrollDate) return null;
+  var hr = nbOne(s,'homeroom'), dk = nbOne(s,'desk');
+  var worst = 'ok';
+  [hr,dk].forEach(function(o){
+    if(o.lv==='urgent') worst='urgent';
+    else if(o.lv==='upcoming' && worst!=='urgent') worst='upcoming';
+    else if(o.lv==='wait' && worst==='ok') worst='wait';
+  });
+  return {homeroom:hr, desk:dk, worst:worst, allDone:hr.done&&dk.done};
+}
+// 내 역할이 처리해야 할 미완료 신입생 상담 태스크 (담임=담당강사/관리자, 데스크=원장·행정팀)
+function nbPending() {
+  var out=[];
+  (DB.stu||[]).forEach(function(s,si){
+    var st = nbStatus(s); if(!st || st.allDone) return;
+    ['homeroom','desk'].forEach(function(kind){
+      var o = st[kind]; if(o.done) return;
+      if(kind==='desk' && !isAdminLevel()) return;            // 데스크 상담은 행정팀 이상만
+      if(kind==='homeroom' && !(isAdminLevel() || (ME && s.teacher===ME.name))) return;
+      out.push({si:si, kind:kind, name:s.name, o:o});
+    });
+  });
+  var rank={urgent:0,upcoming:1,wait:2};
+  out.sort(function(a,b){
+    if(rank[a.o.lv]!==rank[b.o.lv]) return rank[a.o.lv]-rank[b.o.lv];
+    return (a.o.dleft==null?9999:a.o.dleft)-(b.o.dleft==null?9999:b.o.dleft);
+  });
+  return out;
+}
+function nbStBg(l){ return l==='urgent'?'var(--rdl)':l==='upcoming'?'var(--aml)':l==='wait'?'var(--acc-l)':'var(--gl)'; }
+function nbStC(l){  return l==='urgent'?'var(--rd)' :l==='upcoming'?'var(--am)' :l==='wait'?'var(--acc)'  :'var(--g)'; }
+
+// 학생 상세 화면의 신입생 상담 카드
+function nbCardHtml(idx){
+  var s=DB.stu[idx]; if(!s) return '';
+  var nb=nbStatus(s);
+  if(!nb){
+    return '<div class="card" style="margin-bottom:10px;border:1px dashed var(--s3)"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
+      +'<div><div style="font-size:13px;font-weight:600">🎒 신입생 상담</div><div style="font-size:11px;color:var(--t3);margin-top:2px">입학일 등록 → 담임(1주)·데스크(3주) 기한 관리</div></div>'
+      +'<button class="btn sm" style="flex-shrink:0" onclick="event.stopPropagation();openNewbie('+idx+')">신입생 등록</button></div></div>';
+  }
+  function row(kind){
+    var o=nb[kind];
+    var tag='<span class="tag" style="background:'+nbStBg(o.lv)+';color:'+nbStC(o.lv)+'">'+(o.done?'✓ 완료':o.lb)+'</span>';
+    var sub=o.done ? (o.date+(o.by?' · '+o.by:'')) : ('기한 '+(o.deadline?o.deadline.slice(5).replace('-','/'):'—'));
+    var locked=(kind==='desk' && !isAdminLevel());
+    var btn=locked ? '<span style="font-size:11px;color:var(--t3);flex-shrink:0">행정팀 담당</span>'
+      : '<button class="btn sm'+(o.done?' ghost':'')+'" style="flex-shrink:0" onclick="event.stopPropagation();openNbConsult('+idx+',\''+kind+'\')">'+(o.done?'수정':'완료 기록')+'</button>';
+    return '<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-top:1px solid var(--s2)">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">'+NB_LB[kind]+' 상담 &nbsp;'+tag+'</div>'
+      +'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+sub+'</div>'
+      +(o.done&&o.note?'<div style="font-size:12px;color:var(--t2);margin-top:3px;line-height:1.5">'+o.note+'</div>':'')+'</div>'
+      +btn+'</div>';
+  }
+  return '<div class="card" style="margin-bottom:10px">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between">'
+    +'<div style="font-size:13px;font-weight:700">🎒 신입생 상담'+(nb.allDone?' <span style="font-size:11px;color:var(--g)">· 모두 완료</span>':'')+'</div>'
+    +'<span style="font-size:11px;color:var(--t3)">입학 '+(s.newbie.enrollDate||'—')+'</span></div>'
+    +row('homeroom')+row('desk')
+    +(isAdminLevel()?'<div style="margin-top:8px;border-top:1px solid var(--s2);padding-top:8px"><button class="btn sm ghost" style="font-size:11px;padding:4px 10px" onclick="event.stopPropagation();openNewbie('+idx+')">입학일 수정</button></div>':'')
+    +'</div>';
+}
+// 상담 탭 상단의 신입생 상담 섹션
+function newbieSection(){
+  var p=nbPending();
+  if(!p.length) return '';
+  var urgent=p.filter(function(x){return x.o.lv==='urgent';}).length;
+  var imm=p.filter(function(x){return x.o.lv==='upcoming';}).length;
+  var seg=[]; if(urgent)seg.push('초과 '+urgent); if(imm)seg.push('임박 '+imm);
+  var h='<div class="card" style="margin-bottom:12px;border:1px solid var(--acc)">'
+    +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">'
+    +'<span style="font-size:15px">🎒</span><div style="font-size:13px;font-weight:700">신입생 상담 '+p.length+'건</div>'
+    +(seg.length?'<span style="font-size:11px;color:var(--rd);margin-left:auto;font-weight:600">'+seg.join(' · ')+'</span>':'')+'</div>';
+  p.forEach(function(x){
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--s2);cursor:pointer" onclick="showStuDetail('+x.si+')">'
+      +'<span class="tag" style="background:'+nbStBg(x.o.lv)+';color:'+nbStC(x.o.lv)+';flex-shrink:0">'+x.o.lb+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">'+x.name+'</div>'
+      +'<div style="font-size:11px;color:var(--t3)">'+NB_LB[x.kind]+' 상담 · 기한 '+(x.o.deadline?x.o.deadline.slice(5).replace('-','/'):'—')+'</div></div>'
+      +'<span style="color:var(--t3);font-size:16px;flex-shrink:0">›</span></div>';
+  });
+  h+='</div>';
+  return h;
+}
+function newbieBanner(){
+  var p=nbPending().filter(function(x){return x.o.lv==='urgent'||x.o.lv==='upcoming';});
+  if(!p.length) return '';
+  var urgent=p.filter(function(x){return x.o.lv==='urgent';}).length;
+  var imm=p.length-urgent;
+  var seg=[]; if(urgent)seg.push('기한 초과 '+urgent+'건'); if(imm)seg.push('임박 '+imm+'건');
+  return '<div onclick="goTab(\'consult\')" style="cursor:pointer;background:var(--acc-l);border:1px solid var(--acc);border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px">'
+    +'<span style="font-size:18px">🎒</span>'
+    +'<div style="flex:1"><div style="font-size:13px;font-weight:700;color:var(--acc)">신입생 상담 '+p.length+'건 주의</div>'
+    +'<div style="font-size:11px;color:var(--t2)">'+seg.join(' · ')+' — 눌러서 확인</div></div>'
+    +'<span style="color:var(--acc);font-size:18px;font-weight:700">›</span></div>';
+}
+function injectNewbieBanner(){
+  var b=newbieBanner(); if(!b) return;
+  var el=document.getElementById('home-body');
+  if(el) el.insertAdjacentHTML('afterbegin', b);
+}
+function newbieNotify(){
+  var p=nbPending().filter(function(x){return x.o.lv==='urgent'||x.o.lv==='upcoming';});
+  if(!p.length) return;
+  showDirectNotif('ROUTETOP 신입생 상담', '기한 임박·초과 신입생 상담 '+p.length+'건이 있어요.');
+}
+// 신입생 등록/상담 모달 동작
+function openNewbie(idx){
+  var s=DB.stu[idx]; if(!s) return;
+  document.getElementById('nb-idx').value=idx;
+  document.getElementById('nb-title').textContent=s.name+' · 신입생 등록';
+  document.getElementById('nb-date').value=(s.newbie&&s.newbie.enrollDate)||today();
+  openModal('ov-newbie');
+}
+function doSaveNewbie(){
+  var idx=parseInt(document.getElementById('nb-idx').value);
+  var d=document.getElementById('nb-date').value;
+  if(!d){toast('입학일을 입력해주세요','var(--rd)');return;}
+  var s=DB.stu[idx]; if(!s) return;
+  if(!s.newbie) s.newbie={};
+  s.newbie.enrollDate=d;
+  if(!s.newbie.homeroom) s.newbie.homeroom={};
+  if(!s.newbie.desk) s.newbie.desk={};
+  saveAll();closeModal('ov-newbie');toast('신입생 등록됐어요 ✓');showStuDetail(idx);
+}
+function openNbConsult(idx,kind){
+  var s=DB.stu[idx]; if(!s||!s.newbie) return;
+  if(kind==='desk' && !isAdminLevel()){toast('데스크 상담은 행정팀 담당이에요','var(--rd)');return;}
+  var rec=(s.newbie[kind])||{};
+  document.getElementById('nbc-idx').value=idx;
+  document.getElementById('nbc-kind').value=kind;
+  document.getElementById('nbc-title').textContent=s.name+' · '+NB_LB[kind]+' 상담';
+  document.getElementById('nbc-date').value=rec.date||today();
+  document.getElementById('nbc-by').value=rec.by||(ME?ME.name:'');
+  document.getElementById('nbc-note').value=rec.note||'';
+  document.getElementById('nbc-undo').style.display=rec.done?'':'none';
+  openModal('ov-nbc');
+}
+function doSaveNbc(){
+  var idx=parseInt(document.getElementById('nbc-idx').value);
+  var kind=document.getElementById('nbc-kind').value;
+  var s=DB.stu[idx]; if(!s||!s.newbie) return;
+  if(kind==='desk' && !isAdminLevel()){toast('권한이 없어요','var(--rd)');return;}
+  var d=document.getElementById('nbc-date').value;
+  if(!d){toast('상담 일자를 입력해주세요','var(--rd)');return;}
+  s.newbie[kind]={done:true, date:d, by:document.getElementById('nbc-by').value.trim(), note:document.getElementById('nbc-note').value.trim()};
+  saveAll();closeModal('ov-nbc');toast('완료로 기록됐어요 ✓');showStuDetail(idx);
+}
+function doUndoNbc(){
+  var idx=parseInt(document.getElementById('nbc-idx').value);
+  var kind=document.getElementById('nbc-kind').value;
+  var s=DB.stu[idx]; if(!s||!s.newbie) return;
+  s.newbie[kind]={done:false};
+  saveAll();closeModal('ov-nbc');toast('완료 취소됨');showStuDetail(idx);
+}
 
 // ═══════════════════════════════════════
 // 탭 네비게이션
@@ -1541,7 +1744,7 @@ function renderHome() {
   if (isAdminLevel()) renderAdminHome();
   else renderTeacherHome();
   // 25일 이후 평가 알림 체크
-  injectRiskBanner();setTimeout(checkEvalReminder, 2000);
+  injectRiskBanner();injectNewbieBanner();setTimeout(checkEvalReminder, 2000);
 }
 
 // 강사 필터 칩 렌더 (관리자 전용)
@@ -3013,6 +3216,7 @@ function renderConsult() {
      + '<div class="chip'+(cFilter==='upcoming'?' on':'')+'" onclick="setFilter(\'upcoming\')">예정</div>'
      + '<div class="chip'+(cFilter==='ok'?' on':'')+'" onclick="setFilter(\'ok\')">완료</div>'
      + '</div>';
+  h += newbieSection();
   h += '<div id="c-list"></div>';
   document.getElementById('consult-body').innerHTML = h;
   renderConsultList();
@@ -3095,6 +3299,7 @@ function showStuDetail(idx) {
     +'<span class="tag" style="font-size:13px;padding:5px 11px;background:'+stBg(st.lv)+';color:'+stC(st.lv)+'">'+stI(st.lv)+' '+st.lb+'</span></div>'
     +'<div style="text-align:right"><div style="font-size:11px;color:var(--t3);margin-bottom:4px">다음 상담</div>'
     +'<div style="font-size:13px;font-weight:600;color:var(--acc)">'+(s.nextConsultDate||'미정')+'</div></div></div></div>';
+  h+=nbCardHtml(idx);
   h+='<button class="btn" style="margin-bottom:13px" onclick="openConsult('+idx+')">+ 상담 기록 입력</button>';
   h+='<div class="ct">상담 기록 ('+hist.length+'회)</div>';
   if(!hist.length){h+='<div class="empty">아직 기록이 없습니다.</div>';}
@@ -3945,6 +4150,7 @@ function showDirectNotif(title, body) {
 
 function checkConsultAndNotify() {
   riskNotify();
+  newbieNotify();
   if (!ME) return;
   var list = myStu().filter(function(s){ return cSt(s).lv==='urgent'; });
   if (list.length === 0) return;
