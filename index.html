@@ -1903,6 +1903,59 @@ var HW_API='https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(de
 var HW_KEY='AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
 function loadHwData(cb){if(hwData&&Date.now()-hwDataT<60000){if(cb)cb(hwData);return;}hwDataT=Date.now();fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
 
+// ── 학부모·강사 메시지 → 문자상담 자동 동기화 (날짜별 1건) ──
+function _msgDateStr(ts){var d=new Date(ts);var p=function(n){return n<10?'0'+n:''+n;};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
+function _msgTimeStr(ts){var d=new Date(ts);var p=function(n){return n<10?'0'+n:''+n;};return p(d.getHours())+':'+p(d.getMinutes());}
+function importMsgConsult(){
+  loadHwData(function(d){
+    if(!d||!d.fields) return;
+    var hw = _FS.docToObj(d);
+    var msgs = hw.messages || [];
+    if(!msgs.length) return;
+    var users = hw.users || [];
+    var idToName = {};
+    users.forEach(function(u){ if(u&&u.id) idToName[u.id]=u.name; });
+    var groups = {};
+    msgs.forEach(function(m){
+      if(!m||!m.ts||!m.studentId) return;
+      var nm = idToName[m.studentId];
+      if(!nm) return;
+      var ds = _msgDateStr(m.ts);
+      var key = nm + '||' + ds;
+      if(!groups[key]) groups[key] = {name:nm, date:ds, items:[]};
+      groups[key].items.push(m);
+    });
+    var changed = false, touched = {};
+    Object.keys(groups).forEach(function(key){
+      var g = groups[key];
+      var stu = DB.stu.find(function(s){ return s.name === g.name; });
+      if(!stu) return;
+      if(!stu.consultHistory) stu.consultHistory = [];
+      g.items.sort(function(a,b){ return a.ts - b.ts; });
+      var lines = g.items.map(function(m){
+        var who = m.fromName + (m.fromRole==='instructor'?'(강사)':m.fromRole==='parent'?'(학부모)':'');
+        return _msgTimeStr(m.ts) + ' ' + who + ': ' + m.text;
+      });
+      var note = lines.join('\n');
+      var lastInst = '';
+      g.items.forEach(function(m){ if(m.fromRole==='instructor' && m.fromName) lastInst = m.fromName; });
+      var counselor = lastInst || (stu.teacher || '문자상담');
+      var rec = stu.consultHistory.find(function(r){ return r.msgSync && r.date === g.date; });
+      if(rec){
+        if(rec.note !== note || rec.counselor !== counselor){ rec.note = note; rec.counselor = counselor; changed = true; touched[g.name]=1; }
+      } else {
+        stu.consultHistory.push({date:g.date, counselor:counselor, method:'문자상담', mood:'', risk:'', rstat:'', note:note, msgSync:true});
+        changed = true; touched[g.name]=1;
+      }
+    });
+    if(changed){
+      DB.stu.forEach(function(s){ if(touched[s.name] && s.consultHistory) s.consultHistory.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); }); });
+      saveAll();
+      if(typeof curTab!=='undefined' && curTab==='consult' && typeof renderConsult==='function') renderConsult();
+    }
+  });
+}
+
 // 과제앱 진도 → 학원앱 반(과목)별 차시 진도 계산
 // 반환: {done: 완료차시수, total: 전체배정차시수, lastPage: 마지막페이지} 또는 null
 function calcHwProgress(className){
@@ -4400,6 +4453,10 @@ _loadFirebase().then(function() {
     applyDB(d);
     // 데이터 로드 후 자동 로그인 시도
     tryAutoLogin();
+    // 학부모·강사 메시지 → 문자상담 자동 동기화
+    importMsgConsult();
+    // 60초마다 주기적으로 다시 당겨오기 (캐시 무효화 후 새로 fetch)
+    if(!window._msgSyncTimer) window._msgSyncTimer = setInterval(function(){ hwDataT = 0; importMsgConsult(); }, 60000);
     // 30초마다 실시간 동기화 (롱폴링)
     window._fsUnsubscribe = _FS.onSnapshot('academy/data', function(snap) {
       var d2 = _FS.docToObj(snap);
