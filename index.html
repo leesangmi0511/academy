@@ -1018,6 +1018,28 @@ function stBg(l) { return l==='urgent' ? 'var(--rdl)' : l==='upcoming' ? 'var(--
 function stI(l)  { return l==='urgent' ? '⚠' : l==='upcoming' ? '◷' : '✓'; }
 function mySubj() { return isAdminLevel() ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
 function myStu()  { return isAdminLevel() ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
+// 반(class) → 이름 순 정렬. 반 미지정은 맨 뒤로.
+function sortStuByClass(a,b){
+  var ca=a.class||'\uD7A3', cb=b.class||'\uD7A3';
+  if(ca!==cb) return ca.localeCompare(cb,'ko');
+  return (a.name||'').localeCompare(b.name||'','ko');
+}
+// 학생 목록을 반별로 묶어 헤더와 함께 렌더
+function renderStuGrouped(list, showT){
+  list = list.slice().sort(sortStuByClass);
+  var h='', cur=null, first=true;
+  list.forEach(function(s){
+    var cls = s.class || '반 미지정';
+    if(cls!==cur){
+      cur=cls;
+      h+='<div style="font-size:12px;font-weight:700;color:var(--acc);margin:'+(first?'2px':'16px')+' 0 7px;padding-left:2px;display:flex;align-items:center;gap:6px">'
+        +'<span style="width:3px;height:13px;background:var(--acc);border-radius:2px;display:inline-block"></span>'+cls+'</div>';
+      first=false;
+    }
+    h+=stuCard(s, gStI(s), showT);
+  });
+  return h;
+}
 function gSI(s)  { return DB.subj.indexOf(s); }
 function gStI(s) { return DB.stu.indexOf(s); }
 
@@ -3365,9 +3387,7 @@ function renderConsultList() {
     list = list.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; });
   if (cFilter !== 'all') list = list.filter(function(s){return cSt(s).lv===cFilter;});
   if (!list.length) { el.innerHTML='<div class="empty">해당하는 학생이 없습니다.</div>'; return; }
-  var h = '';
-  list.forEach(function(s){ h+=stuCard(s,gStI(s),ME.role==='admin'); });
-  el.innerHTML = h;
+  el.innerHTML = renderStuGrouped(list, ME.role==='admin');
 }
 
 // ═══════════════════════════════════════
@@ -3410,7 +3430,7 @@ function showTDetail(tIdx) {
   if(tS.length){tS.forEach(function(s){var r=calcRate(s);var remain=s.totalPages-(s.currentPage||s.startPage||1);var d=s.endDate?daysUntil(s.endDate):null;h+='<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:13px;font-weight:500">'+s.name+'</span><span style="font-size:12px;color:'+pCol(r)+';font-family:DM Mono,monospace">'+r+'%</span></div><div class="pt" style="height:6px"><div class="pf" style="width:'+r+'%;height:6px;background:'+pCol(r)+'"></div></div><div style="font-size:11px;color:var(--t2);margin-top:2px">'+(s.currentPage||s.startPage||1)+'p/'+s.totalPages+'p · 남은 '+remain+'p'+(d!==null?' · D-'+d:'')+'</div></div>';});}else{h+='<div style="color:var(--t3);font-size:13px">담당 과목 없음</div>';}
   h+='</div>';
   h+='<div class="ct" style="margin-top:4px">담당 학생 ('+tSt.length+'명)</div>';
-  tSt.forEach(function(s){h+=stuCard(s,gStI(s),false);});
+  h+=renderStuGrouped(tSt, false);
   document.getElementById('det-body').innerHTML=h;
   document.getElementById('det-back').onclick=function(){goTab(prevTab);};
   document.querySelectorAll('.screen').forEach(function(el){el.classList.remove('on');});
