@@ -531,6 +531,24 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 배정시험 · 반배정 추천 -->
+<div class="ov" id="ov-placement" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div><div class="mt2" id="pl-title">배정시험 · 반배정 추천</div>
+    <input type="hidden" id="pl-idx">
+    <label class="fl">배정시험 점수 (0~100)</label><input class="fi" id="pl-score" type="number" min="0" max="100" inputmode="numeric" oninput="updatePlLevel()">
+    <div id="pl-level-tag" style="font-size:12px;margin:2px 0 8px;color:var(--t3)">점수를 입력하면 학생층이 자동 판정됩니다</div>
+    <label class="fl">대상 학년대</label>
+    <select class="fi" id="pl-grade" style="appearance:auto;-webkit-appearance:menulist"><option value="초등부">초등부</option><option value="중등부">중등부</option><option value="고등부">고등부</option></select>
+    <label class="fl">현재 교재</label><input class="fi" id="pl-book" placeholder="예: 쎈 수학(상)">
+    <label class="fl">현재 단원</label><input class="fi" id="pl-unit" placeholder="예: 이차함수">
+    <label class="fl">현재 진도율 % <span style="color:var(--t3);font-weight:400">(선택)</span></label><input class="fi" id="pl-prog" type="number" min="0" max="100" inputmode="numeric" placeholder="현재 교재에서 진행한 비율">
+    <button class="btn" onclick="runRecommend()">반배정 추천 받기</button>
+    <div id="pl-recos" style="margin-top:12px"></div>
+    <button class="btn ghost" onclick="savePlacementOnly()">결과만 저장 (배정 보류)</button>
+    <button class="btn ghost" onclick="closeModal('ov-placement')">닫기</button>
+  </div>
+</div>
+
 <!-- 계정 관리 (관리자) -->
 <div class="ov" id="ov-accounts" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2">계정 관리</div>
@@ -1347,6 +1365,145 @@ function doClearExtra(){
   var s=DB.stu[idx]; if(!s) return;
   delete s.extra;
   saveAll();closeModal('ov-extra');toast('알림 삭제됨');showStuDetail(idx);
+}
+
+// ═══════════════════════════════════════
+// 배정시험 · 반배정 추천
+// ═══════════════════════════════════════
+// 점수 → 학생층 (A안: 90+최상위 / 75+상위 / 60+중위 / 59↓하위)
+function scoreToLevel(sc){
+  if(sc==null||isNaN(sc)) return null;
+  if(sc>=90) return '최상위권';
+  if(sc>=75) return '상위권';
+  if(sc>=60) return '중위권';
+  return '하위권';
+}
+function levelRank(l){ return {'하위권':0,'중위권':1,'상위권':2,'최상위권':3}[l]; }
+function plBg(l){ return l==='최상위권'?'var(--rdl)':l==='상위권'?'var(--aml)':l==='중위권'?'var(--acc-l)':'var(--gl)'; }
+function plC(l){  return l==='최상위권'?'var(--rd)' :l==='상위권'?'var(--am)' :l==='중위권'?'var(--acc)' :'var(--g)'; }
+// 추천 엔진: 같은 학년대 반들을 [강사 담당층 일치 + 반 진도 적합 + 정원 여유]로 점수화
+function recommendClasses(gradeGroup, level, progPct){
+  var lr = levelRank(level);
+  var cands = DB.subj.filter(function(sj){
+    if(gradeGroup && gradeGroup!=='기타') return getGradeGroup(sj.name)===gradeGroup;
+    return true;
+  });
+  var out = cands.map(function(sj){
+    var t = DB.cfg.teachers.find(function(x){return x.name===sj.teacher;});
+    var tls = (t && Array.isArray(t.teachLevels)) ? t.teachLevels : [];
+    var levelScore, levelReason, dist=null;
+    if(tls.length){
+      dist = Math.min.apply(null, tls.map(function(tl){return Math.abs(levelRank(tl)-lr);}));
+      levelScore = dist===0?50:dist===1?28:dist===2?12:4;
+      levelReason = dist===0 ? '강사 담당층 정확히 일치 ('+level+')'
+                  : dist===1 ? '강사 담당층 인접 (±1단계)'
+                  : '강사 담당층 차이 큼';
+    } else { levelScore=18; levelReason='강사 담당 학생층 미설정'; }
+    var classProg = calcRate(sj);
+    var progScore, progReason;
+    if(progPct!=null && !isNaN(progPct)){
+      var diff=Math.abs(classProg - progPct);
+      progScore = Math.max(0, 100-diff) * 0.35;
+      progReason = '반 진도 '+classProg+'% · 학생 '+progPct+'% (차이 '+Math.round(diff)+'%p)';
+    } else { progScore=12; progReason='반 진도 '+classProg+'%'; }
+    var size = DB.stu.filter(function(st){return st.class===sj.name;}).length;
+    var sizeScore = Math.max(0, 12 - size);
+    return {name:sj.name, teacher:sj.teacher||'강사 미정', classProg:classProg, size:size,
+            total:Math.round(levelScore+progScore+sizeScore), levelReason:levelReason, progReason:progReason};
+  });
+  out.sort(function(a,b){return b.total-a.total;});
+  return out;
+}
+// 학생 상세 카드
+function placementCardHtml(idx){
+  var s=DB.stu[idx]; if(!s) return '';
+  var p=s.placement;
+  if(!p){
+    return '<div class="card" style="margin-bottom:10px;border:1px dashed var(--s3)"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">📊 배정시험 · 반배정</div><div style="font-size:11px;color:var(--t3);margin-top:2px">점수·진도를 넣으면 반 추천을 받아요</div></div>'
+      +'<button class="btn sm" style="width:auto;padding:10px 14px;flex-shrink:0" onclick="event.stopPropagation();openPlacement('+idx+')">결과 입력</button></div></div>';
+  }
+  return '<div class="card" style="margin-bottom:10px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'
+    +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">📊 배정시험 &nbsp;<span class="tag" style="background:'+plBg(p.level)+';color:'+plC(p.level)+'">'+p.level+' '+p.score+'점</span></div>'
+    +'<div style="font-size:11px;color:var(--t3);margin-top:3px">'+(p.book||'')+(p.unit?' · '+p.unit:'')+(p.progPct!=null?' · 진도 '+p.progPct+'%':'')+'</div>'
+    +(p.assigned?'<div style="font-size:12px;color:var(--acc);font-weight:600;margin-top:3px">→ '+p.assigned+' 반 배정됨</div>':'<div style="font-size:11px;color:var(--am);margin-top:3px">배정 보류 상태</div>')+'</div>'
+    +'<button class="btn sm ghost" style="width:auto;padding:8px 12px;flex-shrink:0" onclick="event.stopPropagation();openPlacement('+idx+')">다시 추천</button></div></div>';
+}
+var currentRecos=[];
+function openPlacement(idx){
+  var s=DB.stu[idx]; if(!s) return;
+  document.getElementById('pl-idx').value=idx;
+  document.getElementById('pl-title').textContent=s.name+' · 배정시험 추천';
+  var p=s.placement||{};
+  document.getElementById('pl-score').value=(p.score!=null?p.score:'');
+  document.getElementById('pl-book').value=p.book||'';
+  document.getElementById('pl-unit').value=p.unit||'';
+  document.getElementById('pl-prog').value=(p.progPct!=null?p.progPct:'');
+  var gg=p.gradeGroup||getGradeGroup(s.class); if(!gg||gg==='기타') gg='고등부';
+  document.getElementById('pl-grade').value=gg;
+  document.getElementById('pl-recos').innerHTML='';
+  currentRecos=[];
+  updatePlLevel();
+  openModal('ov-placement');
+}
+function updatePlLevel(){
+  var sc=parseFloat(document.getElementById('pl-score').value);
+  var lv=scoreToLevel(sc);
+  var el=document.getElementById('pl-level-tag');
+  if(lv) el.innerHTML='판정 학생층: <b style="color:'+plC(lv)+'">'+lv+'</b> ('+sc+'점)';
+  else el.textContent='점수를 입력하면 학생층이 자동 판정됩니다';
+}
+function runRecommend(){
+  var sc=parseFloat(document.getElementById('pl-score').value);
+  var lv=scoreToLevel(sc);
+  if(!lv){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
+  var gg=document.getElementById('pl-grade').value;
+  var pp=document.getElementById('pl-prog').value; pp=(pp===''?null:parseFloat(pp));
+  currentRecos=recommendClasses(gg, lv, pp);
+  var el=document.getElementById('pl-recos');
+  if(!currentRecos.length){ el.innerHTML='<div class="empty">해당 학년대에 추천할 반이 없어요. 과목(반)을 먼저 등록해주세요.</div>'; return; }
+  var idx=document.getElementById('pl-idx').value;
+  var h='<div style="font-size:12px;font-weight:700;color:var(--acc);margin-bottom:8px">추천 반 · 학생층 '+lv+'</div>';
+  currentRecos.slice(0,3).forEach(function(r,i){
+    var medal=i===0?'🥇':i===1?'🥈':'🥉';
+    h+='<div class="card" style="margin-bottom:8px;border:1px solid '+(i===0?'var(--acc)':'var(--s3)')+'">'
+      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:16px">'+medal+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700">'+r.name+'</div>'
+      +'<div style="font-size:11px;color:var(--t3)">'+r.teacher+' · 진도 '+r.classProg+'% · 👥 '+r.size+'명</div></div>'
+      +'<span style="font-size:11px;font-weight:700;color:var(--acc);flex-shrink:0">적합도 '+r.total+'</span></div>'
+      +'<div style="font-size:11px;color:var(--t2);line-height:1.6">· '+r.levelReason+'<br>· '+r.progReason+'</div>'
+      +'<button class="btn sm" style="width:auto;padding:8px 14px;margin-top:8px" onclick="assignClass('+idx+','+i+')">이 반으로 배정</button>'
+      +'</div>';
+  });
+  el.innerHTML=h;
+}
+function collectPlacement(){
+  var sc=parseFloat(document.getElementById('pl-score').value);
+  var lv=scoreToLevel(sc);
+  var pp=document.getElementById('pl-prog').value; pp=(pp===''?null:parseFloat(pp));
+  return {score:sc, level:lv, gradeGroup:document.getElementById('pl-grade').value,
+          book:document.getElementById('pl-book').value.trim(), unit:document.getElementById('pl-unit').value.trim(),
+          progPct:pp, date:today()};
+}
+function assignClass(idx, i){
+  var s=DB.stu[idx], r=currentRecos[i]; if(!s||!r) return;
+  var p=collectPlacement();
+  if(!p.level){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
+  p.assigned=r.name; p.assignedTeacher=r.teacher;
+  s.placement=p;
+  s.class=r.name; s.teacher=r.teacher;     // 실제 반·강사 배정
+  if(!s.consultHistory) s.consultHistory=[];
+  s.consultHistory.push({date:today(), nbTag:'placement', counselor:(ME?ME.name:''), method:'기타', mood:'', risk:'일상 체크', rstat:'', note:'[배정] 배정시험 '+p.score+'점('+p.level+') → '+r.name+' 반 배정'});
+  saveAll(); closeModal('ov-placement'); toast('✓ '+r.name+' 반으로 배정됐어요'); showStuDetail(idx);
+}
+function savePlacementOnly(){
+  var idx=parseInt(document.getElementById('pl-idx').value);
+  var s=DB.stu[idx]; if(!s) return;
+  var p=collectPlacement();
+  if(!p.level){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
+  if(s.placement&&s.placement.assigned){ p.assigned=s.placement.assigned; p.assignedTeacher=s.placement.assignedTeacher; }
+  s.placement=p;
+  saveAll(); closeModal('ov-placement'); toast('배정시험 결과가 저장됐어요 ✓'); showStuDetail(idx);
 }
 
 // ═══════════════════════════════════════
@@ -3493,6 +3650,7 @@ function showStuDetail(idx) {
     +'<div style="font-size:13px;font-weight:600;color:var(--acc)">'+(s.nextConsultDate||'미정')+'</div></div></div></div>';
   h+=nbCardHtml(idx);
   h+=extraCardHtml(idx);
+  h+=placementCardHtml(idx);
   h+='<button class="btn" style="margin-bottom:13px" onclick="openConsult('+idx+')">+ 상담 기록 입력</button>';
   h+='<div class="ct">상담 기록 ('+hist.length+'회)</div>';
   if(!hist.length){h+='<div class="empty">아직 기록이 없습니다.</div>';}
