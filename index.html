@@ -28,6 +28,7 @@ var url = URL.createObjectURL(blob);
 document.getElementById('pwa-manifest').href = url;
 </script>
 <title>ROUTETOP 학원관리</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // Service Worker 등록 (실제 파일 사용)
 if ('serviceWorker' in navigator) {
@@ -292,6 +293,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
       <div id="cal-evlist"><div class="empty">날짜를 선택하면 일정이 표시됩니다.</div></div>
     </div>
     <div class="screen" id="sc-detail"><button class="back" id="det-back"><svg class="ic" style="width:15px;height:15px" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>돌아가기</button><div id="det-body"></div></div>
+    <div class="screen" id="sc-diagnosis"><div style="padding:14px 0 8px"><div style="font-size:21px;font-weight:700">매쓰플랫 진단 분석</div><div style="font-size:12px;color:var(--t2);margin-top:2px">보고서 PDF를 올리면 취약 유형을 진단하고 유형별 강의를 추천합니다</div></div><div id="diag-body"></div></div>
     <div class="screen" id="sc-tuition">
       <div style="padding:14px 0 8px"><div style="font-size:21px;font-weight:700">💳 수강료 관리</div></div>
       <div id="tuition-body"></div>
@@ -303,6 +305,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <div class="ti" id="tab-consult" onclick="goTab('consult')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg></div><div class="tlb">상담</div></div>
     <div class="ti" id="tab-calendar" onclick="goTab('calendar')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div><div class="tlb">일정</div></div>
     <div class="ti" id="tab-tuition" onclick="goTab('tuition')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg></div><div class="tlb">수강료</div></div>
+    <div class="ti" id="tab-diagnosis" onclick="goTab('diagnosis')"><div class="tdot"></div><div class="tic"><svg class="ic" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div><div class="tlb">진단</div></div>
   </div>
 </div>
 
@@ -531,24 +534,6 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
-<!-- 배정시험 · 반배정 추천 -->
-<div class="ov" id="ov-placement" onclick="ovClose(event,this)">
-  <div class="modal"><div class="mh"></div><div class="mt2" id="pl-title">배정시험 · 반배정 추천</div>
-    <input type="hidden" id="pl-idx">
-    <label class="fl">배정시험 점수 (0~100)</label><input class="fi" id="pl-score" type="number" min="0" max="100" inputmode="numeric" oninput="updatePlLevel()">
-    <div id="pl-level-tag" style="font-size:12px;margin:2px 0 8px;color:var(--t3)">점수를 입력하면 학생층이 자동 판정됩니다</div>
-    <label class="fl">대상 학년대</label>
-    <select class="fi" id="pl-grade" style="appearance:auto;-webkit-appearance:menulist"><option value="초등부">초등부</option><option value="중등부">중등부</option><option value="고등부">고등부</option></select>
-    <label class="fl">현재 교재</label><input class="fi" id="pl-book" placeholder="예: 쎈 수학(상)">
-    <label class="fl">현재 단원</label><input class="fi" id="pl-unit" placeholder="예: 이차함수">
-    <label class="fl">현재 진도율 % <span style="color:var(--t3);font-weight:400">(선택)</span></label><input class="fi" id="pl-prog" type="number" min="0" max="100" inputmode="numeric" placeholder="현재 교재에서 진행한 비율">
-    <button class="btn" onclick="runRecommend()">반배정 추천 받기</button>
-    <div id="pl-recos" style="margin-top:12px"></div>
-    <button class="btn ghost" onclick="savePlacementOnly()">결과만 저장 (배정 보류)</button>
-    <button class="btn ghost" onclick="closeModal('ov-placement')">닫기</button>
-  </div>
-</div>
-
 <!-- 계정 관리 (관리자) -->
 <div class="ov" id="ov-accounts" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2">계정 관리</div>
@@ -719,15 +704,6 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
           <span class="tb-status" id="eval-7-mid" onclick="setEvalItem(7,'중')">중</span>
           <span class="tb-status" id="eval-7-low" onclick="setEvalItem(7,'하')">하</span>
         </div>
-      </div>
-    </div>
-    <div style="margin:4px 0 12px;padding-top:12px;border-top:1px solid var(--s3)">
-      <div style="font-size:13px;font-weight:600;line-height:1.45;margin-bottom:9px">학생층은 어디까지 담당이 가능합니까? <span style="font-size:11px;color:var(--t3);font-weight:400">(중복 선택)</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px">
-        <span id="lvl-0" onclick="toggleEvalLevel(0)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">최상위권</span>
-        <span id="lvl-1" onclick="toggleEvalLevel(1)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">상위권</span>
-        <span id="lvl-2" onclick="toggleEvalLevel(2)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">중위권</span>
-        <span id="lvl-3" onclick="toggleEvalLevel(3)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">하위권</span>
       </div>
     </div>
     <div style="background:var(--acc-l);border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
@@ -982,7 +958,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 // ═══════════════════════════════════════
 // 데이터
 // ═══════════════════════════════════════
-var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',admins:[],teachers:[]}, subj:[], stu:[], evalHistory:{} };
+var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',admins:[],teachers:[]}, subj:[], stu:[], evalHistory:{}, typeBank:[] };
 var ME = null; // {role:'admin'|'teacher', name:string}
 var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
@@ -1008,10 +984,11 @@ function saveAll() {
   localStorage.setItem('ac_subj', JSON.stringify(DB.subj));
   localStorage.setItem('ac_stu', JSON.stringify(DB.stu));
   localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{}));
+  localStorage.setItem('ac_typeBank', JSON.stringify(DB.typeBank||[]));
   _lastLocalSave = Date.now();  // 변경 시각 기록 → 폴링 덮어쓰기 방지
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
-    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}})
+    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: DB.typeBank||[]})
       .then(function(){ _lastLocalSave = Date.now(); })
       .catch(function(e) { console.warn('FB save error:', e); });
   }, 400);
@@ -1045,28 +1022,6 @@ function stBg(l) { return l==='urgent' ? 'var(--rdl)' : l==='upcoming' ? 'var(--
 function stI(l)  { return l==='urgent' ? '⚠' : l==='upcoming' ? '◷' : '✓'; }
 function mySubj() { return isAdminLevel() ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
 function myStu()  { return isAdminLevel() ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
-// 반(class) → 이름 순 정렬. 반 미지정은 맨 뒤로.
-function sortStuByClass(a,b){
-  var ca=a.class||'\uD7A3', cb=b.class||'\uD7A3';
-  if(ca!==cb) return ca.localeCompare(cb,'ko');
-  return (a.name||'').localeCompare(b.name||'','ko');
-}
-// 학생 목록을 반별로 묶어 헤더와 함께 렌더
-function renderStuGrouped(list, showT){
-  list = list.slice().sort(sortStuByClass);
-  var h='', cur=null, first=true;
-  list.forEach(function(s){
-    var cls = s.class || '반 미지정';
-    if(cls!==cur){
-      cur=cls;
-      h+='<div style="font-size:12px;font-weight:700;color:var(--acc);margin:'+(first?'2px':'16px')+' 0 7px;padding-left:2px;display:flex;align-items:center;gap:6px">'
-        +'<span style="width:3px;height:13px;background:var(--acc);border-radius:2px;display:inline-block"></span>'+cls+'</div>';
-      first=false;
-    }
-    h+=stuCard(s, gStI(s), showT);
-  });
-  return h;
-}
 function gSI(s)  { return DB.subj.indexOf(s); }
 function gStI(s) { return DB.stu.indexOf(s); }
 
@@ -1368,145 +1323,6 @@ function doClearExtra(){
 }
 
 // ═══════════════════════════════════════
-// 배정시험 · 반배정 추천
-// ═══════════════════════════════════════
-// 점수 → 학생층 (A안: 90+최상위 / 75+상위 / 60+중위 / 59↓하위)
-function scoreToLevel(sc){
-  if(sc==null||isNaN(sc)) return null;
-  if(sc>=90) return '최상위권';
-  if(sc>=75) return '상위권';
-  if(sc>=60) return '중위권';
-  return '하위권';
-}
-function levelRank(l){ return {'하위권':0,'중위권':1,'상위권':2,'최상위권':3}[l]; }
-function plBg(l){ return l==='최상위권'?'var(--rdl)':l==='상위권'?'var(--aml)':l==='중위권'?'var(--acc-l)':'var(--gl)'; }
-function plC(l){  return l==='최상위권'?'var(--rd)' :l==='상위권'?'var(--am)' :l==='중위권'?'var(--acc)' :'var(--g)'; }
-// 추천 엔진: 같은 학년대 반들을 [강사 담당층 일치 + 반 진도 적합 + 정원 여유]로 점수화
-function recommendClasses(gradeGroup, level, progPct){
-  var lr = levelRank(level);
-  var cands = DB.subj.filter(function(sj){
-    if(gradeGroup && gradeGroup!=='기타') return getGradeGroup(sj.name)===gradeGroup;
-    return true;
-  });
-  var out = cands.map(function(sj){
-    var t = DB.cfg.teachers.find(function(x){return x.name===sj.teacher;});
-    var tls = (t && Array.isArray(t.teachLevels)) ? t.teachLevels : [];
-    var levelScore, levelReason, dist=null;
-    if(tls.length){
-      dist = Math.min.apply(null, tls.map(function(tl){return Math.abs(levelRank(tl)-lr);}));
-      levelScore = dist===0?50:dist===1?28:dist===2?12:4;
-      levelReason = dist===0 ? '강사 담당층 정확히 일치 ('+level+')'
-                  : dist===1 ? '강사 담당층 인접 (±1단계)'
-                  : '강사 담당층 차이 큼';
-    } else { levelScore=18; levelReason='강사 담당 학생층 미설정'; }
-    var classProg = calcRate(sj);
-    var progScore, progReason;
-    if(progPct!=null && !isNaN(progPct)){
-      var diff=Math.abs(classProg - progPct);
-      progScore = Math.max(0, 100-diff) * 0.35;
-      progReason = '반 진도 '+classProg+'% · 학생 '+progPct+'% (차이 '+Math.round(diff)+'%p)';
-    } else { progScore=12; progReason='반 진도 '+classProg+'%'; }
-    var size = DB.stu.filter(function(st){return st.class===sj.name;}).length;
-    var sizeScore = Math.max(0, 12 - size);
-    return {name:sj.name, teacher:sj.teacher||'강사 미정', classProg:classProg, size:size,
-            total:Math.round(levelScore+progScore+sizeScore), levelReason:levelReason, progReason:progReason};
-  });
-  out.sort(function(a,b){return b.total-a.total;});
-  return out;
-}
-// 학생 상세 카드
-function placementCardHtml(idx){
-  var s=DB.stu[idx]; if(!s) return '';
-  var p=s.placement;
-  if(!p){
-    return '<div class="card" style="margin-bottom:10px;border:1px dashed var(--s3)"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
-      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">📊 배정시험 · 반배정</div><div style="font-size:11px;color:var(--t3);margin-top:2px">점수·진도를 넣으면 반 추천을 받아요</div></div>'
-      +'<button class="btn sm" style="width:auto;padding:10px 14px;flex-shrink:0" onclick="event.stopPropagation();openPlacement('+idx+')">결과 입력</button></div></div>';
-  }
-  return '<div class="card" style="margin-bottom:10px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'
-    +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">📊 배정시험 &nbsp;<span class="tag" style="background:'+plBg(p.level)+';color:'+plC(p.level)+'">'+p.level+' '+p.score+'점</span></div>'
-    +'<div style="font-size:11px;color:var(--t3);margin-top:3px">'+(p.book||'')+(p.unit?' · '+p.unit:'')+(p.progPct!=null?' · 진도 '+p.progPct+'%':'')+'</div>'
-    +(p.assigned?'<div style="font-size:12px;color:var(--acc);font-weight:600;margin-top:3px">→ '+p.assigned+' 반 배정됨</div>':'<div style="font-size:11px;color:var(--am);margin-top:3px">배정 보류 상태</div>')+'</div>'
-    +'<button class="btn sm ghost" style="width:auto;padding:8px 12px;flex-shrink:0" onclick="event.stopPropagation();openPlacement('+idx+')">다시 추천</button></div></div>';
-}
-var currentRecos=[];
-function openPlacement(idx){
-  var s=DB.stu[idx]; if(!s) return;
-  document.getElementById('pl-idx').value=idx;
-  document.getElementById('pl-title').textContent=s.name+' · 배정시험 추천';
-  var p=s.placement||{};
-  document.getElementById('pl-score').value=(p.score!=null?p.score:'');
-  document.getElementById('pl-book').value=p.book||'';
-  document.getElementById('pl-unit').value=p.unit||'';
-  document.getElementById('pl-prog').value=(p.progPct!=null?p.progPct:'');
-  var gg=p.gradeGroup||getGradeGroup(s.class); if(!gg||gg==='기타') gg='고등부';
-  document.getElementById('pl-grade').value=gg;
-  document.getElementById('pl-recos').innerHTML='';
-  currentRecos=[];
-  updatePlLevel();
-  openModal('ov-placement');
-}
-function updatePlLevel(){
-  var sc=parseFloat(document.getElementById('pl-score').value);
-  var lv=scoreToLevel(sc);
-  var el=document.getElementById('pl-level-tag');
-  if(lv) el.innerHTML='판정 학생층: <b style="color:'+plC(lv)+'">'+lv+'</b> ('+sc+'점)';
-  else el.textContent='점수를 입력하면 학생층이 자동 판정됩니다';
-}
-function runRecommend(){
-  var sc=parseFloat(document.getElementById('pl-score').value);
-  var lv=scoreToLevel(sc);
-  if(!lv){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
-  var gg=document.getElementById('pl-grade').value;
-  var pp=document.getElementById('pl-prog').value; pp=(pp===''?null:parseFloat(pp));
-  currentRecos=recommendClasses(gg, lv, pp);
-  var el=document.getElementById('pl-recos');
-  if(!currentRecos.length){ el.innerHTML='<div class="empty">해당 학년대에 추천할 반이 없어요. 과목(반)을 먼저 등록해주세요.</div>'; return; }
-  var idx=document.getElementById('pl-idx').value;
-  var h='<div style="font-size:12px;font-weight:700;color:var(--acc);margin-bottom:8px">추천 반 · 학생층 '+lv+'</div>';
-  currentRecos.slice(0,3).forEach(function(r,i){
-    var medal=i===0?'🥇':i===1?'🥈':'🥉';
-    h+='<div class="card" style="margin-bottom:8px;border:1px solid '+(i===0?'var(--acc)':'var(--s3)')+'">'
-      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:16px">'+medal+'</span>'
-      +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700">'+r.name+'</div>'
-      +'<div style="font-size:11px;color:var(--t3)">'+r.teacher+' · 진도 '+r.classProg+'% · 👥 '+r.size+'명</div></div>'
-      +'<span style="font-size:11px;font-weight:700;color:var(--acc);flex-shrink:0">적합도 '+r.total+'</span></div>'
-      +'<div style="font-size:11px;color:var(--t2);line-height:1.6">· '+r.levelReason+'<br>· '+r.progReason+'</div>'
-      +'<button class="btn sm" style="width:auto;padding:8px 14px;margin-top:8px" onclick="assignClass('+idx+','+i+')">이 반으로 배정</button>'
-      +'</div>';
-  });
-  el.innerHTML=h;
-}
-function collectPlacement(){
-  var sc=parseFloat(document.getElementById('pl-score').value);
-  var lv=scoreToLevel(sc);
-  var pp=document.getElementById('pl-prog').value; pp=(pp===''?null:parseFloat(pp));
-  return {score:sc, level:lv, gradeGroup:document.getElementById('pl-grade').value,
-          book:document.getElementById('pl-book').value.trim(), unit:document.getElementById('pl-unit').value.trim(),
-          progPct:pp, date:today()};
-}
-function assignClass(idx, i){
-  var s=DB.stu[idx], r=currentRecos[i]; if(!s||!r) return;
-  var p=collectPlacement();
-  if(!p.level){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
-  p.assigned=r.name; p.assignedTeacher=r.teacher;
-  s.placement=p;
-  s.class=r.name; s.teacher=r.teacher;     // 실제 반·강사 배정
-  if(!s.consultHistory) s.consultHistory=[];
-  s.consultHistory.push({date:today(), nbTag:'placement', counselor:(ME?ME.name:''), method:'기타', mood:'', risk:'일상 체크', rstat:'', note:'[배정] 배정시험 '+p.score+'점('+p.level+') → '+r.name+' 반 배정'});
-  saveAll(); closeModal('ov-placement'); toast('✓ '+r.name+' 반으로 배정됐어요'); showStuDetail(idx);
-}
-function savePlacementOnly(){
-  var idx=parseInt(document.getElementById('pl-idx').value);
-  var s=DB.stu[idx]; if(!s) return;
-  var p=collectPlacement();
-  if(!p.level){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
-  if(s.placement&&s.placement.assigned){ p.assigned=s.placement.assigned; p.assignedTeacher=s.placement.assignedTeacher; }
-  s.placement=p;
-  saveAll(); closeModal('ov-placement'); toast('배정시험 결과가 저장됐어요 ✓'); showStuDetail(idx);
-}
-
-// ═══════════════════════════════════════
 // 탭 네비게이션
 // ═══════════════════════════════════════
 function goTab(name) {
@@ -1523,6 +1339,7 @@ function goTab(name) {
   if (name === 'consult')  renderConsult();
   if (name === 'calendar') { if(!calY){var n=new Date();calY=n.getFullYear();calM=n.getMonth();} renderCal(); }
   if (name === 'tuition')  renderTuition();
+  if (name === 'diagnosis') renderDiagnosis();
 }
 
 // 역할에 따라 탭 표시/숨김 (수강료는 원장/행정팀만)
@@ -1531,6 +1348,268 @@ function updateTabVisibility() {
   if (tuiTab) tuiTab.style.display = isOwnerLevel() ? '' : 'none';
 }
 function goBack() { goTab(prevTab); }
+
+// ═══════════════════════════════════════
+// 매쓰플랫 진단 분석 + 유형 강의 은행
+// ═══════════════════════════════════════
+var diagReports = [];   // 세션 내 분석된 보고서
+
+function dEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+function diagCol(p){ return p>=90?'var(--g)':p>=80?'var(--acc)':p>=70?'var(--am)':'var(--rd)'; }
+function diagNorm(s){ return String(s||'').replace(/\s+/g,'').toLowerCase(); }
+
+// PDF → 줄 단위 텍스트 (pdf.js)
+function diagPdfToPages(buf){
+  var pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+  if(pdfjsLib && pdfjsLib.GlobalWorkerOptions && !pdfjsLib.GlobalWorkerOptions.workerSrc)
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  return pdfjsLib.getDocument({data:buf}).promise.then(function(pdf){
+    var pages=[], chain=Promise.resolve();
+    for(var p=1;p<=pdf.numPages;p++){ (function(pn){
+      chain=chain.then(function(){ return pdf.getPage(pn); }).then(function(page){ return page.getTextContent(); }).then(function(tc){
+        var rows=[];
+        tc.items.forEach(function(it){
+          if(!it.str||!it.str.trim()) return;
+          var y=it.transform[5], x=it.transform[4], b=null;
+          for(var r=0;r<rows.length;r++){ if(Math.abs(rows[r].y-y)<=3){ b=rows[r]; break; } }
+          if(!b){ b={y:y,items:[]}; rows.push(b); }
+          b.items.push({x:x,s:it.str});
+        });
+        rows.sort(function(a,b){return b.y-a.y;});
+        pages.push(rows.map(function(r){ return r.items.sort(function(a,b){return a.x-b.x;}).map(function(o){return o.s;}).join(' ').replace(/\s+/g,' ').trim(); }));
+      });
+    })(p); }
+    return chain.then(function(){ return pages; });
+  });
+}
+
+// 매쓰플랫 파서 (실데이터 검증 완료)
+function diagParse(pages){
+  var res={student:'',grade:'',period:'',summary:{},units:[],types:[],behavior:[]};
+  var flat=[]; pages.forEach(function(ls){ ls.forEach(function(l){ flat.push(l); }); });
+  for(var i=0;i<flat.length;i++){ var m=flat[i].match(/(.+?학교\s*\d+학년)\s+(\S+)\s+학생/); if(m){ res.grade=m[1].replace(/\s+/g,' ').trim(); res.student=m[2]; break; } }
+  for(var i=0;i<flat.length;i++){ var p=flat[i].match(/(\d{4}\.\d{2}\.\d{2})\D+(\d{4}\.\d{2}\.\d{2})/); if(p){ res.period=p[1]+' ~ '+p[2]; break; } }
+  var J=flat.join('\n');
+  var g=J.match(/(\d)\s*등급/); if(g) res.summary.grade=+g[1];
+  var a=J.match(/정답률\s*(\d{1,3})\s*%/); if(a) res.summary.accuracy=+a[1];
+  var c=J.match(/(\d{2,4})\s*문항\s*채점/); if(c) res.summary.count=+c[1];
+  var d=J.match(/난이도\s*(\d(?:\.\d)?)/); if(d) res.summary.difficulty=parseFloat(d[1]);
+  pages.forEach(function(lines){
+    var head=lines.slice(0,4).join(' ');
+    if(head.indexOf('학습성과')>=0){
+      lines.forEach(function(l){ var m=l.match(/^\s*\d+개정\s+(.+?)\s+(\d+)문항\s+(\d+)%\s*$/); if(m) res.units.push({unit:m[1].trim(),count:+m[2],accuracy:+m[3]}); });
+    }
+    if(head.indexOf('진단결과')>=0){
+      var unit=''; var hm=head.match(/진단결과\s+\S+\s+학생\s+(.+?)\s+\d+개정/); if(hm) unit=hm[1].trim();
+      if(!unit){ for(var k=0;k<lines.length;k++){ var u2=lines[k].match(/^(.+?)\s+\d+개정\s+학습내역/); if(u2){ unit=u2[1].trim(); break; } } }
+      lines.forEach(function(l){
+        var m=l.match(/^\s*(취약유형|우수유형)?\s*(\d{1,2})\s+(.+?)\s+(\d{1,3})%\s*$/);
+        if(m){ var nm=m[3].trim(); if(nm.length<2) return; res.types.push({unit:unit,mark:m[1]||'',no:+m[2],name:nm,accuracy:+m[4]}); }
+      });
+    }
+    if(head.indexOf('학습평가')>=0){
+      var labs=['계산력','이해력','추론력','문제해결력'];
+      for(var k=0;k<lines.length;k++){
+        var lab=labs.find(function(x){ return lines[k].trim().endsWith(x); });
+        if(lab && !res.behavior.find(function(b){return b.name===lab;})){
+          for(var j=k+1;j<Math.min(k+3,lines.length);j++){ var pm=lines[j].match(/(\d{1,3})\s*%/); if(pm){ res.behavior.push({name:lab,accuracy:+pm[1]}); break; } }
+        }
+      }
+    }
+  });
+  return res;
+}
+
+// 유형 단위 강의 매칭
+function diagMatch(typeName){
+  var n=diagNorm(typeName);
+  return (DB.typeBank||[]).filter(function(e){
+    var t=diagNorm(e.type); if(!t) return false;
+    return n.indexOf(t)>=0 || t.indexOf(n)>=0;
+  });
+}
+
+// 파일 처리
+function diagFiles(files){
+  var pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
+  if(!pdfjsLib){ diagStatus('PDF 라이브러리를 불러오지 못했습니다. 네트워크를 확인해 주세요.', true); return; }
+  var list=[]; for(var i=0;i<files.length;i++){ if(files[i].type==='application/pdf'||/\.pdf$/i.test(files[i].name)) list.push(files[i]); }
+  if(!list.length) return;
+  diagStatus('분석 중… ('+list.length+'개 파일)', false);
+  var chain=Promise.resolve(), ok=0;
+  list.forEach(function(f){
+    chain=chain.then(function(){ return f.arrayBuffer(); }).then(function(buf){ return diagPdfToPages(buf); }).then(function(pages){
+      var r=diagParse(pages);
+      if(r.units.length||r.types.length){ diagReports.unshift(r); ok++; }
+    }).catch(function(e){ console.warn('진단 분석 실패', f.name, e); });
+  });
+  chain.then(function(){
+    renderDiagnosis();
+    diagStatus(ok? (ok+'개 보고서 분석 완료'):'매쓰플랫 보고서 형식을 인식하지 못했습니다.', ok===0);
+    if(ok) setTimeout(function(){ var s=document.getElementById('diag-status'); if(s) s.style.display='none'; }, 1500);
+  });
+}
+function diagStatus(t,err){ var s=document.getElementById('diag-status'); if(!s) return; s.style.display='block'; s.textContent=t; s.style.color=err?'var(--rd)':'var(--acc)'; }
+
+// 유형 은행 CRUD
+function tbAddSingle(){
+  var sub=(document.getElementById('tb-sub')||{}).value, ty=(document.getElementById('tb-type')||{}).value,
+      ti=(document.getElementById('tb-title')||{}).value, url=(document.getElementById('tb-url')||{}).value;
+  sub=(sub||'').trim(); ty=(ty||'').trim(); ti=(ti||'').trim(); url=(url||'').trim();
+  if(!ty||!ti){ alert('유형과 강의명을 입력하세요.'); return; }
+  DB.typeBank.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6), subject:sub||'수학', type:ty, title:ti, url:url });
+  saveAll(); renderDiagnosis();
+}
+function tbBulkAdd(){
+  var box=document.getElementById('tb-bulk'); if(!box) return;
+  var lines=(box.value||'').split('\n'), added=0;
+  lines.forEach(function(line){
+    if(!line.trim()) return;
+    var cols=line.indexOf('\t')>=0 ? line.split('\t') : line.split(',');
+    cols=cols.map(function(c){return c.trim();});
+    var sub,ty,ti,url;
+    if(cols.length>=4){ sub=cols[0]; ty=cols[1]; ti=cols[2]; url=cols[3]; }
+    else if(cols.length===3){ sub='수학'; ty=cols[0]; ti=cols[1]; url=cols[2]; }
+    else return;
+    if(!ty||!ti) return;
+    DB.typeBank.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6)+added, subject:sub||'수학', type:ty, title:ti, url:url||'' });
+    added++;
+  });
+  if(added){ saveAll(); renderDiagnosis(); alert(added+'개 유형을 등록했습니다.'); }
+  else alert('형식을 확인하세요. 한 줄에  과목 [탭/쉼표] 유형 [탭/쉼표] 강의명 [탭/쉼표] 링크');
+}
+function tbDel(id){ DB.typeBank=(DB.typeBank||[]).filter(function(e){return e.id!==id;}); saveAll(); renderDiagnosis(); }
+function tbPrefill(sub,ty){
+  diagBankOpen=true; renderDiagnosis();
+  setTimeout(function(){ var s=document.getElementById('tb-sub'), t=document.getElementById('tb-type');
+    if(s) s.value=sub||'수학'; if(t){ t.value=ty||''; t.focus(); }
+    var sec=document.getElementById('tb-section'); if(sec) sec.scrollIntoView({behavior:'smooth'});
+  }, 60);
+}
+var diagBankOpen=false;
+function diagToggleBank(){ diagBankOpen=!diagBankOpen; renderDiagnosis(); }
+
+// 렌더
+function renderDiagnosis(){
+  var el=document.getElementById('diag-body'); if(!el) return;
+  var h='';
+  // 업로드
+  h+='<div onclick="document.getElementById(\'diag-file\').click()" style="border:2px dashed var(--s3);border-radius:14px;background:var(--s1);cursor:pointer;padding:24px 16px;text-align:center">'+
+     '<div style="width:42px;height:42px;border-radius:50%;background:var(--acc);color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;margin:0 auto 9px">↑</div>'+
+     '<div style="font-weight:700;color:var(--acc);font-size:15px">매쓰플랫 월간보고서 PDF 올리기</div>'+
+     '<div style="font-size:12px;color:var(--t2);margin-top:3px">여러 학생을 한꺼번에 올릴 수 있어요 · 클릭해서 선택</div>'+
+     '<input type="file" id="diag-file" accept="application/pdf" multiple style="display:none" onchange="diagFiles(this.files)"></div>';
+  h+='<div id="diag-status" style="display:none;margin-top:10px;padding:10px 13px;border-radius:9px;background:var(--s1);border:1px solid var(--s3);font-size:13px;font-weight:600;color:var(--acc)"></div>';
+
+  // 보고서 카드
+  diagReports.forEach(function(r,idx){ h+=diagCard(r,idx); });
+
+  // 유형 강의 은행
+  var bank=DB.typeBank||[];
+  h+='<div id="tb-section" style="margin-top:18px"><button onclick="diagToggleBank()" style="width:100%;text-align:left;background:var(--s1);border:1px solid var(--s3);border-radius:12px;padding:13px 15px;font-size:14px;font-weight:700;color:var(--te);cursor:pointer">📚 유형 강의 은행 '+(bank.length?'('+bank.length+')':'')+' '+(diagBankOpen?'▴':'▾')+'</button>';
+  if(diagBankOpen){
+    h+='<div style="border:1px solid var(--s3);border-top:none;border-radius:0 0 12px 12px;background:var(--s1);padding:15px;margin-top:-4px">';
+    h+='<div style="font-size:12.5px;color:var(--t2);margin-bottom:12px">유형(또는 키워드)에 강의를 등록해 두면, 진단 결과의 취약 유형에 자동으로 추천됩니다. 학원에서 과목별로 정리해 올리세요.</div>';
+    // 단건 추가
+    h+='<div style="display:grid;grid-template-columns:0.8fr 1.4fr;gap:7px;margin-bottom:7px">'+
+       '<input id="tb-sub" class="fi" style="margin:0" placeholder="과목 (예: 수학)"><input id="tb-type" class="fi" style="margin:0" placeholder="유형/키워드 (예: 근의 공식을 이용)"></div>';
+    h+='<div style="display:grid;grid-template-columns:1.2fr 1.2fr auto;gap:7px;margin-bottom:12px">'+
+       '<input id="tb-title" class="fi" style="margin:0" placeholder="강의명"><input id="tb-url" class="fi" style="margin:0" placeholder="영상 링크 https://...">'+
+       '<button onclick="tbAddSingle()" style="background:var(--acc);color:#fff;border:none;border-radius:9px;padding:0 16px;font-weight:700;cursor:pointer">추가</button></div>';
+    // 대량 붙여넣기
+    h+='<details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--acc)">엑셀에서 한꺼번에 붙여넣기</summary>'+
+       '<div style="font-size:11.5px;color:var(--t3);margin:6px 0">한 줄에:  과목 [탭] 유형 [탭] 강의명 [탭] 링크  (엑셀 복붙 또는 쉼표 구분)</div>'+
+       '<textarea id="tb-bulk" rows="4" style="width:100%;border:1px solid var(--s3);border-radius:9px;padding:9px;font-size:12.5px;font-family:inherit" placeholder="수학	근의 공식을 이용	근의공식 완전정복	https://..."></textarea>'+
+       '<button onclick="tbBulkAdd()" style="margin-top:7px;background:var(--g);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer">일괄 등록</button></details>';
+    // 목록 (과목별)
+    if(!bank.length){ h+='<div style="text-align:center;color:var(--t3);font-size:12.5px;padding:12px">등록된 강의가 없습니다.</div>'; }
+    else{
+      var groups={}; bank.forEach(function(e){ (groups[e.subject||'기타']=groups[e.subject||'기타']||[]).push(e); });
+      Object.keys(groups).forEach(function(sub){
+        h+='<div style="font-size:12px;font-weight:800;color:var(--acc);margin:10px 0 5px">'+dEsc(sub)+'</div>';
+        groups[sub].forEach(function(e){
+          h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
+             '<span style="font-weight:700;color:var(--te);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
+             '<span style="flex:1;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.title)+'</span>'+
+             (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none">링크</a>':'')+
+             '<button onclick="tbDel(\''+e.id+'\')" style="border:none;background:none;color:var(--rd);cursor:pointer;font-weight:800;font-size:14px">✕</button></div>';
+        });
+      });
+    }
+    h+='</div>';
+  }
+  h+='</div>';
+  el.innerHTML=h;
+}
+
+function diagCard(r,idx){
+  var s=r.summary;
+  var weak=r.types.filter(function(t){ return t.mark==='취약유형'||t.accuracy<=60; });
+  var seen={}; weak=weak.filter(function(t){ var k=t.unit+'#'+t.no; if(seen[k])return false; seen[k]=1; return true; });
+  var byUnit={}; weak.forEach(function(t){ (byUnit[t.unit]=byUnit[t.unit]||[]).push(t); });
+  var ua={}; r.units.forEach(function(u){ ua[u.unit]=u.accuracy; });
+  var order=Object.keys(byUnit).sort(function(x,y){ return (ua[x]||0)-(ua[y]||0); });
+
+  function mt(v,l,c){ return '<div style="border:1px solid var(--s3);border-radius:11px;padding:11px 8px;text-align:center;background:var(--s1)"><div style="font-size:23px;font-weight:800;color:'+(c||'var(--te)')+';line-height:1.1">'+v+'</div><div style="font-size:11px;color:var(--t2);margin-top:2px">'+l+'</div></div>'; }
+
+  var h='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:15px;margin-top:16px;overflow:hidden">';
+  h+='<div style="background:var(--acc);color:#fff;padding:13px 16px;display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">'+
+     '<span style="font-size:18px;font-weight:800">'+dEsc(r.student||'학생')+'</span>'+
+     '<span style="font-size:12px;color:#cfe6f4">'+dEsc(r.grade||'')+(r.period?' · '+dEsc(r.period):'')+'</span></div>';
+  h+='<div style="padding:16px">';
+  // 종합
+  h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">'+
+     mt(s.grade!=null?s.grade+'등급':'—','종합 등급', s.grade!=null?diagCol(s.grade<=1?95:s.grade<=2?85:70):'')+
+     mt(s.accuracy!=null?s.accuracy+'%':'—','정답률', s.accuracy!=null?diagCol(s.accuracy):'')+
+     mt(s.count!=null?s.count:'—','채점 문항','')+
+     mt(s.difficulty!=null?s.difficulty:'—','평균 난이도','')+'</div>';
+  // 단원별
+  if(r.units.length){
+    h+='<div style="font-size:13.5px;font-weight:800;color:var(--te);margin:18px 0 9px">단원별 정답률</div>';
+    r.units.forEach(function(u){
+      h+='<div style="display:flex;align-items:center;gap:9px;padding:6px 0">'+
+         '<div style="width:120px;font-size:12.5px;font-weight:600;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(u.unit)+'</div>'+
+         '<div style="flex:1;height:8px;background:var(--s2);border-radius:5px;overflow:hidden"><div style="height:100%;width:'+u.accuracy+'%;background:'+diagCol(u.accuracy)+'"></div></div>'+
+         '<div style="width:42px;text-align:right;font-size:12px;font-weight:700;color:'+diagCol(u.accuracy)+'">'+u.accuracy+'%</div>'+
+         '<div style="width:50px;text-align:right;font-size:11px;color:var(--t3)">'+u.count+'문항</div></div>';
+    });
+  }
+  // 취약유형 처방
+  h+='<div style="font-size:13.5px;font-weight:800;color:var(--te);margin:18px 0 9px">취약 유형 처방 · 보충 강의</div>';
+  if(!order.length){
+    h+='<div style="border:1px solid var(--gl);background:var(--gl);border-radius:11px;padding:14px;text-align:center;color:var(--g);font-size:13px;font-weight:600">표시할 취약 유형이 없습니다 — 전반적으로 안정적입니다.</div>';
+  } else {
+    h+='<div style="border:1px solid var(--aml);background:#fffdf5;border-radius:13px;padding:4px 13px 12px">';
+    order.forEach(function(unit){
+      var list=byUnit[unit].sort(function(a,b){return a.accuracy-b.accuracy;});
+      var acc=ua[unit];
+      h+='<div style="padding:12px 0 6px;border-bottom:1px solid #f0e8d4">';
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px"><span style="font-size:13.5px;font-weight:800;color:var(--te)">'+dEsc(unit)+'</span>'+
+         (acc!=null?'<span style="font-size:11.5px;font-weight:700;padding:2px 9px;border-radius:20px;background:var(--s2);color:'+diagCol(acc)+'">단원 '+acc+'%</span>':'')+'</div>';
+      list.forEach(function(t){
+        var col=t.accuracy<60?'var(--rd)':t.accuracy<75?'var(--am)':'var(--t2)';
+        var lecs=diagMatch(t.name);
+        h+='<div style="padding:6px 0 4px 2px">';
+        h+='<div style="display:flex;align-items:center;gap:8px"><span style="width:7px;height:7px;border-radius:50%;background:'+col+';flex-shrink:0"></span>'+
+           '<span style="flex:1;font-size:12.8px">'+dEsc(t.name)+'</span><span style="font-size:12px;font-weight:800;color:'+col+'">'+t.accuracy+'%</span></div>';
+        h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px 15px">';
+        if(lecs.length){ lecs.forEach(function(e){ h+='<a href="'+dEsc(e.url||'#')+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;background:var(--acc);color:#fff;border-radius:18px;padding:4px 11px;font-size:11.5px;font-weight:600;text-decoration:none">▶ '+dEsc(e.title)+'</a>'; }); }
+        else { h+='<button onclick="tbPrefill(\'수학\',\''+dEsc(t.name).replace(/'/g,"\\'")+'\')" style="border:1px dashed var(--acc);color:var(--acc);background:var(--s1);border-radius:18px;padding:4px 11px;font-size:11.5px;font-weight:700;cursor:pointer">+ 강의 등록</button>'; }
+        h+='</div></div>';
+      });
+      h+='</div>';
+    });
+    h+='</div>';
+  }
+  // 행동영역
+  if(r.behavior.length){
+    h+='<div style="font-size:13.5px;font-weight:800;color:var(--te);margin:18px 0 9px">행동영역</div><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">';
+    r.behavior.forEach(function(b){ h+='<div style="border:1px solid var(--s3);border-radius:10px;padding:10px;text-align:center"><div style="font-size:17px;font-weight:800;color:'+diagCol(b.accuracy)+'">'+b.accuracy+'%</div><div style="font-size:11px;color:var(--t2);margin-top:2px">'+dEsc(b.name)+'</div></div>'; });
+    h+='</div>';
+  }
+  h+='</div></div>';
+  return h;
+}
 
 // ═══════════════════════════════════════
 // 수강료 관리
@@ -1805,15 +1884,14 @@ function applyBulkByKeyword() {
 function applyBulkAll() {
   var amount = parseInt(document.getElementById('bulk-all-amount').value) || 0;
   if (!amount) { toast('금액을 입력하세요', 'var(--rd)'); return; }
-  var _cntTxt = canSeeStudentCount() ? ('전체 '+DB.stu.length+'명') : '전체 학생';
-  if (!confirm(_cntTxt+'에게 '+amount.toLocaleString()+'원을 적용할까요?')) return;
+  if (!confirm('전체 '+DB.stu.length+'명에게 '+amount.toLocaleString()+'원을 적용할까요?')) return;
   DB.stu.forEach(function(s){
     if (!s.tuition) s.tuition = { paidMonths: {} };
     s.tuition.amount = amount;
     if (!s.tuition.paidMonths) s.tuition.paidMonths = {};
   });
   saveAll();
-  toast('✓ '+_cntTxt+'에게 '+amount.toLocaleString()+'원 적용');
+  toast('✓ 전체 '+DB.stu.length+'명에게 '+amount.toLocaleString()+'원 적용');
   document.getElementById('ov-bulk-tuition').remove();
   renderTuition();
 }
@@ -2092,6 +2170,59 @@ var HW_API='https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(de
 var HW_KEY='AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
 function loadHwData(cb){if(hwData&&Date.now()-hwDataT<60000){if(cb)cb(hwData);return;}hwDataT=Date.now();fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
 
+// ── 학부모·강사 메시지 → 문자상담 자동 동기화 (날짜별 1건) ──
+function _msgDateStr(ts){var d=new Date(ts);var p=function(n){return n<10?'0'+n:''+n;};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
+function _msgTimeStr(ts){var d=new Date(ts);var p=function(n){return n<10?'0'+n:''+n;};return p(d.getHours())+':'+p(d.getMinutes());}
+function importMsgConsult(){
+  loadHwData(function(d){
+    if(!d||!d.fields) return;
+    var hw = _FS.docToObj(d);
+    var msgs = hw.messages || [];
+    if(!msgs.length) return;
+    var users = hw.users || [];
+    var idToName = {};
+    users.forEach(function(u){ if(u&&u.id) idToName[u.id]=u.name; });
+    var groups = {};
+    msgs.forEach(function(m){
+      if(!m||!m.ts||!m.studentId) return;
+      var nm = idToName[m.studentId];
+      if(!nm) return;
+      var ds = _msgDateStr(m.ts);
+      var key = nm + '||' + ds;
+      if(!groups[key]) groups[key] = {name:nm, date:ds, items:[]};
+      groups[key].items.push(m);
+    });
+    var changed = false, touched = {};
+    Object.keys(groups).forEach(function(key){
+      var g = groups[key];
+      var stu = DB.stu.find(function(s){ return s.name === g.name; });
+      if(!stu) return;
+      if(!stu.consultHistory) stu.consultHistory = [];
+      g.items.sort(function(a,b){ return a.ts - b.ts; });
+      var lines = g.items.map(function(m){
+        var who = m.fromName + (m.fromRole==='instructor'?'(강사)':m.fromRole==='parent'?'(학부모)':'');
+        return _msgTimeStr(m.ts) + ' ' + who + ': ' + m.text;
+      });
+      var note = lines.join('\n');
+      var lastInst = '';
+      g.items.forEach(function(m){ if(m.fromRole==='instructor' && m.fromName) lastInst = m.fromName; });
+      var counselor = lastInst || (stu.teacher || '문자상담');
+      var rec = stu.consultHistory.find(function(r){ return r.msgSync && r.date === g.date; });
+      if(rec){
+        if(rec.note !== note || rec.counselor !== counselor){ rec.note = note; rec.counselor = counselor; changed = true; touched[g.name]=1; }
+      } else {
+        stu.consultHistory.push({date:g.date, counselor:counselor, method:'문자상담', mood:'', risk:'', rstat:'', note:note, msgSync:true});
+        changed = true; touched[g.name]=1;
+      }
+    });
+    if(changed){
+      DB.stu.forEach(function(s){ if(touched[s.name] && s.consultHistory) s.consultHistory.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); }); });
+      saveAll();
+      if(typeof curTab!=='undefined' && curTab==='consult' && typeof renderConsult==='function') renderConsult();
+    }
+  });
+}
+
 // 과제앱 진도 → 학원앱 반(과목)별 차시 진도 계산
 // 반환: {done: 완료차시수, total: 전체배정차시수, lastPage: 마지막페이지} 또는 null
 function calcHwProgress(className){
@@ -2184,8 +2315,6 @@ function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var
 // ═══ 강사 평가 ═══
 var currentEvalTeacher = null; // 평가 중인 강사 이름
 var currentEvalData = {}; // {0:'상', 1:'중', ...}
-var EVAL_LEVELS = ['최상위권','상위권','중위권','하위권']; // 담당 가능 학생층(중복 선택)
-var currentEvalLevels = [];
 
 var EVAL_ITEMS = [
   '면담 또는 회의 시 원활한 소통이 된다',
@@ -2297,7 +2426,7 @@ function syncMembersToHwApp(cb) {
     .then(function(r){ return r.json(); })
     .then(function(d){
       if (d.name) {
-        if (cb) cb(true, '강사 ' + hwTeachers.length + '명, 학생 ' + (canSeeStudentCount()? hwStudents.length+'명' : '전체') + ' 동기화됨');
+        if (cb) cb(true, '강사 ' + hwTeachers.length + '명, 학생 ' + hwStudents.length + '명 동기화됨');
       } else {
         if (cb) cb(false, JSON.stringify(d).slice(0,100));
       }
@@ -2607,7 +2736,7 @@ function openSyncModal() {
   document.getElementById('sync-status').textContent = '';
   document.getElementById('sync-status').style.display = 'none';
   // 현재 학원앱 인원 표시
-  document.getElementById('sync-stu-count').textContent = canSeeStudentCount() ? DB.stu.length : '–';
+  document.getElementById('sync-stu-count').textContent = DB.stu.length;
   document.getElementById('sync-tea-count').textContent = DB.cfg.teachers.length;
 }
 
@@ -2907,31 +3036,12 @@ function openTeacherEval(tName) {
   // 기존 평가 로드
   var t = DB.cfg.teachers.find(function(t){ return t.name === tName; });
   currentEvalData = (t && t.evalScores) ? Object.assign({}, t.evalScores) : {};
-  currentEvalLevels = (t && Array.isArray(t.teachLevels)) ? t.teachLevels.slice() : [];
   // UI 업데이트
   for(var i=0; i<8; i++) {
     updateEvalItemUI(i);
   }
-  updateEvalLevelUI();
   updateEvalScorePreview();
   openModal('ov-teacher-eval');
-}
-
-function toggleEvalLevel(idx){
-  var lv = EVAL_LEVELS[idx]; if(!lv) return;
-  var p = currentEvalLevels.indexOf(lv);
-  if(p>=0) currentEvalLevels.splice(p,1); else currentEvalLevels.push(lv);
-  updateEvalLevelUI();
-}
-function updateEvalLevelUI(){
-  for(var i=0;i<EVAL_LEVELS.length;i++){
-    var el=document.getElementById('lvl-'+i); if(!el) continue;
-    var on=currentEvalLevels.indexOf(EVAL_LEVELS[i])>=0;
-    el.style.background = on?'var(--acc)':'var(--s2)';
-    el.style.color      = on?'#fff':'var(--t2)';
-    el.style.fontWeight = on?'700':'500';
-    el.style.border     = on?'1px solid var(--acc)':'1px solid var(--s3)';
-  }
 }
 
 function setEvalItem(idx, val) {
@@ -2975,7 +3085,6 @@ function saveTeacherEval() {
   if(!t) return;
   t.evalScores = Object.assign({}, currentEvalData);
   t.evalTotal = calcEvalScore(currentEvalData);
-  t.teachLevels = currentEvalLevels.slice();
   t.evalDate = today();
   // 월별 히스토리 저장
   var ym = getYearMonth();
@@ -3575,7 +3684,9 @@ function renderConsultList() {
     list = list.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; });
   if (cFilter !== 'all') list = list.filter(function(s){return cSt(s).lv===cFilter;});
   if (!list.length) { el.innerHTML='<div class="empty">해당하는 학생이 없습니다.</div>'; return; }
-  el.innerHTML = renderStuGrouped(list, ME.role==='admin');
+  var h = '';
+  list.forEach(function(s){ h+=stuCard(s,gStI(s),ME.role==='admin'); });
+  el.innerHTML = h;
 }
 
 // ═══════════════════════════════════════
@@ -3611,12 +3722,6 @@ function showTDetail(tIdx) {
       + '<div class="av" style="width:52px;height:52px;border-radius:14px;background:'+bg+';color:'+c+';font-size:20px">'+t.name.slice(0,1)+'</div>'
       + '<div><div style="font-size:19px;font-weight:700">'+t.name+' 강사</div>'
       + '<div style="font-size:12px;color:var(--t2);margin-top:2px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div></div>';
-  if(Array.isArray(t.teachLevels) && t.teachLevels.length){
-    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px">'
-      +'<span style="font-size:11px;color:var(--t2)">담당 가능 학생층</span>'
-      +t.teachLevels.map(function(l){return '<span style="font-size:11px;font-weight:600;color:var(--acc);background:var(--acc-l);padding:3px 10px;border-radius:12px">'+l+'</span>';}).join('')
-      +'</div>';
-  }
   h+='<div class="sg3"><div class="sc"><div class="sv" style="color:var(--pu)">'+tS.length+'</div><div class="sl-val">과목</div></div>'
     +'<div class="sc"><div class="sv" style="color:var(--g)">'+tSt.length+'</div><div class="sl-val">학생</div></div>'
     +'<div class="sc"><div class="sv" style="color:'+(tAvg!==null?pCol(tAvg):'var(--t2)')+'">'+( tAvg!==null?tAvg+'%':'—')+'</div><div class="sl-val">평균진도</div></div></div>';
@@ -3624,7 +3729,7 @@ function showTDetail(tIdx) {
   if(tS.length){tS.forEach(function(s){var r=calcRate(s);var remain=s.totalPages-(s.currentPage||s.startPage||1);var d=s.endDate?daysUntil(s.endDate):null;h+='<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:13px;font-weight:500">'+s.name+'</span><span style="font-size:12px;color:'+pCol(r)+';font-family:DM Mono,monospace">'+r+'%</span></div><div class="pt" style="height:6px"><div class="pf" style="width:'+r+'%;height:6px;background:'+pCol(r)+'"></div></div><div style="font-size:11px;color:var(--t2);margin-top:2px">'+(s.currentPage||s.startPage||1)+'p/'+s.totalPages+'p · 남은 '+remain+'p'+(d!==null?' · D-'+d:'')+'</div></div>';});}else{h+='<div style="color:var(--t3);font-size:13px">담당 과목 없음</div>';}
   h+='</div>';
   h+='<div class="ct" style="margin-top:4px">담당 학생 ('+tSt.length+'명)</div>';
-  h+=renderStuGrouped(tSt, false);
+  tSt.forEach(function(s){h+=stuCard(s,gStI(s),false);});
   document.getElementById('det-body').innerHTML=h;
   document.getElementById('det-back').onclick=function(){goTab(prevTab);};
   document.querySelectorAll('.screen').forEach(function(el){el.classList.remove('on');});
@@ -3650,7 +3755,6 @@ function showStuDetail(idx) {
     +'<div style="font-size:13px;font-weight:600;color:var(--acc)">'+(s.nextConsultDate||'미정')+'</div></div></div></div>';
   h+=nbCardHtml(idx);
   h+=extraCardHtml(idx);
-  h+=placementCardHtml(idx);
   h+='<button class="btn" style="margin-bottom:13px" onclick="openConsult('+idx+')">+ 상담 기록 입력</button>';
   h+='<div class="ct">상담 기록 ('+hist.length+'회)</div>';
   if(!hist.length){h+='<div class="empty">아직 기록이 없습니다.</div>';}
@@ -4596,12 +4700,13 @@ _loadFirebase().then(function() {
   function setFbSt(msg,color){var el=document.getElementById('fb-status');if(el){el.textContent=msg;el.style.color=color||'var(--t3)';}}
   function applyDB(d) {
     if(d&&d.cfg){
-      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};
+      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
       DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","admins":[],"teachers":[]}')
       if(!DB.cfg.admins) DB.cfg.admins=[]
       DB.evalHistory=JSON.parse(localStorage.getItem('ac_evalHistory')||'{}');
+      DB.typeBank=JSON.parse(localStorage.getItem('ac_typeBank')||'[]');
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
       DB.stu=JSON.parse(localStorage.getItem('ac_stu')||'[]');
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
@@ -4616,13 +4721,17 @@ _loadFirebase().then(function() {
     applyDB(d);
     // 데이터 로드 후 자동 로그인 시도
     tryAutoLogin();
+    // 학부모·강사 메시지 → 문자상담 자동 동기화
+    importMsgConsult();
+    // 60초마다 주기적으로 다시 당겨오기 (캐시 무효화 후 새로 fetch)
+    if(!window._msgSyncTimer) window._msgSyncTimer = setInterval(function(){ hwDataT = 0; importMsgConsult(); }, 60000);
     // 30초마다 실시간 동기화 (롱폴링)
     window._fsUnsubscribe = _FS.onSnapshot('academy/data', function(snap) {
       var d2 = _FS.docToObj(snap);
       if (!d2) return;
       // 최근 15초 내 로컬 변경이 있으면 폴링 데이터로 덮어쓰지 않음 (방금 추가한 내용 보호)
       if (Date.now() - _lastLocalSave < 15000) return;
-      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory;
+      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.typeBank=d2.typeBank||DB.typeBank;
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
