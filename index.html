@@ -534,57 +534,6 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
-<!-- 배정시험 · 반배정 추천 -->
-<div class="ov" id="ov-placement" onclick="ovClose(event,this)">
-  <div class="modal"><div class="mh"></div><div class="mt2" id="pl-title">배정시험 · 반배정 추천</div>
-    <input type="hidden" id="pl-idx">
-    <label class="fl">배정시험 점수 (0~100)</label><input class="fi" id="pl-score" type="number" min="0" max="100" inputmode="numeric" oninput="updatePlLevel()">
-    <div id="pl-level-tag" style="font-size:12px;margin:2px 0 8px;color:var(--t3)">점수를 입력하면 학생층이 자동 판정됩니다</div>
-    <label class="fl">대상 학년대</label>
-    <select class="fi" id="pl-grade" style="appearance:auto;-webkit-appearance:menulist"><option value="초등부">초등부</option><option value="중등부">중등부</option><option value="고등부">고등부</option></select>
-    <label class="fl">현재 교재</label><input class="fi" id="pl-book" placeholder="예: 쎈 수학(상)">
-    <label class="fl">현재 단원</label><input class="fi" id="pl-unit" placeholder="예: 이차함수">
-    <label class="fl">현재 진도율 % <span style="color:var(--t3);font-weight:400">(선택)</span></label><input class="fi" id="pl-prog" type="number" min="0" max="100" inputmode="numeric" placeholder="현재 교재에서 진행한 비율">
-    <button class="btn" onclick="runRecommend()">반배정 추천 받기</button>
-    <div id="pl-recos" style="margin-top:12px"></div>
-    <button class="btn ghost" onclick="savePlacementOnly()">결과만 저장 (배정 보류)</button>
-    <button class="btn ghost" onclick="closeModal('ov-placement')">닫기</button>
-  </div>
-</div>
-
-<!-- 퇴원 관리 -->
-<div class="ov" id="ov-withdraw" onclick="ovClose(event,this)">
-  <div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div><div class="mt2">🚪 퇴원 관리</div>
-    <div id="wd-body"></div>
-    <button class="btn ghost" onclick="closeModal('ov-withdraw')">닫기</button>
-  </div>
-</div>
-
-<!-- 과제앱 퇴원 동기화 -->
-<div class="ov" id="ov-wdsync" onclick="ovClose(event,this)">
-  <div class="modal" style="max-height:85vh;overflow-y:auto"><div class="mh"></div><div class="mt2">과제앱 퇴원 동기화</div>
-    <div style="font-size:12px;color:var(--t2);line-height:1.6;margin-bottom:10px">과제앱 명단에 더 이상 없는 학생을 찾아 퇴원 후보로 보여줘요. 확인 후 체크한 학생만 퇴원 처리됩니다.</div>
-    <label class="fl">퇴원일</label><input class="fi" id="wds-date" type="date">
-    <div id="wds-list" style="margin:10px 0"><div class="empty">불러오는 중...</div></div>
-    <button class="btn" onclick="confirmWdSync()">선택 학생 퇴원 처리</button>
-    <button class="btn ghost" onclick="closeModal('ov-wdsync')">취소</button>
-  </div>
-</div>
-
-<!-- 퇴원 학생 편집/직접추가 -->
-<div class="ov" id="ov-wdedit" onclick="ovClose(event,this)">
-  <div class="modal"><div class="mh"></div><div class="mt2" id="wde-title">퇴원 학생 편집</div>
-    <input type="hidden" id="wde-gi">
-    <label class="fl">이름</label><input class="fi" id="wde-name">
-    <label class="fl">담임</label><input class="fi" id="wde-teacher" placeholder="담당 강사">
-    <label class="fl">반</label><input class="fi" id="wde-class" placeholder="반 이름">
-    <label class="fl">퇴원일</label><input class="fi" id="wde-date" type="date">
-    <button class="btn" onclick="saveWdEdit()">저장</button>
-    <button class="btn ghost" id="wde-del" onclick="deleteWd()" style="color:var(--rd)">이 퇴원 기록 완전 삭제</button>
-    <button class="btn ghost" onclick="closeModal('ov-wdedit')">닫기</button>
-  </div>
-</div>
-
 <!-- 계정 관리 (관리자) -->
 <div class="ov" id="ov-accounts" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2">계정 관리</div>
@@ -755,15 +704,6 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
           <span class="tb-status" id="eval-7-mid" onclick="setEvalItem(7,'중')">중</span>
           <span class="tb-status" id="eval-7-low" onclick="setEvalItem(7,'하')">하</span>
         </div>
-      </div>
-    </div>
-    <div style="margin:4px 0 12px;padding-top:12px;border-top:1px solid var(--s3)">
-      <div style="font-size:13px;font-weight:600;line-height:1.45;margin-bottom:9px">학생층은 어디까지 담당이 가능합니까? <span style="font-size:11px;color:var(--t3);font-weight:400">(중복 선택)</span></div>
-      <div style="display:flex;flex-wrap:wrap;gap:8px">
-        <span id="lvl-0" onclick="toggleEvalLevel(0)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">최상위권</span>
-        <span id="lvl-1" onclick="toggleEvalLevel(1)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">상위권</span>
-        <span id="lvl-2" onclick="toggleEvalLevel(2)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">중위권</span>
-        <span id="lvl-3" onclick="toggleEvalLevel(3)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">하위권</span>
       </div>
     </div>
     <div style="background:var(--acc-l);border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
@@ -1018,7 +958,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 // ═══════════════════════════════════════
 // 데이터
 // ═══════════════════════════════════════
-var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',admins:[],teachers:[]}, subj:[], stu:[], evalHistory:{}, typeBank:[], withdrawn:[] };
+var DB = { cfg:{adminPw:'',adminPhone:'',ownerPw:'7193455',admins:[],teachers:[]}, subj:[], stu:[], evalHistory:{}, typeBank:[] };
 var ME = null; // {role:'admin'|'teacher', name:string}
 var curTab = 'home', prevTab = 'home';
 var calY, calM, calSel;
@@ -1048,7 +988,7 @@ function saveAll() {
   _lastLocalSave = Date.now();  // 변경 시각 기록 → 폴링 덮어쓰기 방지
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
-    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: DB.typeBank||[], withdrawn: DB.withdrawn||[]})
+    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: DB.typeBank||[]})
       .then(function(){ _lastLocalSave = Date.now(); })
       .catch(function(e) { console.warn('FB save error:', e); });
   }, 400);
@@ -1082,28 +1022,6 @@ function stBg(l) { return l==='urgent' ? 'var(--rdl)' : l==='upcoming' ? 'var(--
 function stI(l)  { return l==='urgent' ? '⚠' : l==='upcoming' ? '◷' : '✓'; }
 function mySubj() { return isAdminLevel() ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
 function myStu()  { return isAdminLevel() ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
-// 반(class) → 이름 순 정렬. 반 미지정은 맨 뒤로.
-function sortStuByClass(a,b){
-  var ca=a.class||'\uD7A3', cb=b.class||'\uD7A3';
-  if(ca!==cb) return ca.localeCompare(cb,'ko');
-  return (a.name||'').localeCompare(b.name||'','ko');
-}
-// 학생 목록을 반별로 묶어 헤더와 함께 렌더
-function renderStuGrouped(list, showT){
-  list = list.slice().sort(sortStuByClass);
-  var h='', cur=null, first=true;
-  list.forEach(function(s){
-    var cls = s.class || '반 미지정';
-    if(cls!==cur){
-      cur=cls;
-      h+='<div style="font-size:12px;font-weight:700;color:var(--acc);margin:'+(first?'2px':'16px')+' 0 7px;padding-left:2px;display:flex;align-items:center;gap:6px">'
-        +'<span style="width:3px;height:13px;background:var(--acc);border-radius:2px;display:inline-block"></span>'+cls+'</div>';
-      first=false;
-    }
-    h+=stuCard(s, gStI(s), showT);
-  });
-  return h;
-}
 function gSI(s)  { return DB.subj.indexOf(s); }
 function gStI(s) { return DB.stu.indexOf(s); }
 
@@ -1402,338 +1320,6 @@ function doClearExtra(){
   var s=DB.stu[idx]; if(!s) return;
   delete s.extra;
   saveAll();closeModal('ov-extra');toast('알림 삭제됨');showStuDetail(idx);
-}
-
-// ═══════════════════════════════════════
-// 배정시험 · 반배정 추천
-// ═══════════════════════════════════════
-function scoreToLevel(sc){
-  if(sc==null||isNaN(sc)) return null;
-  if(sc>=90) return '최상위권';
-  if(sc>=75) return '상위권';
-  if(sc>=60) return '중위권';
-  return '하위권';
-}
-function levelRank(l){ return {'하위권':0,'중위권':1,'상위권':2,'최상위권':3}[l]; }
-function plBg(l){ return l==='최상위권'?'var(--rdl)':l==='상위권'?'var(--aml)':l==='중위권'?'var(--acc-l)':'var(--gl)'; }
-function plC(l){  return l==='최상위권'?'var(--rd)' :l==='상위권'?'var(--am)' :l==='중위권'?'var(--acc)' :'var(--g)'; }
-function recommendClasses(gradeGroup, level, progPct){
-  var lr = levelRank(level);
-  var cands = DB.subj.filter(function(sj){
-    if(gradeGroup && gradeGroup!=='기타') return getGradeGroup(sj.name)===gradeGroup;
-    return true;
-  });
-  var out = cands.map(function(sj){
-    var t = DB.cfg.teachers.find(function(x){return x.name===sj.teacher;});
-    var tls = (t && Array.isArray(t.teachLevels)) ? t.teachLevels : [];
-    var levelScore, levelReason, dist=null;
-    if(tls.length){
-      dist = Math.min.apply(null, tls.map(function(tl){return Math.abs(levelRank(tl)-lr);}));
-      levelScore = dist===0?50:dist===1?28:dist===2?12:4;
-      levelReason = dist===0 ? '강사 담당층 정확히 일치 ('+level+')'
-                  : dist===1 ? '강사 담당층 인접 (±1단계)'
-                  : '강사 담당층 차이 큼';
-    } else { levelScore=18; levelReason='강사 담당 학생층 미설정'; }
-    var classProg = calcRate(sj);
-    var progScore, progReason;
-    if(progPct!=null && !isNaN(progPct)){
-      var diff=Math.abs(classProg - progPct);
-      progScore = Math.max(0, 100-diff) * 0.35;
-      progReason = '반 진도 '+classProg+'% · 학생 '+progPct+'% (차이 '+Math.round(diff)+'%p)';
-    } else { progScore=12; progReason='반 진도 '+classProg+'%'; }
-    var size = DB.stu.filter(function(st){return st.class===sj.name;}).length;
-    var sizeScore = Math.max(0, 12 - size);
-    return {name:sj.name, teacher:sj.teacher||'강사 미정', classProg:classProg, size:size,
-            total:Math.round(levelScore+progScore+sizeScore), levelReason:levelReason, progReason:progReason};
-  });
-  out.sort(function(a,b){return b.total-a.total;});
-  return out;
-}
-function placementCardHtml(idx){
-  var s=DB.stu[idx]; if(!s) return '';
-  var p=s.placement;
-  if(!p){
-    return '<div class="card" style="margin-bottom:10px;border:1px dashed var(--s3)"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px">'
-      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">📊 배정시험 · 반배정</div><div style="font-size:11px;color:var(--t3);margin-top:2px">점수·진도를 넣으면 반 추천을 받아요</div></div>'
-      +'<button class="btn sm" style="width:auto;padding:10px 14px;flex-shrink:0" onclick="event.stopPropagation();openPlacement('+idx+')">결과 입력</button></div></div>';
-  }
-  return '<div class="card" style="margin-bottom:10px"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">'
-    +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">📊 배정시험 &nbsp;<span class="tag" style="background:'+plBg(p.level)+';color:'+plC(p.level)+'">'+p.level+' '+p.score+'점</span></div>'
-    +'<div style="font-size:11px;color:var(--t3);margin-top:3px">'+(p.book||'')+(p.unit?' · '+p.unit:'')+(p.progPct!=null?' · 진도 '+p.progPct+'%':'')+'</div>'
-    +(p.assigned?'<div style="font-size:12px;color:var(--acc);font-weight:600;margin-top:3px">→ '+p.assigned+' 반 배정됨</div>':'<div style="font-size:11px;color:var(--am);margin-top:3px">배정 보류 상태</div>')+'</div>'
-    +'<button class="btn sm ghost" style="width:auto;padding:8px 12px;flex-shrink:0" onclick="event.stopPropagation();openPlacement('+idx+')">다시 추천</button></div></div>';
-}
-var currentRecos=[];
-function openPlacement(idx){
-  var s=DB.stu[idx]; if(!s) return;
-  document.getElementById('pl-idx').value=idx;
-  document.getElementById('pl-title').textContent=s.name+' · 배정시험 추천';
-  var p=s.placement||{};
-  document.getElementById('pl-score').value=(p.score!=null?p.score:'');
-  document.getElementById('pl-book').value=p.book||'';
-  document.getElementById('pl-unit').value=p.unit||'';
-  document.getElementById('pl-prog').value=(p.progPct!=null?p.progPct:'');
-  var gg=p.gradeGroup||getGradeGroup(s.class); if(!gg||gg==='기타') gg='고등부';
-  document.getElementById('pl-grade').value=gg;
-  document.getElementById('pl-recos').innerHTML='';
-  currentRecos=[];
-  updatePlLevel();
-  openModal('ov-placement');
-}
-function updatePlLevel(){
-  var sc=parseFloat(document.getElementById('pl-score').value);
-  var lv=scoreToLevel(sc);
-  var el=document.getElementById('pl-level-tag');
-  if(lv) el.innerHTML='판정 학생층: <b style="color:'+plC(lv)+'">'+lv+'</b> ('+sc+'점)';
-  else el.textContent='점수를 입력하면 학생층이 자동 판정됩니다';
-}
-function runRecommend(){
-  var sc=parseFloat(document.getElementById('pl-score').value);
-  var lv=scoreToLevel(sc);
-  if(!lv){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
-  var gg=document.getElementById('pl-grade').value;
-  var pp=document.getElementById('pl-prog').value; pp=(pp===''?null:parseFloat(pp));
-  currentRecos=recommendClasses(gg, lv, pp);
-  var el=document.getElementById('pl-recos');
-  if(!currentRecos.length){ el.innerHTML='<div class="empty">해당 학년대에 추천할 반이 없어요. 과목(반)을 먼저 등록해주세요.</div>'; return; }
-  var idx=document.getElementById('pl-idx').value;
-  var h='<div style="font-size:12px;font-weight:700;color:var(--acc);margin-bottom:8px">추천 반 · 학생층 '+lv+'</div>';
-  currentRecos.slice(0,3).forEach(function(r,i){
-    var medal=i===0?'🥇':i===1?'🥈':'🥉';
-    h+='<div class="card" style="margin-bottom:8px;border:1px solid '+(i===0?'var(--acc)':'var(--s3)')+'">'
-      +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="font-size:16px">'+medal+'</span>'
-      +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:700">'+r.name+'</div>'
-      +'<div style="font-size:11px;color:var(--t3)">'+r.teacher+' · 진도 '+r.classProg+'% · 👥 '+r.size+'명</div></div>'
-      +'<span style="font-size:11px;font-weight:700;color:var(--acc);flex-shrink:0">적합도 '+r.total+'</span></div>'
-      +'<div style="font-size:11px;color:var(--t2);line-height:1.6">· '+r.levelReason+'<br>· '+r.progReason+'</div>'
-      +'<button class="btn sm" style="width:auto;padding:8px 14px;margin-top:8px" onclick="assignClass('+idx+','+i+')">이 반으로 배정</button>'
-      +'</div>';
-  });
-  el.innerHTML=h;
-}
-function collectPlacement(){
-  var sc=parseFloat(document.getElementById('pl-score').value);
-  var lv=scoreToLevel(sc);
-  var pp=document.getElementById('pl-prog').value; pp=(pp===''?null:parseFloat(pp));
-  return {score:sc, level:lv, gradeGroup:document.getElementById('pl-grade').value,
-          book:document.getElementById('pl-book').value.trim(), unit:document.getElementById('pl-unit').value.trim(),
-          progPct:pp, date:today()};
-}
-function assignClass(idx, i){
-  var s=DB.stu[idx], r=currentRecos[i]; if(!s||!r) return;
-  var p=collectPlacement();
-  if(!p.level){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
-  p.assigned=r.name; p.assignedTeacher=r.teacher;
-  s.placement=p;
-  s.class=r.name; s.teacher=r.teacher;
-  if(!s.consultHistory) s.consultHistory=[];
-  s.consultHistory.push({date:today(), nbTag:'placement', counselor:(ME?ME.name:''), method:'기타', mood:'', risk:'일상 체크', rstat:'', note:'[배정] 배정시험 '+p.score+'점('+p.level+') → '+r.name+' 반 배정'});
-  saveAll(); closeModal('ov-placement'); toast('✓ '+r.name+' 반으로 배정됐어요'); showStuDetail(idx);
-}
-function savePlacementOnly(){
-  var idx=parseInt(document.getElementById('pl-idx').value);
-  var s=DB.stu[idx]; if(!s) return;
-  var p=collectPlacement();
-  if(!p.level){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
-  if(s.placement&&s.placement.assigned){ p.assigned=s.placement.assigned; p.assignedTeacher=s.placement.assignedTeacher; }
-  s.placement=p;
-  saveAll(); closeModal('ov-placement'); toast('배정시험 결과가 저장됐어요 ✓'); showStuDetail(idx);
-}
-
-// ═══════════════════════════════════════
-// 퇴원 관리 (과제앱 연동)
-// ═══════════════════════════════════════
-var wdFilterY = String(new Date().getFullYear());
-var wdFilterM = 'all';
-function wdList(){ return DB.withdrawn||(DB.withdrawn=[]); }
-function wdInPeriod(){
-  return wdList().filter(function(r){
-    if(!r.date) return false;
-    var y=r.date.slice(0,4), mo=String(parseInt(r.date.slice(5,7),10));
-    if(wdFilterY!=='all' && y!==wdFilterY) return false;
-    if(wdFilterM!=='all' && mo!==String(wdFilterM)) return false;
-    return true;
-  });
-}
-function openWithdraw(){ renderWithdraw(); openModal('ov-withdraw'); }
-function setWdY(v){ wdFilterY=v; renderWithdraw(); }
-function setWdM(v){ wdFilterM=v; renderWithdraw(); }
-function renderWithdraw(){
-  var body=document.getElementById('wd-body'); if(!body) return;
-  var all=wdList(), inP=wdInPeriod();
-  var years=Array.from(new Set(all.map(function(r){return r.date?r.date.slice(0,4):null;}).filter(Boolean))).sort().reverse();
-  if(wdFilterY!=='all' && years.indexOf(wdFilterY)<0) years.unshift(wdFilterY);
-  var h='';
-  h+='<button class="btn" style="margin-bottom:8px" onclick="autoWdSync()">🔄 과제앱 자동 퇴원 동기화</button>';
-  h+='<button class="btn ghost" style="margin-bottom:12px" onclick="openWdAdd()">+ 퇴원 학생 직접 추가</button>';
-  // 연/월 필터
-  h+='<div style="display:flex;gap:8px;margin-bottom:12px">';
-  h+='<select class="fi" style="flex:1;appearance:auto;-webkit-appearance:menulist" onchange="setWdY(this.value)"><option value="all"'+(wdFilterY==='all'?' selected':'')+'>전체 연도</option>'+years.map(function(y){return '<option value="'+y+'"'+(wdFilterY===y?' selected':'')+'>'+y+'년</option>';}).join('')+'</select>';
-  var mo='<option value="all"'+(wdFilterM==='all'?' selected':'')+'>전체 월</option>';
-  for(var mm=1;mm<=12;mm++) mo+='<option value="'+mm+'"'+(String(wdFilterM)===String(mm)?' selected':'')+'>'+mm+'월</option>';
-  h+='<select class="fi" style="flex:1;appearance:auto;-webkit-appearance:menulist" onchange="setWdM(this.value)">'+mo+'</select>';
-  h+='</div>';
-  // 집계 요약 (전체 학생 수 대비 퇴원률)
-  var active=DB.stu.length, ever=active+all.length;
-  var periodRate=ever>0?Math.round(inP.length/ever*1000)/10:0;
-  h+='<div class="card" style="margin-bottom:12px;display:flex;gap:8px;text-align:center">'
-    +'<div style="flex:1"><div style="font-size:20px;font-weight:800;color:var(--rd)">'+inP.length+'</div><div style="font-size:11px;color:var(--t2)">기간 퇴원</div></div>'
-    +'<div style="flex:1"><div style="font-size:20px;font-weight:800;color:var(--am)">'+periodRate+'%</div><div style="font-size:11px;color:var(--t2)">퇴원률</div></div></div>';
-  // 강사 퇴원률 순위 (낮은 순)
-  h+='<div class="sl2" style="margin:6px 0 8px"><div class="d8" style="background:var(--acc)"></div>강사 퇴원률 순위 (낮은 순)</div>';
-  var rows=(DB.cfg.teachers||[]).map(function(t){
-    var act=DB.stu.filter(function(s){return s.teacher===t.name;}).length;
-    var w=inP.filter(function(r){return r.teacher===t.name;}).length;
-    var denom=act+w; var rate=denom>0?Math.round(w/denom*1000)/10:0;
-    return {name:t.name, act:act, w:w, denom:denom, rate:rate};
-  }).filter(function(r){return r.denom>0;});
-  rows.sort(function(a,b){return a.rate-b.rate || b.act-a.act;});
-  if(!rows.length){ h+='<div class="empty">집계할 데이터가 없어요.</div>'; }
-  else rows.forEach(function(r,i){
-    var medal=i<3?['🥇','🥈','🥉'][i]:(i+1)+'위';
-    var col=r.rate===0?'var(--g)':r.rate<10?'var(--acc)':r.rate<20?'var(--am)':'var(--rd)';
-    h+='<div class="ic2" style="cursor:default">'
-      +'<div class="rank-num" style="background:var(--s2);color:var(--t2);flex-shrink:0">'+medal+'</div>'
-      +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+r.name+'</div>'
-      +'<div style="font-size:11px;color:var(--t2);margin-top:1px">퇴원 '+r.w+'명</div></div>'
-      +'<div style="text-align:right"><div style="font-size:15px;font-weight:700;color:'+col+';font-family:DM Mono,monospace">'+r.rate+'%</div><div style="font-size:10px;color:var(--t2)">퇴원률</div></div></div>';
-  });
-  // 담임별 퇴원 학생
-  h+='<div class="sl2" style="margin:14px 0 8px"><div class="d8" style="background:var(--rd)"></div>담임별 퇴원 학생</div>';
-  var byT={}; inP.forEach(function(r){ var k=r.teacher||'담임 미상'; (byT[k]=byT[k]||[]).push(r); });
-  var keys=Object.keys(byT).sort();
-  if(!keys.length){ h+='<div class="empty">해당 기간 퇴원 학생이 없어요.</div>'; }
-  else keys.forEach(function(k){
-    var kW=byT[k].length;
-    var kAct=DB.stu.filter(function(s){return s.teacher===k;}).length;
-    var kRate=(kAct+kW)>0?Math.round(kW/(kAct+kW)*1000)/10:0;
-    h+='<div style="font-size:12px;font-weight:700;color:var(--acc);margin:10px 0 6px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:13px;background:var(--acc);border-radius:2px;display:inline-block"></span>'+k+' · 퇴원 '+kW+'명 · 퇴원율 '+kRate+'%</div>';
-    byT[k].sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
-    byT[k].forEach(function(r){
-      var gi=wdList().indexOf(r);
-      h+='<div class="card" style="margin-bottom:6px;display:flex;align-items:center;gap:8px">'
-        +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">'+r.name+'</div>'
-        +'<div style="font-size:11px;color:var(--t3)">'+(r.class||'')+' · 퇴원 '+(r.date||'-')+'</div></div>'
-        +'<button class="btn sm ghost" style="width:auto;padding:6px 10px;flex-shrink:0" onclick="openWdEdit('+gi+')">편집</button>'
-        +'<button class="btn sm ghost" style="width:auto;padding:6px 10px;flex-shrink:0" onclick="restoreWd('+gi+')">복원</button></div>';
-    });
-  });
-  body.innerHTML=h;
-}
-function editWdDate(gi){
-  var r=wdList()[gi]; if(!r) return;
-  var v=prompt('퇴원일 (YYYY-MM-DD)', r.date||today());
-  if(v===null) return; v=v.trim();
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(v)){ toast('YYYY-MM-DD 형식으로 입력해주세요','var(--rd)'); return; }
-  r.date=v; saveAll(); renderWithdraw();
-}
-function restoreWd(gi){
-  var r=wdList()[gi]; if(!r) return;
-  if(!confirm(r.name+' 학생을 재원으로 복원할까요?')) return;
-  DB.stu.push({name:r.name, teacher:r.teacher||'', class:r.class||'', consultHistory:[], textbookStatus:{}});
-  wdList().splice(gi,1);
-  saveAll(); renderWithdraw(); toast('복원됐어요 ✓');
-}
-// 과제앱 동기화: 명단에서 사라진 학생 = 퇴원 후보
-var wdCandidates=[];
-function openWdSync(){
-  document.getElementById('wds-date').value=today();
-  document.getElementById('wds-list').innerHTML='<div class="empty">과제앱 명단 불러오는 중...</div>';
-  openModal('ov-wdsync');
-  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY).then(function(r){return r.json();}).then(function(doc){
-    var users=(doc.fields&&doc.fields.users&&doc.fields.users.arrayValue&&doc.fields.users.arrayValue.values)||[];
-    var active={};
-    users.forEach(function(u){var f=u.mapValue&&u.mapValue.fields; if(f&&f.role&&f.role.stringValue==='student'&&f.name) active[f.name.stringValue]=true;});
-    wdCandidates=DB.stu.filter(function(s){return !active[s.name];});
-    renderWdCandidates();
-  }).catch(function(){ document.getElementById('wds-list').innerHTML='<div class="empty" style="color:var(--rd)">과제앱 데이터를 불러오지 못했어요.</div>'; });
-}
-function renderWdCandidates(){
-  var el=document.getElementById('wds-list');
-  if(!wdCandidates.length){ el.innerHTML='<div class="empty">과제앱 명단에서 빠진 학생이 없어요. (모두 재원 중)</div>'; return; }
-  var h='<div style="font-size:12px;font-weight:700;color:var(--rd);margin-bottom:6px">퇴원 후보 '+wdCandidates.length+'명 — 체크 후 처리</div>';
-  wdCandidates.forEach(function(s,i){
-    h+='<label style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--s2);cursor:pointer">'
-      +'<input type="checkbox" class="wds-ck" value="'+i+'" checked style="width:18px;height:18px;flex-shrink:0;accent-color:var(--acc)">'
-      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">'+s.name+'</div>'
-      +'<div style="font-size:11px;color:var(--t3)">'+(s.class||'반 미정')+' · 담임 '+(s.teacher||'미정')+'</div></div></label>';
-  });
-  el.innerHTML=h;
-}
-function confirmWdSync(){
-  var date=document.getElementById('wds-date').value||today();
-  var checked=Array.prototype.map.call(document.querySelectorAll('.wds-ck:checked'),function(c){return parseInt(c.value);});
-  if(!checked.length){ toast('선택된 학생이 없어요','var(--rd)'); return; }
-  var picked=checked.map(function(i){return wdCandidates[i];});
-  if(!DB.withdrawn) DB.withdrawn=[];
-  picked.forEach(function(s){
-    DB.withdrawn.push({name:s.name, teacher:s.teacher||'', class:s.class||'', date:date, detected:today()});
-    var idx=DB.stu.indexOf(s); if(idx>=0) DB.stu.splice(idx,1);
-  });
-  saveAll(); closeModal('ov-wdsync'); toast('✓ '+picked.length+'명 퇴원 처리됨');
-  if(document.getElementById('ov-withdraw').classList.contains('show')||true) renderWithdraw();
-}
-// 과제앱 명단에서 사라진 학생 = 자동 퇴원 처리 (동기화한 날을 퇴원일로)
-function autoWdSync(){
-  toast('과제앱 명단 확인 중...');
-  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY).then(function(r){return r.json();}).then(function(doc){
-    var users=(doc.fields&&doc.fields.users&&doc.fields.users.arrayValue&&doc.fields.users.arrayValue.values)||[];
-    var active={};
-    users.forEach(function(u){var f=u.mapValue&&u.mapValue.fields; if(f&&f.role&&f.role.stringValue==='student'&&f.name) active[f.name.stringValue]=true;});
-    var missing=DB.stu.filter(function(s){return !active[s.name];});
-    if(!missing.length){ toast('과제앱 명단에서 빠진 학생이 없어요 ✓'); return; }
-    var names=missing.map(function(s){return s.name;}).join(', ');
-    if(!confirm('과제앱 명단에서 사라진 '+missing.length+'명을 오늘('+today()+') 날짜로 퇴원 처리할까요?\\n\\n'+names)) return;
-    if(!DB.withdrawn) DB.withdrawn=[];
-    missing.forEach(function(s){
-      DB.withdrawn.push({name:s.name, teacher:s.teacher||'', class:s.class||'', date:today(), detected:today()});
-      var idx=DB.stu.indexOf(s); if(idx>=0) DB.stu.splice(idx,1);
-    });
-    saveAll(); toast('✓ '+missing.length+'명 퇴원 처리됨'); renderWithdraw();
-  }).catch(function(){ toast('과제앱 데이터를 불러오지 못했어요','var(--rd)'); });
-}
-// 퇴원 학생 편집
-function openWdEdit(gi){
-  var r=wdList()[gi]; if(!r) return;
-  document.getElementById('wde-gi').value=gi;
-  document.getElementById('wde-title').textContent='퇴원 학생 편집';
-  document.getElementById('wde-name').value=r.name||'';
-  document.getElementById('wde-teacher').value=r.teacher||'';
-  document.getElementById('wde-class').value=r.class||'';
-  document.getElementById('wde-date').value=r.date||today();
-  document.getElementById('wde-del').style.display='';
-  openModal('ov-wdedit');
-}
-// 퇴원 학생 직접 추가
-function openWdAdd(){
-  document.getElementById('wde-gi').value='-1';
-  document.getElementById('wde-title').textContent='퇴원 학생 직접 추가';
-  document.getElementById('wde-name').value='';
-  document.getElementById('wde-teacher').value='';
-  document.getElementById('wde-class').value='';
-  document.getElementById('wde-date').value=today();
-  document.getElementById('wde-del').style.display='none';
-  openModal('ov-wdedit');
-}
-function saveWdEdit(){
-  var gi=parseInt(document.getElementById('wde-gi').value);
-  var nm=document.getElementById('wde-name').value.trim();
-  var dt=document.getElementById('wde-date').value;
-  if(!nm){ toast('이름을 입력해주세요','var(--rd)'); return; }
-  if(!dt){ toast('퇴원일을 입력해주세요','var(--rd)'); return; }
-  if(!DB.withdrawn) DB.withdrawn=[];
-  var teacher=document.getElementById('wde-teacher').value.trim();
-  var cls=document.getElementById('wde-class').value.trim();
-  if(gi<0){ DB.withdrawn.push({name:nm, teacher:teacher, class:cls, date:dt, detected:today()}); }
-  else { var r=wdList()[gi]; if(!r) return; r.name=nm; r.teacher=teacher; r.class=cls; r.date=dt; }
-  saveAll(); closeModal('ov-wdedit'); toast(gi<0?'추가됐어요 ✓':'수정됐어요 ✓'); renderWithdraw();
-}
-function deleteWd(){
-  var gi=parseInt(document.getElementById('wde-gi').value);
-  var r=wdList()[gi]; if(!r) return;
-  if(!confirm(r.name+' 퇴원 기록을 완전히 삭제할까요?\\n(재원 복원이 아니라 기록 자체가 사라집니다)')) return;
-  wdList().splice(gi,1);
-  saveAll(); closeModal('ov-wdedit'); toast('기록 삭제됨'); renderWithdraw();
 }
 
 // ═══════════════════════════════════════
@@ -2637,6 +2223,42 @@ function importMsgConsult(){
   });
 }
 
+// 과제앱 성적 상담(counsels) → 학원앱 상담이력 동기화
+function importHwCounsels(){
+  loadHwData(function(d){
+    if(!d||!d.fields) return;
+    var hw = _FS.docToObj(d);
+    var cs = hw.counsels || [];
+    if(!cs.length) return;
+    var changed=false, touched={};
+    cs.forEach(function(c){
+      if(!c||!c.id||!c.studentName) return;
+      var stu = DB.stu.find(function(s){ return s.name === c.studentName; });
+      if(!stu) return;
+      if(!stu.consultHistory) stu.consultHistory=[];
+      var done = c.status==='done';
+      var dt = (done && c.doneDate) ? c.doneDate : (c.date||'');
+      var counselor = (done && c.doneBy) ? c.doneBy : (c.teacherName || (c.by&&c.by.name) || '성적상담');
+      var note = done ? ('[성적상담] '+(c.reason||'')+'\n상담사항: '+(c.note||'')) : ('⚠️ 상담필요: '+(c.reason||''));
+      var rstat = done ? 'done' : '';
+      var rec = stu.consultHistory.find(function(r){ return r.hwCsId === c.id; });
+      if(rec){
+        if(rec.note!==note || rec.counselor!==counselor || rec.date!==dt || rec.rstat!==rstat){
+          rec.note=note; rec.counselor=counselor; rec.date=dt; rec.rstat=rstat; changed=true; touched[c.studentName]=1;
+        }
+      } else {
+        stu.consultHistory.push({date:dt, counselor:counselor, method:'성적상담', mood:'', risk:'', rstat:rstat, note:note, hwCsId:c.id});
+        changed=true; touched[c.studentName]=1;
+      }
+    });
+    if(changed){
+      DB.stu.forEach(function(s){ if(touched[s.name] && s.consultHistory) s.consultHistory.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); }); });
+      saveAll();
+      if(typeof curTab!=='undefined' && curTab==='consult' && typeof renderConsult==='function') renderConsult();
+    }
+  });
+}
+
 // 과제앱 진도 → 학원앱 반(과목)별 차시 진도 계산
 // 반환: {done: 완료차시수, total: 전체배정차시수, lastPage: 마지막페이지} 또는 null
 function calcHwProgress(className){
@@ -2729,8 +2351,6 @@ function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var
 // ═══ 강사 평가 ═══
 var currentEvalTeacher = null; // 평가 중인 강사 이름
 var currentEvalData = {}; // {0:'상', 1:'중', ...}
-var EVAL_LEVELS = ['최상위권','상위권','중위권','하위권']; // 담당 가능 학생층(중복 선택)
-var currentEvalLevels = [];
 
 var EVAL_ITEMS = [
   '면담 또는 회의 시 원활한 소통이 된다',
@@ -3452,31 +3072,12 @@ function openTeacherEval(tName) {
   // 기존 평가 로드
   var t = DB.cfg.teachers.find(function(t){ return t.name === tName; });
   currentEvalData = (t && t.evalScores) ? Object.assign({}, t.evalScores) : {};
-  currentEvalLevels = (t && Array.isArray(t.teachLevels)) ? t.teachLevels.slice() : [];
   // UI 업데이트
   for(var i=0; i<8; i++) {
     updateEvalItemUI(i);
   }
-  updateEvalLevelUI();
   updateEvalScorePreview();
   openModal('ov-teacher-eval');
-}
-
-function toggleEvalLevel(idx){
-  var lv = EVAL_LEVELS[idx]; if(!lv) return;
-  var p = currentEvalLevels.indexOf(lv);
-  if(p>=0) currentEvalLevels.splice(p,1); else currentEvalLevels.push(lv);
-  updateEvalLevelUI();
-}
-function updateEvalLevelUI(){
-  for(var i=0;i<EVAL_LEVELS.length;i++){
-    var el=document.getElementById('lvl-'+i); if(!el) continue;
-    var on=currentEvalLevels.indexOf(EVAL_LEVELS[i])>=0;
-    el.style.background = on?'var(--acc)':'var(--s2)';
-    el.style.color      = on?'#fff':'var(--t2)';
-    el.style.fontWeight = on?'700':'500';
-    el.style.border     = on?'1px solid var(--acc)':'1px solid var(--s3)';
-  }
 }
 
 function setEvalItem(idx, val) {
@@ -3520,7 +3121,6 @@ function saveTeacherEval() {
   if(!t) return;
   t.evalScores = Object.assign({}, currentEvalData);
   t.evalTotal = calcEvalScore(currentEvalData);
-  t.teachLevels = currentEvalLevels.slice();
   t.evalDate = today();
   // 월별 히스토리 저장
   var ym = getYearMonth();
@@ -3801,8 +3401,7 @@ function renderAdminHome() {
 
   // ── 강사 순위
   h += '<div class="sl2"><div class="d8" style="background:var(--pu)"></div>강사 순위 🏆</div>';
-  h += '<button class="btn sm" style="width:auto;padding:8px 14px;margin-bottom:10px" onclick="openWithdraw()">🚪 퇴원 관리 열기</button>';
-  h += '<div class="rank-tab-row">'     + '<div class="rank-tab'+(rankTab==='progress'?' on':'')+'" onclick="setRankTab(\'progress\')">📈 진도율</div>'     + '<div class="rank-tab'+(rankTab==='consult'?' on':'')+'" onclick="setRankTab(\'consult\')">💬 상담완료율</div>'     + '<div class="rank-tab'+(rankTab==='students'?' on':'')+'" onclick="setRankTab(\'students\')">👥 담당학생</div>'     + '<div class="rank-tab'+(rankTab==='homework'?' on':'')+'" onclick="setRankTab(\'homework\')">📝 과제완료율</div>'     + '<div class="rank-tab'+(rankTab==='wd'?' on':'')+'" onclick="setRankTab(\'wd\')">🚪 퇴원율</div>'     + '<div class="rank-tab'+(rankTab==='eval'?' on':'')+'" onclick="setRankTab(\'eval\')">📋 관리자평가</div>'     + '</div>';
+  h += '<div class="rank-tab-row">'     + '<div class="rank-tab'+(rankTab==='progress'?' on':'')+'" onclick="setRankTab(\'progress\')">📈 진도율</div>'     + '<div class="rank-tab'+(rankTab==='consult'?' on':'')+'" onclick="setRankTab(\'consult\')">💬 상담완료율</div>'     + '<div class="rank-tab'+(rankTab==='students'?' on':'')+'" onclick="setRankTab(\'students\')">👥 담당학생</div>'     + '<div class="rank-tab'+(rankTab==='homework'?' on':'')+'" onclick="setRankTab(\'homework\')">📝 과제완료율</div>'     + '<div class="rank-tab'+(rankTab==='eval'?' on':'')+'" onclick="setRankTab(\'eval\')">📋 관리자평가</div>'     + '</div>';
   if (!T.length) {
     h += '<div class="empty">강사가 없어요.</div>';
   } else {
@@ -3816,9 +3415,7 @@ function renderAdminHome() {
       var consultRate = tSt.length ? Math.round(consultDone/tSt.length*100) : 0;
       var hwRate = calcHwRate(t.name, tSt);
       var evalScore = getEvalScore(t.name) || 0;
-      var wAll=(DB.withdrawn||[]).filter(function(r){return r.teacher===t.name;}).length;
-      var wDenom=tSt.length+wAll; var wdRate=wDenom?Math.round(wAll/wDenom*100):0;
-      return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate, wCount:wAll};
+      return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore};
     });
     // 기준별 정렬
     var sorted = tData.slice().sort(function(a,b){
@@ -3826,7 +3423,6 @@ function renderAdminHome() {
       if(rankTab==='consult') return b.consultRate - a.consultRate;
       if(rankTab==='homework') return b.hwRate - a.hwRate;
       if(rankTab==='eval') return b.evalScore - a.evalScore;
-      if(rankTab==='wd') return a.wdRate - b.wdRate;
       return b.studentCount - a.studentCount;
     });
     // 최대값 (막대 비율 계산)
@@ -3835,20 +3431,19 @@ function renderAdminHome() {
       if(rankTab==='consult') return t.consultRate;
       if(rankTab==='homework') return t.hwRate;
       if(rankTab==='eval') return t.evalScore;
-      if(rankTab==='wd') return t.wdRate;
       return t.studentCount;
     }).concat([1]));
     var medals = ['🥇','🥈','🥉'];
     var rankColors = ['#f5a623','#7b84aa','#c09060'];
     sorted.forEach(function(t, rank) {
-      var val = rankTab==='progress' ? t.progressAvg : rankTab==='consult' ? t.consultRate : rankTab==='homework' ? t.hwRate : rankTab==='eval' ? t.evalScore : rankTab==='wd' ? t.wdRate : t.studentCount;
+      var val = rankTab==='progress' ? t.progressAvg : rankTab==='consult' ? t.consultRate : rankTab==='homework' ? t.hwRate : rankTab==='eval' ? t.evalScore : t.studentCount;
       var unit = rankTab==='students' ? '명' : rankTab==='eval' ? '점' : '%';
       var barColor = rank===0?'var(--am)':rank===1?'var(--t2)':'var(--t3)';
       var numBg = rank===0?'var(--aml)':rank===1?'var(--s2)':'var(--s2)';
       var numColor = rank===0?'var(--am)':rank===1?'var(--te)':'var(--t2)';
       var origIdx = t.idx;
       var c = COLORS[origIdx%COLORS.length], bg = AVBG[origIdx%AVBG.length];
-      h += '<div class="rank-row" onclick="showTDetail('+origIdx+')">'         + '<div class="rank-num" style="background:'+numBg+';color:'+numColor+'">'         + (rank<3 ? medals[rank] : (rank+1)+'위')+'</div>'         + '<div class="av" style="width:34px;height:34px;border-radius:9px;background:'+bg+';color:'+c+';font-size:13px;flex-shrink:0">'+t.name.slice(0,1)+'</div>'         + '<div style="flex:1;min-width:0">'           + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'             + '<span style="font-size:13px;font-weight:600">'+t.name+'</span>'             + '<span style="font-size:14px;font-weight:700;font-family:DM Mono,monospace;color:'+barColor+'">'+val+unit+'</span>'           + '</div>'           + '<div class="rank-bar-bg"><div class="rank-bar-fill" style="width:'+(rankTab==='wd'?Math.max(4,100-val):Math.round(val/maxVal*100))+'%;background:'+barColor+'"></div></div>'         + '</div>'         + '</div>';
+      h += '<div class="rank-row" onclick="showTDetail('+origIdx+')">'         + '<div class="rank-num" style="background:'+numBg+';color:'+numColor+'">'         + (rank<3 ? medals[rank] : (rank+1)+'위')+'</div>'         + '<div class="av" style="width:34px;height:34px;border-radius:9px;background:'+bg+';color:'+c+';font-size:13px;flex-shrink:0">'+t.name.slice(0,1)+'</div>'         + '<div style="flex:1;min-width:0">'           + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">'             + '<span style="font-size:13px;font-weight:600">'+t.name+'</span>'             + '<span style="font-size:14px;font-weight:700;font-family:DM Mono,monospace;color:'+barColor+'">'+val+unit+'</span>'           + '</div>'           + '<div class="rank-bar-bg"><div class="rank-bar-fill" style="width:'+Math.round(val/maxVal*100)+'%;background:'+barColor+'"></div></div>'         + '</div>'         + '</div>';
     });
   }
 
@@ -4125,7 +3720,9 @@ function renderConsultList() {
     list = list.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; });
   if (cFilter !== 'all') list = list.filter(function(s){return cSt(s).lv===cFilter;});
   if (!list.length) { el.innerHTML='<div class="empty">해당하는 학생이 없습니다.</div>'; return; }
-  el.innerHTML = renderStuGrouped(list, ME.role==='admin');
+  var h = '';
+  list.forEach(function(s){ h+=stuCard(s,gStI(s),ME.role==='admin'); });
+  el.innerHTML = h;
 }
 
 // ═══════════════════════════════════════
@@ -4161,12 +3758,6 @@ function showTDetail(tIdx) {
       + '<div class="av" style="width:52px;height:52px;border-radius:14px;background:'+bg+';color:'+c+';font-size:20px">'+t.name.slice(0,1)+'</div>'
       + '<div><div style="font-size:19px;font-weight:700">'+t.name+' 강사</div>'
       + '<div style="font-size:12px;color:var(--t2);margin-top:2px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div></div>';
-  if(Array.isArray(t.teachLevels) && t.teachLevels.length){
-    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px">'
-      +'<span style="font-size:11px;color:var(--t2)">담당 가능 학생층</span>'
-      +t.teachLevels.map(function(l){return '<span style="font-size:11px;font-weight:600;color:var(--acc);background:var(--acc-l);padding:3px 10px;border-radius:12px">'+l+'</span>';}).join('')
-      +'</div>';
-  }
   h+='<div class="sg3"><div class="sc"><div class="sv" style="color:var(--pu)">'+tS.length+'</div><div class="sl-val">과목</div></div>'
     +'<div class="sc"><div class="sv" style="color:var(--g)">'+tSt.length+'</div><div class="sl-val">학생</div></div>'
     +'<div class="sc"><div class="sv" style="color:'+(tAvg!==null?pCol(tAvg):'var(--t2)')+'">'+( tAvg!==null?tAvg+'%':'—')+'</div><div class="sl-val">평균진도</div></div></div>';
@@ -4174,7 +3765,7 @@ function showTDetail(tIdx) {
   if(tS.length){tS.forEach(function(s){var r=calcRate(s);var remain=s.totalPages-(s.currentPage||s.startPage||1);var d=s.endDate?daysUntil(s.endDate):null;h+='<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:13px;font-weight:500">'+s.name+'</span><span style="font-size:12px;color:'+pCol(r)+';font-family:DM Mono,monospace">'+r+'%</span></div><div class="pt" style="height:6px"><div class="pf" style="width:'+r+'%;height:6px;background:'+pCol(r)+'"></div></div><div style="font-size:11px;color:var(--t2);margin-top:2px">'+(s.currentPage||s.startPage||1)+'p/'+s.totalPages+'p · 남은 '+remain+'p'+(d!==null?' · D-'+d:'')+'</div></div>';});}else{h+='<div style="color:var(--t3);font-size:13px">담당 과목 없음</div>';}
   h+='</div>';
   h+='<div class="ct" style="margin-top:4px">담당 학생 ('+tSt.length+'명)</div>';
-  h+=renderStuGrouped(tSt, false);
+  tSt.forEach(function(s){h+=stuCard(s,gStI(s),false);});
   document.getElementById('det-body').innerHTML=h;
   document.getElementById('det-back').onclick=function(){goTab(prevTab);};
   document.querySelectorAll('.screen').forEach(function(el){el.classList.remove('on');});
@@ -4200,7 +3791,6 @@ function showStuDetail(idx) {
     +'<div style="font-size:13px;font-weight:600;color:var(--acc)">'+(s.nextConsultDate||'미정')+'</div></div></div></div>';
   h+=nbCardHtml(idx);
   h+=extraCardHtml(idx);
-  h+=placementCardHtml(idx);
   h+='<button class="btn" style="margin-bottom:13px" onclick="openConsult('+idx+')">+ 상담 기록 입력</button>';
   h+='<div class="ct">상담 기록 ('+hist.length+'회)</div>';
   if(!hist.length){h+='<div class="empty">아직 기록이 없습니다.</div>';}
@@ -5146,7 +4736,7 @@ _loadFirebase().then(function() {
   function setFbSt(msg,color){var el=document.getElementById('fb-status');if(el){el.textContent=msg;el.style.color=color||'var(--t3)';}}
   function applyDB(d) {
     if(d&&d.cfg){
-      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
+      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
       DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","admins":[],"teachers":[]}')
@@ -5169,15 +4759,17 @@ _loadFirebase().then(function() {
     tryAutoLogin();
     // 학부모·강사 메시지 → 문자상담 자동 동기화
     importMsgConsult();
+    // 과제앱 성적 상담 → 상담이력 자동 동기화
+    importHwCounsels();
     // 60초마다 주기적으로 다시 당겨오기 (캐시 무효화 후 새로 fetch)
-    if(!window._msgSyncTimer) window._msgSyncTimer = setInterval(function(){ hwDataT = 0; importMsgConsult(); }, 60000);
+    if(!window._msgSyncTimer) window._msgSyncTimer = setInterval(function(){ hwDataT = 0; importMsgConsult(); importHwCounsels(); }, 60000);
     // 30초마다 실시간 동기화 (롱폴링)
     window._fsUnsubscribe = _FS.onSnapshot('academy/data', function(snap) {
       var d2 = _FS.docToObj(snap);
       if (!d2) return;
       // 최근 15초 내 로컬 변경이 있으면 폴링 데이터로 덮어쓰지 않음 (방금 추가한 내용 보호)
       if (Date.now() - _lastLocalSave < 15000) return;
-      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.typeBank=d2.typeBank||DB.typeBank; DB.withdrawn=d2.withdrawn||DB.withdrawn;
+      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.typeBank=d2.typeBank||DB.typeBank;
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
