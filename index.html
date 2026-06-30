@@ -1578,7 +1578,6 @@ function renderWithdraw(){
   var periodRate=ever>0?Math.round(inP.length/ever*1000)/10:0;
   h+='<div class="card" style="margin-bottom:12px;display:flex;gap:8px;text-align:center">'
     +'<div style="flex:1"><div style="font-size:20px;font-weight:800;color:var(--rd)">'+inP.length+'</div><div style="font-size:11px;color:var(--t2)">기간 퇴원</div></div>'
-    +'<div style="flex:1"><div style="font-size:20px;font-weight:800">'+active+'</div><div style="font-size:11px;color:var(--t2)">현재 재원</div></div>'
     +'<div style="flex:1"><div style="font-size:20px;font-weight:800;color:var(--am)">'+periodRate+'%</div><div style="font-size:11px;color:var(--t2)">퇴원률</div></div></div>';
   // 강사 퇴원률 순위 (낮은 순)
   h+='<div class="sl2" style="margin:6px 0 8px"><div class="d8" style="background:var(--acc)"></div>강사 퇴원률 순위 (낮은 순)</div>';
@@ -1596,7 +1595,7 @@ function renderWithdraw(){
     h+='<div class="ic2" style="cursor:default">'
       +'<div class="rank-num" style="background:var(--s2);color:var(--t2);flex-shrink:0">'+medal+'</div>'
       +'<div style="flex:1;min-width:0"><div style="font-size:14px;font-weight:600">'+r.name+'</div>'
-      +'<div style="font-size:11px;color:var(--t2);margin-top:1px">재원 '+r.act+'명 · 퇴원 '+r.w+'명</div></div>'
+      +'<div style="font-size:11px;color:var(--t2);margin-top:1px">퇴원 '+r.w+'명</div></div>'
       +'<div style="text-align:right"><div style="font-size:15px;font-weight:700;color:'+col+';font-family:DM Mono,monospace">'+r.rate+'%</div><div style="font-size:10px;color:var(--t2)">퇴원률</div></div></div>';
   });
   // 담임별 퇴원 학생
@@ -1605,7 +1604,10 @@ function renderWithdraw(){
   var keys=Object.keys(byT).sort();
   if(!keys.length){ h+='<div class="empty">해당 기간 퇴원 학생이 없어요.</div>'; }
   else keys.forEach(function(k){
-    h+='<div style="font-size:12px;font-weight:700;color:var(--acc);margin:10px 0 6px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:13px;background:var(--acc);border-radius:2px;display:inline-block"></span>'+k+' ('+byT[k].length+'명)</div>';
+    var kW=byT[k].length;
+    var kAct=DB.stu.filter(function(s){return s.teacher===k;}).length;
+    var kRate=(kAct+kW)>0?Math.round(kW/(kAct+kW)*1000)/10:0;
+    h+='<div style="font-size:12px;font-weight:700;color:var(--acc);margin:10px 0 6px;display:flex;align-items:center;gap:6px"><span style="width:3px;height:13px;background:var(--acc);border-radius:2px;display:inline-block"></span>'+k+' · 퇴원 '+kW+'명 · 퇴원율 '+kRate+'%</div>';
     byT[k].sort(function(a,b){return (b.date||'').localeCompare(a.date||'');});
     byT[k].forEach(function(r){
       var gi=wdList().indexOf(r);
