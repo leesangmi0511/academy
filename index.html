@@ -703,6 +703,15 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
         </div>
       </div>
     </div>
+    <div style="margin:4px 0 12px;padding-top:12px;border-top:1px solid var(--s3)">
+      <div style="font-size:13px;font-weight:600;line-height:1.45;margin-bottom:9px">학생층은 어디까지 담당이 가능합니까? <span style="font-size:11px;color:var(--t3);font-weight:400">(중복 선택)</span></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        <span id="lvl-0" onclick="toggleEvalLevel(0)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">최상위권</span>
+        <span id="lvl-1" onclick="toggleEvalLevel(1)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">상위권</span>
+        <span id="lvl-2" onclick="toggleEvalLevel(2)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">중위권</span>
+        <span id="lvl-3" onclick="toggleEvalLevel(3)" style="padding:8px 15px;border-radius:18px;font-size:13px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">하위권</span>
+      </div>
+    </div>
     <div style="background:var(--acc-l);border-radius:var(--rs);padding:12px;margin-bottom:12px;text-align:center">
       <div style="font-size:11px;color:var(--t2);margin-bottom:4px">관리자 평가 점수</div>
       <div id="eval-score-preview" style="font-size:24px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace">—</div>
@@ -2018,6 +2027,8 @@ function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var
 // ═══ 강사 평가 ═══
 var currentEvalTeacher = null; // 평가 중인 강사 이름
 var currentEvalData = {}; // {0:'상', 1:'중', ...}
+var EVAL_LEVELS = ['최상위권','상위권','중위권','하위권']; // 담당 가능 학생층(중복 선택)
+var currentEvalLevels = [];
 
 var EVAL_ITEMS = [
   '면담 또는 회의 시 원활한 소통이 된다',
@@ -2739,12 +2750,31 @@ function openTeacherEval(tName) {
   // 기존 평가 로드
   var t = DB.cfg.teachers.find(function(t){ return t.name === tName; });
   currentEvalData = (t && t.evalScores) ? Object.assign({}, t.evalScores) : {};
+  currentEvalLevels = (t && Array.isArray(t.teachLevels)) ? t.teachLevels.slice() : [];
   // UI 업데이트
   for(var i=0; i<8; i++) {
     updateEvalItemUI(i);
   }
+  updateEvalLevelUI();
   updateEvalScorePreview();
   openModal('ov-teacher-eval');
+}
+
+function toggleEvalLevel(idx){
+  var lv = EVAL_LEVELS[idx]; if(!lv) return;
+  var p = currentEvalLevels.indexOf(lv);
+  if(p>=0) currentEvalLevels.splice(p,1); else currentEvalLevels.push(lv);
+  updateEvalLevelUI();
+}
+function updateEvalLevelUI(){
+  for(var i=0;i<EVAL_LEVELS.length;i++){
+    var el=document.getElementById('lvl-'+i); if(!el) continue;
+    var on=currentEvalLevels.indexOf(EVAL_LEVELS[i])>=0;
+    el.style.background = on?'var(--acc)':'var(--s2)';
+    el.style.color      = on?'#fff':'var(--t2)';
+    el.style.fontWeight = on?'700':'500';
+    el.style.border     = on?'1px solid var(--acc)':'1px solid var(--s3)';
+  }
 }
 
 function setEvalItem(idx, val) {
@@ -2788,6 +2818,7 @@ function saveTeacherEval() {
   if(!t) return;
   t.evalScores = Object.assign({}, currentEvalData);
   t.evalTotal = calcEvalScore(currentEvalData);
+  t.teachLevels = currentEvalLevels.slice();
   t.evalDate = today();
   // 월별 히스토리 저장
   var ym = getYearMonth();
@@ -3423,6 +3454,12 @@ function showTDetail(tIdx) {
       + '<div class="av" style="width:52px;height:52px;border-radius:14px;background:'+bg+';color:'+c+';font-size:20px">'+t.name.slice(0,1)+'</div>'
       + '<div><div style="font-size:19px;font-weight:700">'+t.name+' 강사</div>'
       + '<div style="font-size:12px;color:var(--t2);margin-top:2px">과목 '+tS.length+'개 · 학생 '+tSt.length+'명</div></div></div>';
+  if(Array.isArray(t.teachLevels) && t.teachLevels.length){
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:12px">'
+      +'<span style="font-size:11px;color:var(--t2)">담당 가능 학생층</span>'
+      +t.teachLevels.map(function(l){return '<span style="font-size:11px;font-weight:600;color:var(--acc);background:var(--acc-l);padding:3px 10px;border-radius:12px">'+l+'</span>';}).join('')
+      +'</div>';
+  }
   h+='<div class="sg3"><div class="sc"><div class="sv" style="color:var(--pu)">'+tS.length+'</div><div class="sl-val">과목</div></div>'
     +'<div class="sc"><div class="sv" style="color:var(--g)">'+tSt.length+'</div><div class="sl-val">학생</div></div>'
     +'<div class="sc"><div class="sv" style="color:'+(tAvg!==null?pCol(tAvg):'var(--t2)')+'">'+( tAvg!==null?tAvg+'%':'—')+'</div><div class="sl-val">평균진도</div></div></div>';
