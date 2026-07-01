@@ -589,8 +589,12 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 <div class="ov" id="ov-tbedit" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2" id="tbe-hdr">유형 수정</div>
     <input type="hidden" id="tbe-id">
+    <input type="hidden" id="tbe-after">
     <label class="fl">과목/학년</label><input class="fi" id="tbe-sub" placeholder="예: 중1-1">
+    <label class="fl">레벨</label>
+    <select class="fi" id="tbe-level" style="appearance:auto;-webkit-appearance:menulist"><option>세부유형</option><option>주제유형</option><option>유형</option><option>소단원</option><option>중단원</option><option>대단원</option></select>
     <label class="fl">유형/키워드</label><input class="fi" id="tbe-type" placeholder="유형명 (진단 매칭 기준)">
+    <label class="fl">상위 경로 <span style="color:var(--t3);font-weight:400">(선택)</span></label><input class="fi" id="tbe-path" placeholder="예: 소인수분해 > 자연수의 약수와 배수">
     <label class="fl">강의명</label><input class="fi" id="tbe-lect" placeholder="비우면 유형명으로">
     <label class="fl">영상 링크 <span style="color:var(--t3);font-weight:400">(선택)</span></label><input class="fi" id="tbe-url" placeholder="https://...">
     <button class="btn" onclick="saveTbEdit()">저장</button>
@@ -1922,19 +1926,25 @@ function openTbEdit(id){
   var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0]; if(!e) return;
   document.getElementById('tbe-hdr').textContent='유형 수정';
   document.getElementById('tbe-id').value=id;
+  document.getElementById('tbe-after').value='';
   document.getElementById('tbe-sub').value=e.subject||'';
+  document.getElementById('tbe-level').value=e.level||'세부유형';
   document.getElementById('tbe-type').value=e.type||'';
+  document.getElementById('tbe-path').value=e.path||'';
   document.getElementById('tbe-lect').value=e.title||'';
   document.getElementById('tbe-url').value=e.url||'';
   document.getElementById('tbe-del').style.display='';
   openModal('ov-tbedit');
 }
-function openTbAdd(sub){
+function openTbAdd(sub, afterId, lvl){
   try{ sub=decodeURIComponent(sub); }catch(err){}
-  document.getElementById('tbe-hdr').textContent='유형 추가';
+  document.getElementById('tbe-hdr').textContent=afterId?'유형 삽입 (여기 아래)':'유형 추가';
   document.getElementById('tbe-id').value='';
+  document.getElementById('tbe-after').value=afterId||'';
   document.getElementById('tbe-sub').value=sub||'';
+  document.getElementById('tbe-level').value=lvl||'세부유형';
   document.getElementById('tbe-type').value='';
+  document.getElementById('tbe-path').value='';
   document.getElementById('tbe-lect').value='';
   document.getElementById('tbe-url').value='';
   document.getElementById('tbe-del').style.display='none';
@@ -1943,16 +1953,22 @@ function openTbAdd(sub){
 function saveTbEdit(){
   var id=document.getElementById('tbe-id').value;
   var sub=document.getElementById('tbe-sub').value.trim()||'수학';
+  var lvl=document.getElementById('tbe-level').value||'세부유형';
   var ty=document.getElementById('tbe-type').value.trim();
+  var pth=document.getElementById('tbe-path').value.trim();
   var ti=document.getElementById('tbe-lect').value.trim()||ty;
   var url=document.getElementById('tbe-url').value.trim();
   if(!ty){ toast('유형/키워드를 입력해주세요','var(--rd)'); return; }
   if(id){
     var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0]; if(!e) return;
-    e.subject=sub; e.type=ty; e.title=ti; e.url=url;
+    e.subject=sub; e.type=ty; e.title=ti; e.url=url; e.level=lvl; e.path=pth;
   } else {
     if(!DB.typeBank) DB.typeBank=[];
-    DB.typeBank.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6), subject:sub, type:ty, title:ti, url:url, level:'세부유형' });
+    var rec={ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6), subject:sub, type:ty, title:ti, url:url, level:lvl, path:pth };
+    var after=document.getElementById('tbe-after').value;
+    var pos=-1;
+    if(after){ for(var qi=0;qi<DB.typeBank.length;qi++){ if(DB.typeBank[qi].id===after){ pos=qi; break; } } }
+    if(pos>=0) DB.typeBank.splice(pos+1,0,rec); else DB.typeBank.push(rec);
   }
   saveAll(); closeModal('ov-tbedit'); renderDiagnosis(); toast(id?'수정됐어요 ✓':'추가됐어요 ✓');
 }
@@ -2158,16 +2174,24 @@ function renderDiagnosis(){
     else{
       var groups={}; bank.forEach(function(e){ (groups[e.subject||'기타']=groups[e.subject||'기타']||[]).push(e); });
       Object.keys(groups).forEach(function(sub){
-        h+='<div style="font-size:12px;font-weight:800;color:var(--acc);margin:10px 0 5px">'+dEsc(sub)+' <span style="color:var(--t3);font-weight:600">('+groups[sub].length+')</span></div>';
-        groups[sub].forEach(function(e){
+        var g=groups[sub], byLv={};
+        g.forEach(function(e){ var l=e.level||'기타'; byLv[l]=(byLv[l]||0)+1; });
+        var order=['대단원','중단원','소단원','유형','주제유형','세부유형','기타'];
+        var cbadges=order.filter(function(l){return byLv[l];}).map(function(l){
+          return '<span style="font-size:9.5px;background:'+tbLvBg(l)+';color:'+tbLvC(l)+';padding:1px 7px;border-radius:8px;font-weight:700">'+l+' '+byLv[l]+'</span>';
+        }).join(' ');
+        h+='<div style="margin:12px 0 6px"><div style="font-size:13px;font-weight:800;color:var(--acc)">'+dEsc(sub)+' <span style="color:var(--t3);font-weight:600">(총 '+g.length+')</span></div>'
+          +(cbadges?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">'+cbadges+'</div>':'')+'</div>';
+        g.forEach(function(e){
           var lv=e.level?'<span style="font-size:9.5px;background:'+tbLvBg(e.level)+';color:'+tbLvC(e.level)+';padding:1px 6px;border-radius:6px;flex-shrink:0;font-weight:700">'+dEsc(e.level)+'</span>':'';
           h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
              lv+'<span style="flex:1;min-width:0;color:var(--te);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
              (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none;flex-shrink:0">링크</a>':'')+
+             '<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\',\''+e.id+'\',\''+(e.level||'세부유형')+'\')" title="여기 아래 삽입" style="border:none;background:none;color:var(--g);cursor:pointer;font-size:15px;font-weight:800;flex-shrink:0;line-height:1">＋</button>'+
              '<button onclick="openTbEdit(\''+e.id+'\')" style="border:none;background:none;color:var(--acc);cursor:pointer;font-size:11.5px;flex-shrink:0">수정</button>'+
              '<button onclick="tbDel(\''+e.id+'\')" style="border:none;background:none;color:var(--rd);cursor:pointer;font-weight:800;font-size:14px;flex-shrink:0">✕</button></div>';
         });
-        h+='<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 12px;margin:0 0 10px;cursor:pointer;font-weight:600">+ 이 과목에 유형 추가</button>';
+        h+='<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 12px;margin:0 0 10px;cursor:pointer;font-weight:600">+ 이 과목 끝에 유형 추가</button>';
       });
     }
     h+='</div>';
