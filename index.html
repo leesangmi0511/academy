@@ -585,6 +585,20 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
   </div>
 </div>
 
+<!-- 유형 수정/추가 -->
+<div class="ov" id="ov-tbedit" onclick="ovClose(event,this)">
+  <div class="modal"><div class="mh"></div><div class="mt2" id="tbe-hdr">유형 수정</div>
+    <input type="hidden" id="tbe-id">
+    <label class="fl">과목/학년</label><input class="fi" id="tbe-sub" placeholder="예: 중1-1">
+    <label class="fl">유형/키워드</label><input class="fi" id="tbe-type" placeholder="유형명 (진단 매칭 기준)">
+    <label class="fl">강의명</label><input class="fi" id="tbe-lect" placeholder="비우면 유형명으로">
+    <label class="fl">영상 링크 <span style="color:var(--t3);font-weight:400">(선택)</span></label><input class="fi" id="tbe-url" placeholder="https://...">
+    <button class="btn" onclick="saveTbEdit()">저장</button>
+    <button class="btn ghost" id="tbe-del" onclick="delTbEdit()" style="color:var(--rd)">삭제</button>
+    <button class="btn ghost" onclick="closeModal('ov-tbedit')">닫기</button>
+  </div>
+</div>
+
 <!-- 계정 관리 (관리자) -->
 <div class="ov" id="ov-accounts" onclick="ovClose(event,this)">
   <div class="modal"><div class="mh"></div><div class="mt2">계정 관리</div>
@@ -1903,6 +1917,52 @@ function tbBulkAdd(){
   else alert('등록할 유형이 없습니다. 유형명을 한 줄에 하나씩 붙여넣거나, 과목[탭]유형[탭]강의명 형식으로 넣어주세요.');
 }
 function tbDel(id){ DB.typeBank=(DB.typeBank||[]).filter(function(e){return e.id!==id;}); saveAll(); renderDiagnosis(); }
+// 개별 유형 수정/추가
+function openTbEdit(id){
+  var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0]; if(!e) return;
+  document.getElementById('tbe-hdr').textContent='유형 수정';
+  document.getElementById('tbe-id').value=id;
+  document.getElementById('tbe-sub').value=e.subject||'';
+  document.getElementById('tbe-type').value=e.type||'';
+  document.getElementById('tbe-lect').value=e.title||'';
+  document.getElementById('tbe-url').value=e.url||'';
+  document.getElementById('tbe-del').style.display='';
+  openModal('ov-tbedit');
+}
+function openTbAdd(sub){
+  try{ sub=decodeURIComponent(sub); }catch(err){}
+  document.getElementById('tbe-hdr').textContent='유형 추가';
+  document.getElementById('tbe-id').value='';
+  document.getElementById('tbe-sub').value=sub||'';
+  document.getElementById('tbe-type').value='';
+  document.getElementById('tbe-lect').value='';
+  document.getElementById('tbe-url').value='';
+  document.getElementById('tbe-del').style.display='none';
+  openModal('ov-tbedit');
+}
+function saveTbEdit(){
+  var id=document.getElementById('tbe-id').value;
+  var sub=document.getElementById('tbe-sub').value.trim()||'수학';
+  var ty=document.getElementById('tbe-type').value.trim();
+  var ti=document.getElementById('tbe-lect').value.trim()||ty;
+  var url=document.getElementById('tbe-url').value.trim();
+  if(!ty){ toast('유형/키워드를 입력해주세요','var(--rd)'); return; }
+  if(id){
+    var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0]; if(!e) return;
+    e.subject=sub; e.type=ty; e.title=ti; e.url=url;
+  } else {
+    if(!DB.typeBank) DB.typeBank=[];
+    DB.typeBank.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6), subject:sub, type:ty, title:ti, url:url, level:'세부유형' });
+  }
+  saveAll(); closeModal('ov-tbedit'); renderDiagnosis(); toast(id?'수정됐어요 ✓':'추가됐어요 ✓');
+}
+function delTbEdit(){
+  var id=document.getElementById('tbe-id').value; if(!id) return;
+  var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0];
+  if(!confirm((e?e.type:'이 유형')+' 을(를) 삭제할까요?')) return;
+  DB.typeBank=(DB.typeBank||[]).filter(function(x){return x.id!==id;});
+  saveAll(); closeModal('ov-tbedit'); renderDiagnosis(); toast('삭제됨');
+}
 
 // ── 매쓰플랫 계층 목록 붙여넣기: 7단계 자동 분류(과목>대>중>소단원>유형>주제>세부) ──
 var tbCands=[];
@@ -1913,28 +1973,37 @@ function tbParse(text){
   raw.forEach(function(l){ if(l.trim()===''){ if(cur.length){blocks.push(cur);cur=[];} } else cur.push(l.replace(/\s+$/,'')); });
   if(cur.length) blocks.push(cur);
   function badge(b){ var j=b.join('\n'); var t=j.match(/주제유형\s*-\s*(\d+)\s*개/); var d=j.match(/세부유형\s*-\s*(\d+)\s*개/); return {has:!!(t&&d), t:t?+t[1]:null, d:d?+d[1]:null}; }
-  var items=[], mode='top', eT=0,eD=0,gT=0,gD=0, expectTopic=true, ci=-1;
-  blocks.forEach(function(b){
+  var items=[], mode='top', gT=0,gD=0, expectTopic=true, ci=-1, cidx=-1;
+  blocks.forEach(function(b, bidx){
     var bi=badge(b);
-    if(mode==='in' && gT>=eT && gD>=eD) mode='top';
     if(bi.has){
-      items.push({text:tbStripBadge(b[0])||b[0], kind:'container', eT:bi.t, eD:bi.d, gT:0, gD:0});
-      ci=items.length-1; mode='in'; eT=bi.t; eD=bi.d; gT=0; gD=0; expectTopic=true;
-    } else if(mode==='in'){
-      if(expectTopic){
-        items.push({text:tbStripBadge(b[0]), kind:'topic'}); gT++;
-        if(b.length>1){ for(var k=1;k<b.length;k++){ var d=tbStripBadge(b[k]); if(d){ items.push({text:d, kind:'detail'}); gD++; } } expectTopic=true; }
-        else expectTopic=false;
-      } else {
-        for(var k2=0;k2<b.length;k2++){ var d2=tbStripBadge(b[k2]); if(d2){ items.push({text:d2, kind:'detail'}); gD++; } }
-        expectTopic=true;
-      }
-      if(ci>=0){ items[ci].gT=gT; items[ci].gD=gD; }
-    } else {
-      b.forEach(function(l){ var n=tbStripBadge(l); if(!n) return;
-        if(/개정/.test(n) || /^(초|중|고)\s*\d/.test(n)) items.push({text:n, kind:'grade'});
-        else items.push({text:n, kind:'unit'}); });
+      cidx++;
+      items.push({text:tbStripBadge(b[0])||b[0], kind:'container', eT:bi.t, eD:bi.d, cidx:cidx, gT:0, gD:0});
+      ci=items.length-1; mode='in'; gT=0; gD=0; expectTopic=true;
+      return;
     }
+    if(mode==='in'){
+      // 경계는 개수가 아니라 구조로 판단: 다음 블록이 배지면 지금 1줄 블록은 주제가 아니라 다음 유형 앞의 단원
+      var next=blocks[bidx+1];
+      var nextIsBadge=!!(next && badge(next).has);
+      if(expectTopic && b.length===1 && nextIsBadge){
+        mode='top';   // 유형(컨테이너) 종료 → 아래에서 단원으로 처리
+      } else {
+        if(expectTopic){
+          items.push({text:tbStripBadge(b[0]), kind:'topic'}); gT++;
+          if(b.length>1){ for(var k=1;k<b.length;k++){ var d=tbStripBadge(b[k]); if(d){ items.push({text:d, kind:'detail'}); gD++; } } expectTopic=true; }
+          else expectTopic=false;
+        } else {
+          for(var k2=0;k2<b.length;k2++){ var d2=tbStripBadge(b[k2]); if(d2){ items.push({text:d2, kind:'detail'}); gD++; } }
+          expectTopic=true;
+        }
+        if(ci>=0){ items[ci].gT=gT; items[ci].gD=gD; }
+        return;
+      }
+    }
+    b.forEach(function(l){ var n=tbStripBadge(l); if(!n) return;
+      if(/개정/.test(n) || /^(초|중|고)\s*\d/.test(n)) items.push({text:n, kind:'grade'});
+      else items.push({text:n, kind:'unit'}); });
   });
   // 단원 런(연속된 unit)에 대/중/소단원 배정: 맨 아래=소단원, 위로 갈수록 상위
   var i=0;
@@ -1972,7 +2041,9 @@ function tbPreview(){
   var nTopic=tbCands.filter(function(c){return c.kind==='topic';}).length;
   var nDetail=tbCands.filter(function(c){return c.kind==='detail';}).length;
   var nType=tbCands.filter(function(c){return c.kind==='container';}).length;
-  var h='<div style="font-size:11.5px;color:var(--t2);margin:10px 0 6px;line-height:1.6">📊 7단계 자동 분류 — <b style="color:var(--acc)">유형 '+nType+'</b> · <b style="color:var(--am)">주제유형 '+nTopic+'</b> · <b style="color:var(--g)">세부유형 '+nDetail+'</b>. 유형(소단원)마다 개수 검증 ✓을 표시했어요.<br>기본은 주제·세부만 체크했고, 단원·유형도 담으려면 체크하세요.</div>';
+  var autoSub=tbAutoSubject();
+  var h='<div style="font-size:12px;margin:10px 0 8px;padding:7px 11px;background:var(--acc-l);border-radius:8px;color:var(--acc);font-weight:700">📚 등록 과목(학년): '+dEsc(autoSub)+'</div>';
+  h+='<div style="font-size:11.5px;color:var(--t2);margin:0 0 6px;line-height:1.6">📊 7단계 자동 분류 — <b style="color:var(--acc)">유형 '+nType+'</b> · <b style="color:var(--am)">주제유형 '+nTopic+'</b> · <b style="color:var(--g)">세부유형 '+nDetail+'</b>.<br>실제 개수가 배지보다 많으면 자동 보정(✓), 적으면 <b style="color:var(--rd)">⚠ 누락 의심</b>(긁을 때 빠진 것)으로 표시돼요.</div>';
   h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'
     +'<button onclick="tbCheckAll(\'all\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">전체</button>'
     +'<button onclick="tbCheckAll(\'detail\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">세부유형만</button>'
@@ -1986,7 +2057,16 @@ function tbPreview(){
     var checked=(c.kind==='detail'||c.kind==='topic')?' checked':'';
     var wt=(c.kind==='container'||c.kind==='unit')?'font-weight:700;':'';
     var extra='';
-    if(c.kind==='container'){ var ok=(c.gT===c.eT && c.gD===c.eD); extra=' <span style="font-size:10px;color:'+(ok?'var(--g)':'var(--am)')+'">주제 '+c.gT+'/'+c.eT+'·세부 '+c.gD+'/'+c.eD+(ok?' ✓':' ⚠')+'</span>'; }
+    if(c.kind==='container'){
+      var shortD=c.gD<c.eD, shortT=c.gT<c.eT;
+      if(shortD||shortT){
+        var msg=[]; if(shortD)msg.push('세부 '+(c.eD-c.gD)+'개 부족('+c.gD+'/'+c.eD+')'); if(shortT)msg.push('주제 '+(c.eT-c.gT)+'개 부족('+c.gT+'/'+c.eT+')');
+        extra=' <span style="font-size:10px;color:var(--rd);font-weight:700;white-space:nowrap">⚠ 누락 의심 · '+msg.join(' · ')+'</span>';
+      } else {
+        var auto=(c.gD>c.eD||c.gT>c.eT);
+        extra=' <span style="font-size:10px;color:var(--g);white-space:nowrap">주제 '+c.gT+'·세부 '+c.gD+' ✓'+(auto?' (배지 '+c.eD+'→보정)':'')+'</span>';
+      }
+    }
     h+='<label style="display:flex;align-items:center;gap:8px;padding:4px 0 4px '+pad+';cursor:pointer">'
       +'<input type="checkbox" class="tbck" data-i="'+i+'"'+checked+' style="width:16px;height:16px;flex-shrink:0;accent-color:var(--acc)">'
       +'<span style="flex:1;min-width:0;font-size:12.5px;'+wt+'">'+dEsc(c.text)+extra+'</span>'
@@ -2006,9 +2086,16 @@ function tbCheckAll(mode){
     else ck.checked=(c.kind!=='grade');
   });
 }
-function tbRegisterChecked(){
+function tbAutoSubject(){
   var subBox=document.getElementById('tb-sub');
-  var defSub=((subBox&&subBox.value)||'').trim()||'수학';
+  var manual=((subBox&&subBox.value)||'').trim();
+  if(manual) return manual;
+  var g=(tbCands||[]).filter(function(c){return c.level==='과목';})[0];
+  if(g && g.text){ var s=g.text.replace(/\([^)]*개정\)/g,'').replace(/\s+/g,'').trim(); return s||g.text.trim(); }
+  return '수학';
+}
+function tbRegisterChecked(){
+  var defSub=tbAutoSubject();
   var cks=document.querySelectorAll('#tb-preview .tbck:checked');
   var added=0, dup=0;
   Array.prototype.forEach.call(cks,function(ck){
@@ -2054,7 +2141,7 @@ function renderDiagnosis(){
     h+='<div style="border:1px solid var(--s3);border-top:none;border-radius:0 0 12px 12px;background:var(--s1);padding:15px;margin-top:-4px">';
     h+='<div style="font-size:12.5px;color:var(--t2);margin-bottom:12px">유형(또는 키워드)에 강의를 등록해 두면, 진단 결과의 취약 유형에 자동으로 추천됩니다. 학원에서 과목별로 정리해 올리세요.</div>';
     // 매쓰플랫에서 긁어 붙여넣기 (기본 방법)
-    h+='<input id="tb-sub" class="fi" style="margin:0 0 8px" placeholder="과목 (예: 수학) — 비우면 수학으로 등록">';
+    h+='<input id="tb-sub" class="fi" style="margin:0 0 8px" placeholder="과목/학년 — 비우면 첫 줄(학년)을 자동 인식">';
     h+='<div style="font-size:12px;color:var(--t2);margin-bottom:6px;line-height:1.65">📋 <b>매쓰플랫에서 유형을 긁어 아래에 그대로 붙여넣으세요.</b> 엑셀 필요 없어요 — 붙여넣으면 학년·단원·세부유형을 자동으로 인식해 바로 정리됩니다.</div>';
     h+='<textarea id="tb-bulk" rows="5" onpaste="setTimeout(tbPreview,0)" style="width:100%;border:1px solid var(--s3);border-radius:9px;padding:9px;font-size:12.5px;font-family:inherit" placeholder="여기에 매쓰플랫 유형 목록을 통째로 붙여넣기 (여러 줄 OK)"></textarea>';
     h+='<button onclick="tbPreview()" style="margin-top:7px;background:var(--acc);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer">붙여넣은 내용 정리</button>';
@@ -2071,14 +2158,16 @@ function renderDiagnosis(){
     else{
       var groups={}; bank.forEach(function(e){ (groups[e.subject||'기타']=groups[e.subject||'기타']||[]).push(e); });
       Object.keys(groups).forEach(function(sub){
-        h+='<div style="font-size:12px;font-weight:800;color:var(--acc);margin:10px 0 5px">'+dEsc(sub)+'</div>';
+        h+='<div style="font-size:12px;font-weight:800;color:var(--acc);margin:10px 0 5px">'+dEsc(sub)+' <span style="color:var(--t3);font-weight:600">('+groups[sub].length+')</span></div>';
         groups[sub].forEach(function(e){
-          h+='<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
-             '<span style="font-weight:700;color:var(--te);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
-             '<span style="flex:1;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.title)+'</span>'+
-             (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none">링크</a>':'')+
-             '<button onclick="tbDel(\''+e.id+'\')" style="border:none;background:none;color:var(--rd);cursor:pointer;font-weight:800;font-size:14px">✕</button></div>';
+          var lv=e.level?'<span style="font-size:9.5px;background:var(--s2);color:var(--t3);padding:1px 5px;border-radius:6px;flex-shrink:0">'+dEsc(e.level)+'</span>':'';
+          h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
+             lv+'<span style="flex:1;min-width:0;color:var(--te);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
+             (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none;flex-shrink:0">링크</a>':'')+
+             '<button onclick="openTbEdit(\''+e.id+'\')" style="border:none;background:none;color:var(--acc);cursor:pointer;font-size:11.5px;flex-shrink:0">수정</button>'+
+             '<button onclick="tbDel(\''+e.id+'\')" style="border:none;background:none;color:var(--rd);cursor:pointer;font-weight:800;font-size:14px;flex-shrink:0">✕</button></div>';
         });
+        h+='<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 12px;margin:0 0 10px;cursor:pointer;font-weight:600">+ 이 과목에 유형 추가</button>';
       });
     }
     h+='</div>';
