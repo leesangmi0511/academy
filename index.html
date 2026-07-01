@@ -1904,45 +1904,93 @@ function tbBulkAdd(){
 }
 function tbDel(id){ DB.typeBank=(DB.typeBank||[]).filter(function(e){return e.id!==id;}); saveAll(); renderDiagnosis(); }
 
-// ── 매쓰플랫 계층 목록 붙여넣기: 계층 자동 인식 + 미리보기 ──
+// ── 매쓰플랫 계층 목록 붙여넣기: 7단계 자동 분류(과목>대>중>소단원>유형>주제>세부) ──
 var tbCands=[];
-var TB_TYPEKW=/(구하기|고르기|나열|세우기|표현|비교|판단|설명|계산|그리기|찾기|만들기|정하기|구별|옳은|옳지|참|거짓|있는 대로|것$|소문제|합답형|여부)/;
-function tbClassifyLine(raw){
-  var line=(raw||'').trim(); if(!line) return null;
-  // 학년/과정 헤더
-  if(/개정/.test(line) || /^(초|중|고)\s*\d/.test(line)) return {text:line, kind:'header', level:'학년/과정'};
-  // 개수 배지가 붙은 부모 노드 → 주제유형/단원
-  if(/주제유형|세부유형/.test(line) || /-\s*\d+\s*개/.test(line)){
-    var clean=line.replace(/(주제유형|세부유형)\s*-?\s*\d+\s*개/g,'').replace(/-\s*\d+\s*개/g,'').trim();
-    return {text:clean||line, kind:'cat', level:'주제/단원'};
+var TB_ORDER={'과목':0,'상위단원':1,'대단원':2,'중단원':3,'소단원':4,'유형':5,'주제유형':6,'세부유형':7};
+function tbStripBadge(l){ return l.replace(/주제유형\s*-?\s*\d+\s*개/g,'').replace(/세부유형\s*-?\s*\d+\s*개/g,'').trim(); }
+function tbParse(text){
+  var raw=(text||'').split('\n'), blocks=[], cur=[];
+  raw.forEach(function(l){ if(l.trim()===''){ if(cur.length){blocks.push(cur);cur=[];} } else cur.push(l.replace(/\s+$/,'')); });
+  if(cur.length) blocks.push(cur);
+  function badge(b){ var j=b.join('\n'); var t=j.match(/주제유형\s*-\s*(\d+)\s*개/); var d=j.match(/세부유형\s*-\s*(\d+)\s*개/); return {has:!!(t&&d), t:t?+t[1]:null, d:d?+d[1]:null}; }
+  var items=[], mode='top', eT=0,eD=0,gT=0,gD=0, expectTopic=true, ci=-1;
+  blocks.forEach(function(b){
+    var bi=badge(b);
+    if(mode==='in' && gT>=eT && gD>=eD) mode='top';
+    if(bi.has){
+      items.push({text:tbStripBadge(b[0])||b[0], kind:'container', eT:bi.t, eD:bi.d, gT:0, gD:0});
+      ci=items.length-1; mode='in'; eT=bi.t; eD=bi.d; gT=0; gD=0; expectTopic=true;
+    } else if(mode==='in'){
+      if(expectTopic){
+        items.push({text:tbStripBadge(b[0]), kind:'topic'}); gT++;
+        if(b.length>1){ for(var k=1;k<b.length;k++){ var d=tbStripBadge(b[k]); if(d){ items.push({text:d, kind:'detail'}); gD++; } } expectTopic=true; }
+        else expectTopic=false;
+      } else {
+        for(var k2=0;k2<b.length;k2++){ var d2=tbStripBadge(b[k2]); if(d2){ items.push({text:d2, kind:'detail'}); gD++; } }
+        expectTopic=true;
+      }
+      if(ci>=0){ items[ci].gT=gT; items[ci].gD=gD; }
+    } else {
+      b.forEach(function(l){ var n=tbStripBadge(l); if(!n) return;
+        if(/개정/.test(n) || /^(초|중|고)\s*\d/.test(n)) items.push({text:n, kind:'grade'});
+        else items.push({text:n, kind:'unit'}); });
+    }
+  });
+  // 단원 런(연속된 unit)에 대/중/소단원 배정: 맨 아래=소단원, 위로 갈수록 상위
+  var i=0;
+  while(i<items.length){
+    if(items[i].kind==='unit'){
+      var j=i; while(j<items.length && items[j].kind==='unit') j++;
+      for(var p=i;p<j;p++){ var dist=(j-1)-p; items[p].level = dist===0?'소단원':dist===1?'중단원':dist===2?'대단원':'상위단원'; }
+      i=j;
+    } else i++;
   }
-  // 공백 없는 짧은 줄 → 단원
-  if(line.indexOf(' ')<0 && line.length<=6) return {text:line, kind:'cat', level:'단원'};
-  // 동작 표현 → 세부유형, 그 외 다단어 → 단원(확인)
-  if(TB_TYPEKW.test(line)) return {text:line, kind:'type', level:'세부유형'};
-  return {text:line, kind:'maybe', level:'단원?'};
+  items.forEach(function(it){
+    if(it.kind==='grade') it.level='과목';
+    else if(it.kind==='container') it.level='유형';
+    else if(it.kind==='topic') it.level='주제유형';
+    else if(it.kind==='detail') it.level='세부유형';
+  });
+  // 상위 경로(path) 계산
+  var anc=[];
+  items.forEach(function(it){
+    var d=TB_ORDER[it.level]; if(d==null) d=7;
+    anc=anc.slice(0,d); anc[d]=it.text;
+    var parts=[]; for(var k=0;k<d;k++){ if(anc[k]) parts.push(anc[k]); }
+    it.path=parts.join(' > ');
+  });
+  return items;
 }
+function tbLvBg(l){ return l==='세부유형'?'var(--gl)':l==='주제유형'?'var(--aml)':l==='유형'?'var(--acc-l)':'var(--s2)'; }
+function tbLvC(l){ return l==='세부유형'?'var(--g)':l==='주제유형'?'var(--am)':l==='유형'?'var(--acc)':l==='소단원'?'var(--te)':l==='과목'?'var(--t3)':'var(--pu)'; }
+function tbLvPad(l){ return {'과목':0,'상위단원':0,'대단원':0,'중단원':6,'소단원':12,'유형':18,'주제유형':26,'세부유형':38}[l]||0; }
 function tbPreview(){
   var box=document.getElementById('tb-bulk'); if(!box) return;
-  tbCands=[];
-  (box.value||'').split('\n').forEach(function(l){ var c=tbClassifyLine(l); if(c) tbCands.push(c); });
+  tbCands=tbParse(box.value||'');
   var el=document.getElementById('tb-preview');
   if(!tbCands.length){ el.innerHTML='<div style="font-size:12px;color:var(--t3);padding:8px 0">붙여넣은 내용이 없어요.</div>'; return; }
-  var h='<div style="font-size:11.5px;color:var(--t2);margin:10px 0 6px;line-height:1.6">✅ 체크된 항목이 모두 등록됩니다. 세부유형뿐 아니라 <b>대분류·단원 같은 큰 카테고리도 함께 담을 수 있어요.</b><br>학년/과정 줄만 기본 제외했고, 나머지는 계층을 자동 인식해 체크해 뒀습니다. 필요 없는 줄만 체크 해제하세요.</div>';
+  var nTopic=tbCands.filter(function(c){return c.kind==='topic';}).length;
+  var nDetail=tbCands.filter(function(c){return c.kind==='detail';}).length;
+  var nType=tbCands.filter(function(c){return c.kind==='container';}).length;
+  var h='<div style="font-size:11.5px;color:var(--t2);margin:10px 0 6px;line-height:1.6">📊 7단계 자동 분류 — <b style="color:var(--acc)">유형 '+nType+'</b> · <b style="color:var(--am)">주제유형 '+nTopic+'</b> · <b style="color:var(--g)">세부유형 '+nDetail+'</b>. 유형(소단원)마다 개수 검증 ✓을 표시했어요.<br>기본은 주제·세부만 체크했고, 단원·유형도 담으려면 체크하세요.</div>';
   h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">'
-    +'<button onclick="tbCheckAll(\'all\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 10px;cursor:pointer">전체 선택</button>'
-    +'<button onclick="tbCheckAll(\'types\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 10px;cursor:pointer">세부유형만</button>'
-    +'<button onclick="tbCheckAll(\'cats\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 10px;cursor:pointer">단원·카테고리만</button>'
-    +'<button onclick="tbCheckAll(\'none\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 10px;cursor:pointer">모두 해제</button></div>';
+    +'<button onclick="tbCheckAll(\'all\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">전체</button>'
+    +'<button onclick="tbCheckAll(\'detail\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">세부유형만</button>'
+    +'<button onclick="tbCheckAll(\'topic\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">주제유형만</button>'
+    +'<button onclick="tbCheckAll(\'type\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">유형만</button>'
+    +'<button onclick="tbCheckAll(\'unit\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">단원만</button>'
+    +'<button onclick="tbCheckAll(\'none\')" style="font-size:11px;background:var(--s2);border:none;border-radius:7px;padding:5px 9px;cursor:pointer">해제</button></div>';
   tbCands.forEach(function(c,i){
-    var badgeBg=c.kind==='type'?'var(--gl)':c.kind==='cat'?'var(--acc-l)':c.kind==='header'?'var(--s2)':'var(--aml)';
-    var badgeC =c.kind==='type'?'var(--g)':c.kind==='cat'?'var(--acc)':c.kind==='header'?'var(--t3)':'var(--am)';
-    var checked=(c.kind!=='header')?' checked':'';
-    var dim=(c.kind==='header')?'opacity:.55;':'';
-    h+='<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer;'+dim+'">'
+    if(c.kind==='grade'){ h+='<div style="font-size:11px;color:var(--t3);padding:6px 0 2px;font-weight:700">'+dEsc(c.text)+' <span style="background:var(--s2);padding:1px 6px;border-radius:8px">과목</span></div>'; return; }
+    var pad=tbLvPad(c.level)+'px';
+    var checked=(c.kind==='detail'||c.kind==='topic')?' checked':'';
+    var wt=(c.kind==='container'||c.kind==='unit')?'font-weight:700;':'';
+    var extra='';
+    if(c.kind==='container'){ var ok=(c.gT===c.eT && c.gD===c.eD); extra=' <span style="font-size:10px;color:'+(ok?'var(--g)':'var(--am)')+'">주제 '+c.gT+'/'+c.eT+'·세부 '+c.gD+'/'+c.eD+(ok?' ✓':' ⚠')+'</span>'; }
+    h+='<label style="display:flex;align-items:center;gap:8px;padding:4px 0 4px '+pad+';cursor:pointer">'
       +'<input type="checkbox" class="tbck" data-i="'+i+'"'+checked+' style="width:16px;height:16px;flex-shrink:0;accent-color:var(--acc)">'
-      +'<span style="flex:1;min-width:0;font-size:12.5px">'+dEsc(c.text)+'</span>'
-      +'<span style="font-size:10px;background:'+badgeBg+';color:'+badgeC+';padding:1px 7px;border-radius:8px;flex-shrink:0">'+c.level+'</span></label>';
+      +'<span style="flex:1;min-width:0;font-size:12.5px;'+wt+'">'+dEsc(c.text)+extra+'</span>'
+      +'<span style="font-size:10px;background:'+tbLvBg(c.level)+';color:'+tbLvC(c.level)+';padding:1px 7px;border-radius:8px;flex-shrink:0">'+c.level+'</span></label>';
   });
   h+='<button onclick="tbRegisterChecked()" style="margin-top:10px;background:var(--g);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer">선택한 항목 등록</button>';
   el.innerHTML=h;
@@ -1951,9 +1999,11 @@ function tbCheckAll(mode){
   document.querySelectorAll('#tb-preview .tbck').forEach(function(ck){
     var c=tbCands[parseInt(ck.getAttribute('data-i'))]; if(!c) return;
     if(mode==='none') ck.checked=false;
-    else if(mode==='types') ck.checked=(c.kind==='type');
-    else if(mode==='cats') ck.checked=(c.kind==='cat'||c.kind==='maybe');
-    else ck.checked=(c.kind!=='header');
+    else if(mode==='detail') ck.checked=(c.kind==='detail');
+    else if(mode==='topic') ck.checked=(c.kind==='topic');
+    else if(mode==='type') ck.checked=(c.kind==='container');
+    else if(mode==='unit') ck.checked=(c.kind==='unit');
+    else ck.checked=(c.kind!=='grade');
   });
 }
 function tbRegisterChecked(){
@@ -1965,7 +2015,7 @@ function tbRegisterChecked(){
     var c=tbCands[parseInt(ck.getAttribute('data-i'))]; if(!c) return;
     var ty=(c.text||'').trim(); if(!ty) return;
     if(DB.typeBank.some(function(e){return e.subject===defSub && e.type===ty;})){ dup++; return; }
-    DB.typeBank.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6)+added, subject:defSub, type:ty, title:ty, url:'', level:(c.level||'') });
+    DB.typeBank.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6)+added, subject:defSub, type:ty, title:ty, url:'', level:(c.level||''), path:(c.path||'') });
     added++;
   });
   if(!added && !dup){ alert('선택된 항목이 없습니다.'); return; }
@@ -2003,18 +2053,19 @@ function renderDiagnosis(){
   if(diagBankOpen){
     h+='<div style="border:1px solid var(--s3);border-top:none;border-radius:0 0 12px 12px;background:var(--s1);padding:15px;margin-top:-4px">';
     h+='<div style="font-size:12.5px;color:var(--t2);margin-bottom:12px">유형(또는 키워드)에 강의를 등록해 두면, 진단 결과의 취약 유형에 자동으로 추천됩니다. 학원에서 과목별로 정리해 올리세요.</div>';
-    // 단건 추가
-    h+='<div style="display:grid;grid-template-columns:0.8fr 1.4fr;gap:7px;margin-bottom:7px">'+
-       '<input id="tb-sub" class="fi" style="margin:0" placeholder="과목 (예: 수학)"><input id="tb-type" class="fi" style="margin:0" placeholder="유형/키워드 (예: 근의 공식을 이용)"></div>';
-    h+='<div style="display:grid;grid-template-columns:1.2fr 1.2fr auto;gap:7px;margin-bottom:12px">'+
-       '<input id="tb-title" class="fi" style="margin:0" placeholder="강의명"><input id="tb-url" class="fi" style="margin:0" placeholder="영상 링크 https://...">'+
-       '<button onclick="tbAddSingle()" style="background:var(--acc);color:#fff;border:none;border-radius:9px;padding:0 16px;font-weight:700;cursor:pointer">추가</button></div>';
-    // 대량 붙여넣기
-    h+='<details style="margin-bottom:12px"><summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--acc)">엑셀에서 한꺼번에 붙여넣기</summary>'+
-       '<div style="font-size:11.5px;color:var(--t3);margin:6px 0">✅ 매쓰플랫 유형을 <b>한 줄에 하나씩</b> 그대로 붙여넣어도 등록돼요. (위 과목 칸에 과목을 적어두면 그 과목으로 · 안 적으면 수학, 강의명=유형명, 링크는 나중에)<br>분류 제목(예: 응용)처럼 공백 없는 짧은 줄은 자동 제외됩니다. 엑셀이면 과목[탭]유형[탭]강의명[탭]링크.</div>'+
-       '<textarea id="tb-bulk" rows="5" style="width:100%;border:1px solid var(--s3);border-radius:9px;padding:9px;font-size:12.5px;font-family:inherit" placeholder="보기의 수의 곱 중 약수의 개수가 적은 것부터 순서대로 나열한 것 고르기&#10;다음 중 약수의 개수가 나머지 넷과 다른 하나 고르기&#10;소인수분해를 이용하여 약수를 구하는 방법"></textarea>'+
-       '<button onclick="tbPreview()" style="margin-top:7px;background:var(--acc);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer">붙여넣기 미리보기 · 분류</button>'+
-       '<div id="tb-preview"></div></details>';
+    // 매쓰플랫에서 긁어 붙여넣기 (기본 방법)
+    h+='<input id="tb-sub" class="fi" style="margin:0 0 8px" placeholder="과목 (예: 수학) — 비우면 수학으로 등록">';
+    h+='<div style="font-size:12px;color:var(--t2);margin-bottom:6px;line-height:1.65">📋 <b>매쓰플랫에서 유형을 긁어 아래에 그대로 붙여넣으세요.</b> 엑셀 필요 없어요 — 붙여넣으면 학년·단원·세부유형을 자동으로 인식해 바로 정리됩니다.</div>';
+    h+='<textarea id="tb-bulk" rows="5" onpaste="setTimeout(tbPreview,0)" style="width:100%;border:1px solid var(--s3);border-radius:9px;padding:9px;font-size:12.5px;font-family:inherit" placeholder="여기에 매쓰플랫 유형 목록을 통째로 붙여넣기 (여러 줄 OK)"></textarea>';
+    h+='<button onclick="tbPreview()" style="margin-top:7px;background:var(--acc);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-weight:700;cursor:pointer">붙여넣은 내용 정리</button>';
+    h+='<div id="tb-preview"></div>';
+    // 하나씩 직접 입력 (보조)
+    h+='<details style="margin-top:14px"><summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--acc)">✏️ 하나씩 직접 입력 (강의명·링크까지)</summary>'+
+       '<div style="display:grid;grid-template-columns:1.4fr 1.4fr auto;gap:7px;margin:9px 0 4px">'+
+       '<input id="tb-type" class="fi" style="margin:0" placeholder="유형/키워드"><input id="tb-title" class="fi" style="margin:0" placeholder="강의명">'+
+       '<button onclick="tbAddSingle()" style="background:var(--acc);color:#fff;border:none;border-radius:9px;padding:0 16px;font-weight:700;cursor:pointer">추가</button></div>'+
+       '<input id="tb-url" class="fi" style="margin:0 0 4px" placeholder="영상 링크 https://... (선택)">'+
+       '<div style="font-size:11px;color:var(--t3)">과목은 위 과목 칸을 사용합니다.</div></details>';
     // 목록 (과목별)
     if(!bank.length){ h+='<div style="text-align:center;color:var(--t3);font-size:12.5px;padding:12px">등록된 강의가 없습니다.</div>'; }
     else{
