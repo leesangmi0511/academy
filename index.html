@@ -2030,8 +2030,8 @@ function tbParse(text){
   });
   return items;
 }
-function tbLvBg(l){ return l==='세부유형'?'var(--gl)':l==='주제유형'?'var(--aml)':l==='유형'?'var(--acc-l)':'var(--s2)'; }
-function tbLvC(l){ return l==='세부유형'?'var(--g)':l==='주제유형'?'var(--am)':l==='유형'?'var(--acc)':l==='소단원'?'var(--te)':l==='과목'?'var(--t3)':'var(--pu)'; }
+function tbLvBg(l){ return l==='세부유형'?'var(--gl)':l==='주제유형'?'var(--aml)':l==='유형'?'var(--acc-l)':l==='소단원'?'#e0f2f1':l==='중단원'?'#fce4ec':l==='대단원'?'#f1e7fb':l==='상위단원'?'#e8eaf6':'var(--s2)'; }
+function tbLvC(l){ return l==='세부유형'?'var(--g)':l==='주제유형'?'var(--am)':l==='유형'?'var(--acc)':l==='소단원'?'#00897b':l==='중단원'?'#c2185b':l==='대단원'?'#6a1b9a':l==='상위단원'?'#3949ab':l==='과목'?'var(--t3)':'var(--pu)'; }
 function tbLvPad(l){ return {'과목':0,'상위단원':0,'대단원':0,'중단원':6,'소단원':12,'유형':18,'주제유형':26,'세부유형':38}[l]||0; }
 function tbPreview(){
   var box=document.getElementById('tb-bulk'); if(!box) return;
@@ -2160,7 +2160,7 @@ function renderDiagnosis(){
       Object.keys(groups).forEach(function(sub){
         h+='<div style="font-size:12px;font-weight:800;color:var(--acc);margin:10px 0 5px">'+dEsc(sub)+' <span style="color:var(--t3);font-weight:600">('+groups[sub].length+')</span></div>';
         groups[sub].forEach(function(e){
-          var lv=e.level?'<span style="font-size:9.5px;background:var(--s2);color:var(--t3);padding:1px 5px;border-radius:6px;flex-shrink:0">'+dEsc(e.level)+'</span>':'';
+          var lv=e.level?'<span style="font-size:9.5px;background:'+tbLvBg(e.level)+';color:'+tbLvC(e.level)+';padding:1px 6px;border-radius:6px;flex-shrink:0;font-weight:700">'+dEsc(e.level)+'</span>':'';
           h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
              lv+'<span style="flex:1;min-width:0;color:var(--te);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
              (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none;flex-shrink:0">링크</a>':'')+
