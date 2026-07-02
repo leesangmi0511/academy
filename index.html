@@ -2367,7 +2367,15 @@ function tbParse(text){
   while(i<items.length){
     if(items[i].kind==='unit'){
       var j=i; while(j<items.length && items[j].kind==='unit') j++;
-      for(var p=i;p<j;p++){ var dist=(j-1)-p; items[p].level = dist===0?'소단원':dist===1?'중단원':dist===2?'대단원':'상위단원'; }
+      // 같은 이름이 연속(중복)이면: 위=대단원, 바로 아래=중단원, 그 아래=소단원
+      var dup=-1;
+      for(var q=i;q<j-1;q++){ if(diagNorm(items[q].text)===diagNorm(items[q+1].text)){ dup=q; break; } }
+      if(dup>=0){
+        for(var p=i;p<j;p++){ items[p].level = (p<=dup)?'대단원':(p===dup+1)?'중단원':'소단원'; }
+      } else {
+        // 기본: 유형 바로 위=소단원, 위로 갈수록 중단원·대단원
+        for(var p=i;p<j;p++){ var dist=(j-1)-p; items[p].level = dist===0?'소단원':dist===1?'중단원':dist===2?'대단원':'상위단원'; }
+      }
       i=j;
     } else i++;
   }
