@@ -1276,6 +1276,7 @@ function injectNewbieBanner(){
 }
 function newbieNotify(){
   if(!notifOn('newbie')) return;
+  if(!notifRoleAllowed('newbie')) return;
   var p=nbPending().filter(function(x){return x.o.lv==='urgent'||x.o.lv==='upcoming';});
   if(!p.length) return;
   showDirectNotif('ROUTETOP 신입생 상담', '기한 임박·초과 신입생 상담 '+p.length+'건이 있어요.');
@@ -1421,6 +1422,7 @@ function injectExtraBanner(){
 }
 function extraNotify(){
   if(!notifOn('extra')) return;
+  if(!notifRoleAllowed('extra')) return;
   var p=extraPending(); if(!p.length) return;
   showDirectNotif('ROUTETOP 추가 수업 알림', '특강·추가 수업 점검일 '+p.length+'건이 임박했어요.');
 }
@@ -3787,7 +3789,7 @@ function calcPeriodAvg() {
 // 매달 25일 평가 알림 체크
 function checkEvalReminder() {
   if(!notifOn('eval')) return;
-  if(!isAdminLevel()) return;
+  if(!notifRoleAllowed('eval')) return;
   var now = new Date();
   var day = now.getDate();
   var ym = getYearMonth();
@@ -4119,7 +4121,7 @@ function setRiskStatus(si,ri,code){
 }
 function riskNotify(){
   if(!notifOn('risk')) return;
-  if(!isAdminLevel()) return;
+  if(!notifRoleAllowed('risk')) return;
   var p=riskPending();
   if(!p.length) return;
   showDirectNotif('ROUTETOP 위험 감지', '미처리 상담 '+p.length+'건이 있어요. 확인해 주세요.');
@@ -5456,6 +5458,19 @@ var NOTIF_ITEMS = [
   {key:'extra',  icon:'📚', name:'추가 수업·특강 알림', desc:'지정한 점검일이 임박하면 알림'},
   {key:'eval',   icon:'📋', name:'월말 평가 알림',      desc:'매달 25일 이후 평가 미완료 알림'}
 ];
+var NOTIF_ROLES = [{k:'owner',n:'원장'},{k:'staff',n:'행정팀'},{k:'admin',n:'관리자'},{k:'teacher',n:'강사'}];
+var NOTIF_DEFAULT_ROLES = { risk:['owner','staff','admin'], newbie:['owner','staff','admin','teacher'], extra:['owner','staff','admin','teacher'], eval:['owner','staff','admin'] };
+function notifRolesFor(key){ var m=(DB.cfg&&DB.cfg.notifRoles)||{}; return (key in m)?(m[key]||[]):(NOTIF_DEFAULT_ROLES[key]||[]); }
+function notifRoleName(k){ var r=NOTIF_ROLES.filter(function(x){return x.k===k;})[0]; return r?r.n:k; }
+function notifRoleAllowed(key){ return !!(ME && notifRolesFor(key).indexOf(ME.role)>=0); }
+function toggleNotifRole(key, role){
+  if(!DB.cfg.notifRoles) DB.cfg.notifRoles={};
+  var cur=notifRolesFor(key).slice();
+  var i=cur.indexOf(role);
+  if(i>=0) cur.splice(i,1); else cur.push(role);
+  DB.cfg.notifRoles[key]=cur;
+  saveAll(); renderNotifList();
+}
 function notifOn(key){ var p=(DB.cfg&&DB.cfg.notifPrefs)||{}; return p[key]!==false; } // 기본값: 활성화
 function toggleNotif(key){
   if(!DB.cfg.notifPrefs) DB.cfg.notifPrefs={};
@@ -5466,15 +5481,27 @@ function toggleNotif(key){
 }
 function renderNotifList(){
   var el=document.getElementById('notif-list'); if(!el) return;
+  var myRole=ME?ME.role:'';
   var h='';
   NOTIF_ITEMS.forEach(function(it){
     var on=notifOn(it.key);
-    h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--s2)">'
+    var roles=notifRolesFor(it.key);
+    h+='<div style="padding:11px 0;border-bottom:1px solid var(--s2)">';
+    h+='<div style="display:flex;align-items:center;gap:10px">'
       +'<div style="font-size:18px;flex-shrink:0">'+it.icon+'</div>'
       +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--te)">'+it.name+'</div><div style="font-size:11px;color:var(--t3);margin-top:1px">'+it.desc+'</div></div>'
       +'<button onclick="toggleNotif(\''+it.key+'\')" title="'+(on?'해제':'활성화')+'" style="flex-shrink:0;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;position:relative;transition:background .15s;background:'+(on?'var(--g)':'var(--s3)')+'"><span style="position:absolute;top:3px;'+(on?'right:3px':'left:3px')+';width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25)"></span></button>'
       +'</div>';
+    h+='<div style="margin:8px 0 0 28px;'+(on?'':'opacity:.4')+'">';
+    h+='<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">받는 대상 · 탭하여 켜기/끄기</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:5px">';
+    NOTIF_ROLES.forEach(function(r){
+      var active=roles.indexOf(r.k)>=0, isMe=(r.k===myRole);
+      h+='<button onclick="toggleNotifRole(\''+it.key+'\',\''+r.k+'\')" style="font-size:11px;border-radius:14px;padding:4px 11px;cursor:pointer;font-weight:'+(active?'700':'500')+';border:1px solid '+(active?'var(--acc)':'var(--s3)')+';background:'+(active?'var(--acc-l)':'var(--s1)')+';color:'+(active?'var(--acc)':'var(--t3)')+'">'+r.n+(isMe?' ·나':'')+'</button>';
+    });
+    h+='</div></div></div>';
   });
+  h+='<div style="font-size:11px;color:var(--t2);margin-top:10px;padding:9px 11px;background:var(--s2);border-radius:8px;line-height:1.6">지금 로그인한 계정: <b>'+(myRole?notifRoleName(myRole):'-')+'</b><br>알림은 앱이 열려 있거나 백그라운드일 때, 이 계정이 <b>받는 대상</b>에 포함된 종류만 이 기기로 전달됩니다.</div>';
   el.innerHTML=h;
 }
 function openNotifSettings() {
