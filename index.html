@@ -5516,6 +5516,41 @@ function openNotifSettings() {
   renderNotifList();
 }
 
+// 알림 차단 해제 안내 (기기·브라우저 자동 감지)
+function notifUnblockGuideHTML(){
+  var ua=navigator.userAgent||'';
+  var ios=/iPhone|iPad|iPod/.test(ua), android=/Android/.test(ua);
+  var standalone=(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone===true;
+  var app='ROUTETOP';
+  var steps;
+  if(standalone){
+    if(ios){
+      steps='<b>📱 설치된 앱 (아이폰)</b><br>주소창이 없어 자물쇠가 안 보여요. 아이폰 설정에서 켭니다.<br>① 아이폰 <b>설정</b> 앱 열기<br>② <b>알림</b> → 목록에서 <b>'+app+'</b> 찾기<br>③ <b>알림 허용</b> 켜기 → 앱으로 돌아와 "다시 확인"';
+    } else if(android){
+      steps='<b>📱 설치된 앱 (안드로이드)</b><br>주소창이 없어 자물쇠가 안 보여요. 아래 중 하나로 켭니다.<br><b>방법 1 (쉬움)</b> — 홈 화면의 <b>'+app+' 아이콘을 꾹 길게 누르기</b> → <b>앱 정보(ⓘ)</b> → <b>알림</b> → <b>허용</b><br><b>방법 2</b> — 휴대폰 <b>설정 → 앱 → '+app+' → 알림</b> → <b>허용</b><br>→ 앱으로 돌아와 "다시 확인"';
+    } else {
+      steps='<b>💻 설치된 앱 (PC)</b><br>앱 창 <b>오른쪽 위 ⋮(점 3개)</b> → <b>앱 설정</b> 또는 <b>사이트 설정</b> → <b>알림</b> → <b>허용</b>.<br>메뉴가 없으면 크롬/엣지에서 아래 주소를 열어 주소창 <b>자물쇠 🔒</b>로 변경하세요.';
+    }
+  } else if(ios){
+    steps='<b>📱 아이폰 · 아이패드 (사파리)</b><br>① iOS는 이 사이트를 <b>홈 화면에 추가</b>해야 알림이 됩니다.<br>&nbsp;&nbsp;→ 사파리 하단 <b>공유(⬆️)</b> → <b>홈 화면에 추가</b><br>② 홈 화면 아이콘으로 앱을 연 뒤<br>③ 아이폰 <b>설정 → 알림 → '+app+'</b> → <b>알림 허용</b> 켜기';
+  } else if(android){
+    if(/SamsungBrowser/.test(ua)) steps='<b>📱 안드로이드 (삼성 인터넷)</b><br>① 주소창 왼쪽 <b>자물쇠 🔒</b> 또는 <b>≡</b> 아이콘 탭<br>② <b>권한 → 알림</b><br>③ <b>허용</b>으로 바꾼 뒤 아래 "다시 확인"';
+    else steps='<b>📱 안드로이드 (크롬)</b><br>① 주소창 왼쪽 <b>자물쇠 🔒</b> 아이콘 탭<br>② <b>권한</b> (또는 사이트 설정) → <b>알림</b><br>③ <b>허용</b>으로 바꾼 뒤 아래 "다시 확인"';
+  } else {
+    steps='<b>💻 PC (크롬 · 엣지)</b><br>① 주소창 맨 왼쪽 <b>자물쇠 🔒</b> 아이콘 클릭<br>② <b>사이트 설정</b> (또는 알림 항목)<br>③ <b>알림</b>을 <b>허용</b>으로 변경<br>④ 페이지 새로고침 후 아래 "다시 확인"';
+  }
+  return steps+'<div style="margin-top:8px;font-size:11px;color:var(--t3)">앱 이름: <b>'+app+'</b> · 주소: <b>'+dEsc(location.host)+'</b></div>';
+}
+function toggleNotifGuide(){
+  var g=document.getElementById('notif-guide'); if(!g) return;
+  if(g.style.display==='none'||!g.style.display){ g.innerHTML=notifUnblockGuideHTML(); g.style.display='block'; }
+  else g.style.display='none';
+}
+function recheckNotifPerm(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission==='default'){ Notification.requestPermission().then(function(){ updateNotifStatus(); }); }
+  else { updateNotifStatus(); if(Notification.permission==='denied') toast('아직 차단 상태예요. 위 방법으로 허용한 뒤 다시 눌러주세요.','var(--rd)'); else if(Notification.permission==='granted') toast('알림이 허용됐어요 ✓','var(--g)'); }
+}
 function updateNotifStatus() {
   var el = document.getElementById('notif-status');
   var btn = document.getElementById('notif-req-btn');
@@ -5528,8 +5563,13 @@ function updateNotifStatus() {
     el.textContent='✓ 알림이 허용됐어요.'; el.style.color='var(--g)';
     if(btn) btn.style.display='none';
   } else if (Notification.permission === 'denied') {
-    el.textContent='✗ 알림이 차단됐어요. 브라우저 설정에서 허용해 주세요.';
-    el.style.color='var(--rd)';
+    el.innerHTML='<span style="color:var(--rd);font-weight:600">✗ 알림이 차단돼 있어요.</span>'
+      +'<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'
+      +'<button onclick="toggleNotifGuide()" style="font-size:12px;font-weight:700;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:7px 13px;cursor:pointer">🔓 차단 해제 방법 보기</button>'
+      +'<button onclick="recheckNotifPerm()" style="font-size:12px;font-weight:700;background:var(--s2);color:var(--te);border:1px solid var(--s3);border-radius:8px;padding:7px 13px;cursor:pointer">🔄 다시 확인</button>'
+      +'</div>'
+      +'<div id="notif-guide" style="display:none;margin-top:9px;padding:11px 13px;background:var(--s2);border-radius:9px;font-size:12.5px;line-height:1.75;color:var(--te)"></div>';
+    el.style.color='var(--te)';
     if(btn) btn.style.display='none';
   } else {
     el.textContent='알림 권한을 허용하면 상담 필요 학생을 알려드려요.';
