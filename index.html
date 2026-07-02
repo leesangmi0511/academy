@@ -1071,6 +1071,7 @@ var _saveDirty = false;  // 저장 대기/진행 중 → 폴링 덮어쓰기 방
 var _saveFailed = false; // 마지막 클라우드 저장 실패 여부
 var _fbFailNotified = false;
 var _saveRetries = 0;
+var _tbLoadedVer = 0;
 // 유형 은행 조각 저장/로드 (Firestore 문서 1MB 한도 회피 — 조각당 최대 400개)
 function _tbChunkSave(){
   var items=DB.typeBank||[], CH=400, chunks=[];
@@ -1093,9 +1094,10 @@ function saveAll() {
   _saveDirty = true;            // 저장 대기 중 → 폴링이 옛 데이터로 덮어쓰지 않도록
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
+    var _ver = Date.now();
     _tbChunkSave()
-      .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks}); })
-      .then(function(){ _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _lastLocalSave = Date.now(); })
+      .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
+      .then(function(){ _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = _ver; _lastLocalSave = Date.now(); })
       .catch(function(e) {
         _saveFailed = true; console.warn('FB save error:', e);
         if(!_fbFailNotified && typeof toast==='function'){
@@ -2231,19 +2233,18 @@ function tbSearchGo(dir){
   tbSearchClearHi();
   var info=document.getElementById('tb-search-info');
   if(!q){ tbSearchIdx=-1; tbSearchQ=''; if(info) info.textContent=''; return; }
-  // 띄어쓰기 무시 + 키워드(부분 일치): 공백으로 나눈 각 키워드가 모두 포함되면 매칭 ("문자와식"↔"문자와 식")
+  // 데이터에서 직접 검색 (렌더 여부와 무관) · 띄어쓰기 무시 + 키워드 부분 일치
   var toks=q.split(/\s+/).filter(function(s){return s.length;});
-  var matches=Array.prototype.filter.call(document.querySelectorAll('.tb-row'), function(el){
-    var txt=(el.getAttribute('data-tbtext')||'').replace(/\s+/g,'');
+  var matches=(DB.typeBank||[]).filter(function(e){
+    var txt=((e.type||'')+' '+(e.title||'')+' '+(e.path||'')+' '+(e.subject||'')+' '+(e.level||'')).toLowerCase().replace(/\s+/g,'');
     return toks.every(function(t){ return txt.indexOf(t)>=0; });
   });
   if(q!==tbSearchQ){ tbSearchIdx=-1; tbSearchQ=q; }
   if(!matches.length){ tbSearchIdx=-1; if(info) info.textContent='결과 없음'; toast('"'+q+'" 검색 결과 없음'); return; }
   tbSearchIdx=(tbSearchIdx+dir+matches.length)%matches.length;
-  var el=matches[tbSearchIdx];
-  if(el && el.offsetParent===null){ var _sub=el.getAttribute('data-sub'); if(_sub){ try{_sub=decodeURIComponent(_sub);}catch(e){} tbDepth[_sub]=7; renderDiagnosis(); var _e2=document.getElementById(el.id); if(_e2) el=_e2; } tbSearchClearHi(); }
-  el.classList.add('tb-hit'); el.style.outline='2px solid var(--acc)'; el.style.background='var(--acc-l)';
-  el.scrollIntoView({behavior:'smooth', block:'center'});
+  var e=matches[tbSearchIdx];
+  tbDepth[e.subject||'기타']=7; renderDiagnosis(); // 해당 과목만 펼쳐서 이동
+  setTimeout(function(){ var el=document.getElementById('tbrow-'+e.id); if(el){ el.classList.add('tb-hit'); el.style.outline='2px solid var(--acc)'; el.style.background='var(--acc-l)'; el.scrollIntoView({behavior:'smooth', block:'center'}); } }, 40);
   if(info) info.textContent=(tbSearchIdx+1)+' / '+matches.length;
 }
 function tbSearchRun(){ tbSearchIdx=-1; tbSearchQ=''; tbSearchGo(1); }
@@ -2319,7 +2320,7 @@ var tbInsertAfterId=null; // 대량 삽입 위치(특정 유형 id) — null이�
 var tbDepth={};           // 과목별 표시 깊이(레벨 rank) — 미설정이면 접힘(과목명만)
 var tbReorderMode=false;
 function tbToggleReorder(){ tbReorderMode=!tbReorderMode; renderDiagnosis(); }
-function tbToggleDepth(sub){ try{sub=decodeURIComponent(sub);}catch(e){} tbDepth[sub] = (tbDepth[sub]===null) ? 7 : null; renderDiagnosis(); }
+function tbToggleDepth(sub){ try{sub=decodeURIComponent(sub);}catch(e){} tbDepth[sub] = (tbDepth[sub]==null) ? 7 : null; renderDiagnosis(); }
 function tbSetDepth(sub,rank){ try{sub=decodeURIComponent(sub);}catch(e){} if(tbDepth[sub]===rank) tbDepth[sub]=null; else tbDepth[sub]=rank; renderDiagnosis(); }
 function tbSubjectKeys(){ var gs={}; (DB.typeBank||[]).forEach(function(e){ gs[e.subject||'기타']=1; }); var keys=Object.keys(gs); var order=(DB.cfg&&DB.cfg.tbSubjectOrder)||[]; return keys.sort(function(a,b){ var ia=order.indexOf(a),ib=order.indexOf(b); if(ia<0&&ib<0)return 0; if(ia<0)return 1; if(ib<0)return -1; return ia-ib; }); }
 function tbMoveSub(sub,dir){ try{sub=decodeURIComponent(sub);}catch(e){} var order=tbSubjectKeys(); var i=order.indexOf(sub); if(i<0) return; var j=i+dir; if(j<0||j>=order.length) return; order.splice(j,0,order.splice(i,1)[0]); if(!DB.cfg) DB.cfg={}; DB.cfg.tbSubjectOrder=order; saveAll(); renderDiagnosis(); }
@@ -2563,7 +2564,7 @@ function renderDiagnosis(){
       subKeys.forEach(function(sub,_si){
         var g=groups[sub];
         var byLv={}; g.forEach(function(e){ var l=e.level||'기타'; byLv[l]=(byLv[l]||0)+1; });
-        var depth=tbDepth[sub]; if(depth===undefined) depth=7;
+        var depth=tbDepth[sub]; if(depth===undefined) depth=null;
         h+='<div style="margin:12px 0 6px"><div style="display:flex;align-items:center;gap:6px">';
         if(tbReorderMode){
           h+='<button onclick="tbMoveSub(\''+encodeURIComponent(sub)+'\',-1)" style="border:1px solid var(--s3);background:var(--s1);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:11px;flex-shrink:0;opacity:'+(_si===0?'.35':'1')+'">▲</button>';
@@ -2580,10 +2581,9 @@ function renderDiagnosis(){
         h+='</div></div>';
         g.forEach(function(e){
           var r=TB_ORDER[e.level]; if(r==null) r=7;
-          var vis=(depth!=null && r<=depth);
+          if(!(depth!=null && r<=depth)) return;   // 보이는 것만 렌더 (대량 성능 핵심)
           var lv=e.level?'<span style="font-size:9.5px;background:'+tbLvBg(e.level)+';color:'+tbLvC(e.level)+';padding:1px 6px;border-radius:6px;flex-shrink:0;font-weight:700">'+dEsc(e.level)+'</span>':'';
-          var _st=((e.type||'')+' '+(e.title||'')+' '+(e.path||'')+' '+sub+' '+(e.level||'')).toLowerCase();
-          h+='<div class="tb-row" id="tbrow-'+e.id+'" data-sub="'+encodeURIComponent(sub)+'" data-tbtext="'+dEsc(_st)+'" style="display:'+(vis?'flex':'none')+';align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
+          h+='<div class="tb-row" id="tbrow-'+e.id+'" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
              lv+'<span style="flex:1;min-width:0;color:var(--te);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
              (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none;flex-shrink:0">링크</a>':'')+
              '<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\',\''+e.id+'\',\''+(e.level||'세부유형')+'\')" title="여기 아래 삽입" style="border:none;background:none;color:var(--g);cursor:pointer;font-size:15px;font-weight:800;flex-shrink:0;line-height:1">＋</button>'+
@@ -5912,6 +5912,7 @@ _loadFirebase().then(function() {
     var _nch=(d && d.tbChunks) ? d.tbChunks : 0;
     (_nch>0 ? _tbChunkLoad(_nch) : _FS.get('academy/typebank').then(function(td){ var o=_FS.docToObj(td); return (o&&o.items)?o.items:null; }))
       .then(function(items){
+        _tbLoadedVer = (d && d.tbVer) || 0;
         var srvLen = items?items.length:0;
         if(srvLen){ DB.typeBank=items; }
         var local=[]; try{ local=JSON.parse(localStorage.getItem('ac_typeBank')||'[]'); }catch(_e){}
@@ -5933,7 +5934,8 @@ _loadFirebase().then(function() {
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
-      if(_pnch>0){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; if(items && items.length){ DB.typeBank=items; if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
+      var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
+      if(_pnch>0 && _pver!==_tbLoadedVer){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; _tbLoadedVer=_pver; if(items && items.length){ DB.typeBank=items; if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
