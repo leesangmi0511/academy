@@ -299,7 +299,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
       <div id="cal-evlist"><div class="empty">날짜를 선택하면 일정이 표시됩니다.</div></div>
     </div>
     <div class="screen" id="sc-detail"><button class="back" id="det-back"><svg class="ic" style="width:15px;height:15px" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>돌아가기</button><div id="det-body"></div></div>
-    <div class="screen" id="sc-diagnosis"><div style="padding:14px 0 8px"><div style="font-size:21px;font-weight:700">매쓰플랫 진단 분석</div><div style="font-size:12px;color:var(--t2);margin-top:2px">보고서 PDF를 올리면 취약 유형을 진단하고 유형별 강의를 추천합니다</div></div><div id="diag-body"></div></div>
+    <div class="screen" id="sc-diagnosis"><div style="padding:14px 0 8px"><div style="font-size:21px;font-weight:700">매쓰플랫 진단 분석</div><div style="font-size:12px;color:var(--t2);margin-top:2px">보고서 PDF를 올리면 취약 유형을 진단하고 유형별 강의를 추천합니다</div></div><div id="diag-body"></div><div id="diag-fab" style="position:fixed;left:0;right:0;bottom:calc(66px + env(safe-area-inset-bottom,0px));z-index:400;pointer-events:none;display:flex;justify-content:center"><div style="width:100%;max-width:430px;position:relative"><div style="position:absolute;right:14px;bottom:0;display:flex;flex-direction:column;gap:9px;pointer-events:auto"><button onclick="diagScroll('top')" aria-label="맨 위로" style="width:46px;height:46px;border-radius:50%;background:var(--s1);border:1px solid var(--s3);color:var(--te);font-size:21px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;line-height:1">↑</button><button onclick="diagScroll('bottom')" aria-label="맨 아래로" style="width:46px;height:46px;border-radius:50%;background:var(--s1);border:1px solid var(--s3);color:var(--te);font-size:21px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;line-height:1">↓</button></div></div></div></div>
     <div class="screen" id="sc-tuition">
       <div style="padding:14px 0 8px"><div style="font-size:21px;font-weight:700">💳 수강료 관리</div></div>
       <div id="tuition-body"></div>
@@ -2156,6 +2156,11 @@ function tbPrefill(sub,ty){
 var diagBankOpen=false;
 function diagToggleBank(){ diagBankOpen=!diagBankOpen; renderDiagnosis(); }
 
+// 진단 화면 스크롤 이동 (맨 위로 / 맨 아래로)
+function diagScroll(dir){
+  var el=document.getElementById('sc-diagnosis'); if(!el) return;
+  el.scrollTo({ top: dir==='top' ? 0 : el.scrollHeight, behavior:'smooth' });
+}
 // 렌더
 function renderDiagnosis(){
   var el=document.getElementById('diag-body'); if(!el) return;
