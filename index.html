@@ -1882,23 +1882,62 @@ function diagMatch(typeName){
 }
 
 // 파일 처리
+function ensureJSZip(){
+  return new Promise(function(resolve, reject){
+    if(window.JSZip) return resolve(window.JSZip);
+    var s=document.createElement('script');
+    s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload=function(){ window.JSZip ? resolve(window.JSZip) : reject(new Error('압축 라이브러리 로드 실패')); };
+    s.onerror=function(){ reject(new Error('압축 라이브러리 로드 실패 (네트워크 확인)')); };
+    document.head.appendChild(s);
+  });
+}
+function diagZipToPdfs(file){
+  return ensureJSZip().then(function(JSZip){ return JSZip.loadAsync(file); }).then(function(zip){
+    var jobs=[];
+    zip.forEach(function(path, entry){
+      if(entry.dir) return;
+      if(path.indexOf('__MACOSX')>=0) return;
+      var base=path.split('/').pop();
+      if(!base || base.charAt(0)==='.') return;
+      if(base.toLowerCase().slice(-4)!=='.pdf') return;
+      jobs.push(entry.async('arraybuffer').then(function(buf){ return {name:base, buf:buf}; }));
+    });
+    return Promise.all(jobs);
+  });
+}
 function diagFiles(files){
   var pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
   if(!pdfjsLib){ diagStatus('PDF 라이브러리를 불러오지 못했습니다. 네트워크를 확인해 주세요.', true); return; }
   var list=[]; for(var i=0;i<files.length;i++){ if(files[i].type==='application/pdf'||/\.pdf$/i.test(files[i].name)) list.push(files[i]); }
-  if(!list.length) return;
-  diagStatus('분석 중… ('+list.length+'개 파일)', false);
-  var chain=Promise.resolve(), ok=0;
-  list.forEach(function(f){
-    chain=chain.then(function(){ return f.arrayBuffer(); }).then(function(buf){ return diagPdfToPages(buf); }).then(function(pages){
-      var r=diagParse(pages);
-      if(r.units.length||r.types.length){ diagReports.unshift(r); ok++; }
-    }).catch(function(e){ console.warn('진단 분석 실패', f.name, e); });
+  // zip 파일 수집 (드래그앤드롭·선택 모두 지원)
+  var zips=[]; for(var zi=0;zi<files.length;zi++){ var zf=files[zi]; var zn=(zf.name||'').toLowerCase(); if(zn.slice(-4)==='.zip' || (zf.type||'').indexOf('zip')>=0) zips.push(zf); }
+  if(!list.length && !zips.length){ diagStatus('PDF 또는 PDF가 든 zip 파일을 올려주세요.', true); return; }
+  // 직접 올린 PDF → 통일된 소스 목록
+  var srcs=[]; list.forEach(function(f){ srcs.push({name:f.name, getBuf:function(){ return f.arrayBuffer(); }}); });
+  diagStatus(zips.length?'압축 파일 여는 중…':'분석 중… ('+srcs.length+'개 파일)', false);
+  // zip 순차 해제 → PDF 추가
+  var prep=Promise.resolve();
+  zips.forEach(function(z){
+    prep=prep.then(function(){ return diagZipToPdfs(z); }).then(function(items){
+      items.forEach(function(it){ srcs.push({name:it.name, getBuf:(function(b){ return function(){ return Promise.resolve(b); }; })(it.buf)}); });
+    }).catch(function(e){ console.warn('압축 해제 실패', z.name, e); diagStatus('압축 파일을 여는 데 실패했습니다: '+(z.name||'')+' — '+((e&&e.message)||''), true); });
   });
-  chain.then(function(){
-    renderDiagnosis();
-    diagStatus(ok? (ok+'개 보고서 분석 완료'):'매쓰플랫 보고서 형식을 인식하지 못했습니다.', ok===0);
-    if(ok) setTimeout(function(){ var s=document.getElementById('diag-status'); if(s) s.style.display='none'; }, 1500);
+  prep.then(function(){
+    if(!srcs.length){ diagStatus('zip 안에서 PDF를 찾지 못했습니다.', true); return; }
+    diagStatus('분석 중… ('+srcs.length+'개 파일)', false);
+    var chain=Promise.resolve(), ok=0;
+    srcs.forEach(function(p){
+      chain=chain.then(function(){ return p.getBuf(); }).then(function(buf){ return diagPdfToPages(buf); }).then(function(pages){
+        var r=diagParse(pages);
+        if(r.units.length||r.types.length){ diagReports.unshift(r); ok++; }
+      }).catch(function(e){ console.warn('진단 분석 실패', p.name, e); });
+    });
+    chain.then(function(){
+      renderDiagnosis();
+      diagStatus(ok? (ok+'개 보고서 분석 완료'):'매쓰플랫 보고서 형식을 인식하지 못했습니다.', ok===0);
+      if(ok) setTimeout(function(){ var s=document.getElementById('diag-status'); if(s) s.style.display='none'; }, 1500);
+    });
   });
 }
 function diagStatus(t,err){ var s=document.getElementById('diag-status'); if(!s) return; s.style.display='block'; s.textContent=t; s.style.color=err?'var(--rd)':'var(--acc)'; }
@@ -2231,11 +2270,11 @@ function renderDiagnosis(){
   var el=document.getElementById('diag-body'); if(!el) return;
   var h='';
   // 업로드
-  h+='<div onclick="document.getElementById(\'diag-file\').click()" style="border:2px dashed var(--s3);border-radius:14px;background:var(--s1);cursor:pointer;padding:24px 16px;text-align:center">'+
+  h+='<div onclick="document.getElementById(\'diag-file\').click()" ondragover="event.preventDefault();this.style.borderColor=\'var(--acc)\';this.style.background=\'var(--acc-l)\';" ondragleave="this.style.borderColor=\'var(--s3)\';this.style.background=\'var(--s1)\';" ondrop="event.preventDefault();this.style.borderColor=\'var(--s3)\';this.style.background=\'var(--s1)\';if(event.dataTransfer&&event.dataTransfer.files&&event.dataTransfer.files.length)diagFiles(event.dataTransfer.files);" style="border:2px dashed var(--s3);border-radius:14px;background:var(--s1);cursor:pointer;padding:24px 16px;text-align:center;transition:border-color .15s,background .15s">'+
      '<div style="width:42px;height:42px;border-radius:50%;background:var(--acc);color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;margin:0 auto 9px">↑</div>'+
      '<div style="font-weight:700;color:var(--acc);font-size:15px">매쓰플랫 월간보고서 PDF 올리기</div>'+
-     '<div style="font-size:12px;color:var(--t2);margin-top:3px">여러 학생을 한꺼번에 올릴 수 있어요 · 클릭해서 선택</div>'+
-     '<input type="file" id="diag-file" accept="application/pdf" multiple style="display:none" onchange="diagFiles(this.files)"></div>';
+     '<div style="font-size:12px;color:var(--t2);margin-top:3px">여러 학생을 한꺼번에 · 클릭 또는 끌어다 놓기 (PDF·압축 zip 가능)</div>'+
+     '<input type="file" id="diag-file" accept="application/pdf,.zip,application/zip,application/x-zip-compressed" multiple style="display:none" onchange="diagFiles(this.files)"></div>';
   h+='<div id="diag-status" style="display:none;margin-top:10px;padding:10px 13px;border-radius:9px;background:var(--s1);border:1px solid var(--s3);font-size:13px;font-weight:600;color:var(--acc)"></div>';
 
   // 보고서 카드
