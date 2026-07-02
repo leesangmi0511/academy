@@ -30,11 +30,17 @@ document.getElementById('pwa-manifest').href = url;
 <title>ROUTETOP 학원관리</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
-// Service Worker 등록 (실제 파일 사용)
+// Service Worker 등록 (실제 배포 도메인에서만 — 미리보기 환경 404 경고 방지)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/academy/sw.js', {scope:'/academy/'})
-    .then(function(r){ window._swReg=r; console.log('SW registered'); })
-    .catch(function(e){ console.warn('SW failed:',e.message); });
+  var _h = location.hostname;
+  var _canSW = (_h.indexOf('github.io') !== -1 || _h === 'localhost' || _h === '127.0.0.1');
+  if (_canSW) {
+    navigator.serviceWorker.register('/academy/sw.js', {scope:'/academy/'})
+      .then(function(r){ window._swReg=r; console.log('SW registered'); })
+      .catch(function(e){ console.warn('SW failed:',e.message); });
+  } else {
+    console.log('SW 등록 건너뜀 (미리보기/비배포 환경):', _h);
+  }
 }
 </script>
 
@@ -1921,6 +1927,21 @@ function tbBulkAdd(){
   else alert('등록할 유형이 없습니다. 유형명을 한 줄에 하나씩 붙여넣거나, 과목[탭]유형[탭]강의명 형식으로 넣어주세요.');
 }
 function tbDel(id){ DB.typeBank=(DB.typeBank||[]).filter(function(e){return e.id!==id;}); saveAll(); renderDiagnosis(); }
+function tbClearAll(){
+  var n=(DB.typeBank||[]).length;
+  if(!n){ toast('삭제할 유형이 없어요'); return; }
+  if(!confirm('유형 강의 은행의 전체 '+n+'개 유형을 모두 삭제할까요? 되돌릴 수 없습니다.')) return;
+  if(!confirm('정말 전체 삭제할까요? 다시 한 번 확인해주세요.')) return;
+  DB.typeBank=[]; saveAll(); renderDiagnosis(); toast(n+'개 전체 삭제됨','var(--rd)');
+}
+function tbClearSubject(sub){
+  try{ sub=decodeURIComponent(sub); }catch(err){}
+  var list=(DB.typeBank||[]).filter(function(e){return (e.subject||'기타')===sub;});
+  if(!list.length){ toast('삭제할 유형이 없어요'); return; }
+  if(!confirm('['+sub+'] 과목의 '+list.length+'개 유형을 모두 삭제할까요? 되돌릴 수 없습니다.')) return;
+  DB.typeBank=(DB.typeBank||[]).filter(function(e){return (e.subject||'기타')!==sub;});
+  saveAll(); renderDiagnosis(); toast('['+sub+'] '+list.length+'개 삭제됨','var(--rd)');
+}
 // 개별 유형 수정/추가
 function openTbEdit(id){
   var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0]; if(!e) return;
@@ -2172,6 +2193,7 @@ function renderDiagnosis(){
     // 목록 (과목별)
     if(!bank.length){ h+='<div style="text-align:center;color:var(--t3);font-size:12.5px;padding:12px">등록된 강의가 없습니다.</div>'; }
     else{
+      h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 2px"><div style="font-size:12.5px;font-weight:700;color:var(--t2)">등록된 유형 '+bank.length+'개</div><button onclick="tbClearAll()" style="font-size:11px;background:var(--s2);color:var(--rd);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;font-weight:700;cursor:pointer">🗑 전체 삭제</button></div>';
       var groups={}; bank.forEach(function(e){ (groups[e.subject||'기타']=groups[e.subject||'기타']||[]).push(e); });
       Object.keys(groups).forEach(function(sub){
         var g=groups[sub], byLv={};
@@ -2191,7 +2213,7 @@ function renderDiagnosis(){
              '<button onclick="openTbEdit(\''+e.id+'\')" style="border:none;background:none;color:var(--acc);cursor:pointer;font-size:11.5px;flex-shrink:0">수정</button>'+
              '<button onclick="tbDel(\''+e.id+'\')" style="border:none;background:none;color:var(--rd);cursor:pointer;font-weight:800;font-size:14px;flex-shrink:0">✕</button></div>';
         });
-        h+='<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 12px;margin:0 0 10px;cursor:pointer;font-weight:600">+ 이 과목 끝에 유형 추가</button>';
+        h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px"><button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600">+ 이 과목 끝에 유형 추가</button><button onclick="tbClearSubject(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--s2);color:var(--rd);border:1px solid var(--s3);border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600">이 과목 전체삭제</button></div>';
       });
     }
     h+='</div>';
