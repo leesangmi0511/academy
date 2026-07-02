@@ -1073,16 +1073,19 @@ var _fbFailNotified = false;
 var _saveRetries = 0;
 var _tbLoadedVer = 0;
 // 유형 은행 조각 저장/로드 (Firestore 문서 1MB 한도 회피 — 조각당 최대 400개)
+// 저장 압축: 긴 필드(중복 title, 빈 url, path) 제거 + 짧은 키 → 용량 대폭 축소
+function _tbCompact(items){ return (items||[]).map(function(e){ var o={i:e.id,s:e.subject,t:e.type,l:e.level}; if(e.title&&e.title!==e.type)o.n=e.title; if(e.url)o.u=e.url; return o; }); }
+function _tbExpand(arr){ return (arr||[]).map(function(o){ if(o && o.i!==undefined) return {id:o.i,subject:o.s,type:o.t,level:o.l,title:o.n||o.t,url:o.u||'',path:''}; return o; }); } // 옛 전체형식은 그대로 통과
 function _tbChunkSave(){
-  var items=DB.typeBank||[], CH=400, chunks=[];
-  for(var i=0;i<items.length;i+=CH) chunks.push(items.slice(i,i+CH));
+  var items=DB.typeBank||[], CH=700, chunks=[];
+  for(var i=0;i<items.length;i+=CH) chunks.push(_tbCompact(items.slice(i,i+CH)));
   if(!chunks.length) chunks.push([]);
   return Promise.all(chunks.map(function(c,i){ return _FS.set('academy/tb'+i, {items:c}); })).then(function(){ return chunks.length; });
 }
 function _tbChunkLoad(n){
   n=n||0; if(n<=0) return Promise.resolve(null);
   var gets=[]; for(var i=0;i<n;i++) gets.push(_FS.get('academy/tb'+i));
-  return Promise.all(gets).then(function(docs){ var all=[]; docs.forEach(function(doc){ var o=_FS.docToObj(doc); if(o && o.items) all=all.concat(o.items); }); return all; });
+  return Promise.all(gets).then(function(docs){ var all=[]; docs.forEach(function(doc){ var o=_FS.docToObj(doc); if(o && o.items) all=all.concat(_tbExpand(o.items)); }); return all; });
 }
 function saveAll() {
   localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg));
@@ -1102,8 +1105,7 @@ function saveAll() {
         _saveFailed = true; console.warn('FB save error:', e);
         if(!_fbFailNotified && typeof toast==='function'){
           _fbFailNotified = true;
-          var big=false; try{ big = JSON.stringify({c:DB.cfg,s:DB.subj,u:DB.stu,e:DB.evalHistory,t:DB.typeBank,w:DB.withdrawn}).length > 900000; }catch(_e){}
-          toast(big?'⚠ 데이터가 너무 커서 클라우드 저장 실패 — 기기에 임시 보관됨':'⚠ 클라우드 저장 실패 — 기기에 보관됨, 잠시 후 재시도','var(--rd)');
+          toast('클라우드 저장 지연 — 기기에 보관됨, 재시도 중','var(--am)');
           setTimeout(function(){ _fbFailNotified=false; }, 15000);
         }
         if(_saveRetries < 4){ _saveRetries++; clearTimeout(saveTimer); saveTimer = setTimeout(function(){ saveAll(); }, 6000); } // 자동 재시도(최대 4회)
