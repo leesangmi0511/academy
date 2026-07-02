@@ -1958,6 +1958,26 @@ function tbBulkInsertAfter(sub, afterId){
   }, 70);
 }
 function tbClearAnchor(){ tbInsertAfterId=null; var n=document.getElementById('tb-anchor-note'); if(n) n.style.display='none'; }
+// 유형 은행 검색 — 검색어에 해당하는 항목을 차례로 이동
+var tbSearchIdx=-1, tbSearchQ='';
+function tbSearchClearHi(){
+  document.querySelectorAll('.tb-row.tb-hit').forEach(function(el){ el.classList.remove('tb-hit'); el.style.outline=''; el.style.background=''; });
+}
+function tbSearchGo(dir){
+  var q=((document.getElementById('tb-search')||{}).value||'').trim().toLowerCase();
+  tbSearchClearHi();
+  var info=document.getElementById('tb-search-info');
+  if(!q){ tbSearchIdx=-1; tbSearchQ=''; if(info) info.textContent=''; return; }
+  var matches=Array.prototype.filter.call(document.querySelectorAll('.tb-row'), function(el){ return (el.getAttribute('data-tbtext')||'').indexOf(q)>=0; });
+  if(q!==tbSearchQ){ tbSearchIdx=-1; tbSearchQ=q; }
+  if(!matches.length){ tbSearchIdx=-1; if(info) info.textContent='결과 없음'; toast('"'+q+'" 검색 결과 없음'); return; }
+  tbSearchIdx=(tbSearchIdx+dir+matches.length)%matches.length;
+  var el=matches[tbSearchIdx];
+  el.classList.add('tb-hit'); el.style.outline='2px solid var(--acc)'; el.style.background='var(--acc-l)';
+  el.scrollIntoView({behavior:'smooth', block:'center'});
+  if(info) info.textContent=(tbSearchIdx+1)+' / '+matches.length;
+}
+function tbSearchRun(){ tbSearchIdx=-1; tbSearchQ=''; tbSearchGo(1); }
 // 개별 유형 수정/추가
 function openTbEdit(id){
   var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0]; if(!e) return;
@@ -2205,6 +2225,7 @@ function renderDiagnosis(){
   h+='<div id="tb-section" style="margin-top:18px"><button onclick="diagToggleBank()" style="width:100%;text-align:left;background:var(--s1);border:1px solid var(--s3);border-radius:12px;padding:13px 15px;font-size:14px;font-weight:700;color:var(--te);cursor:pointer">📚 유형 강의 은행 '+(bank.length?'('+bank.length+')':'')+' '+(diagBankOpen?'▴':'▾')+'</button>';
   if(diagBankOpen){
     h+='<div style="border:1px solid var(--s3);border-top:none;border-radius:0 0 12px 12px;background:var(--s1);padding:15px;margin-top:-4px">';
+    h+='<div style="position:sticky;top:0;z-index:20;background:var(--s1);padding:2px 0 9px;margin:-3px 0 8px;border-bottom:1px solid var(--s2)"><div style="display:flex;gap:5px;align-items:center"><input id="tb-search" onkeydown="if(event.key===\'Enter\'){event.preventDefault();tbSearchGo(1);}" placeholder="🔍 유형 검색 (엔터/▶로 다음)" style="flex:1;min-width:0;border:1px solid var(--s3);border-radius:9px;padding:8px 11px;font-size:12.5px;font-family:inherit"><button onclick="tbSearchRun()" title="검색" style="flex-shrink:0;width:34px;height:34px;border:1px solid var(--s3);background:var(--s2);border-radius:8px;cursor:pointer;font-size:14px">🔍</button><button onclick="tbSearchGo(-1)" title="이전" style="flex-shrink:0;width:30px;height:34px;border:1px solid var(--s3);background:var(--s2);border-radius:8px;cursor:pointer;font-weight:800;color:var(--acc)">◀</button><button onclick="tbSearchGo(1)" title="다음" style="flex-shrink:0;width:30px;height:34px;border:1px solid var(--s3);background:var(--s2);border-radius:8px;cursor:pointer;font-weight:800;color:var(--acc)">▶</button></div><div id="tb-search-info" style="font-size:11px;color:var(--t2);text-align:right;margin-top:3px;min-height:13px"></div></div>';
     h+='<div style="font-size:12.5px;color:var(--t2);margin-bottom:12px">유형(또는 키워드)에 강의를 등록해 두면, 진단 결과의 취약 유형에 자동으로 추천됩니다. 학원에서 과목별로 정리해 올리세요.</div>';
     // 매쓰플랫에서 긁어 붙여넣기 (기본 방법)
     h+='<input id="tb-sub" class="fi" style="margin:0 0 8px" placeholder="과목/학년 — 비우면 첫 줄(학년)을 자동 인식">';
@@ -2236,7 +2257,8 @@ function renderDiagnosis(){
           +(cbadges?'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">'+cbadges+'</div>':'')+'</div>';
         g.forEach(function(e){
           var lv=e.level?'<span style="font-size:9.5px;background:'+tbLvBg(e.level)+';color:'+tbLvC(e.level)+';padding:1px 6px;border-radius:6px;flex-shrink:0;font-weight:700">'+dEsc(e.level)+'</span>':'';
-          h+='<div style="display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
+          var _st=((e.type||'')+' '+(e.title||'')+' '+(e.path||'')+' '+sub+' '+(e.level||'')).toLowerCase();
+          h+='<div class="tb-row" data-tbtext="'+dEsc(_st)+'" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
              lv+'<span style="flex:1;min-width:0;color:var(--te);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
              (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none;flex-shrink:0">링크</a>':'')+
              '<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\',\''+e.id+'\',\''+(e.level||'세부유형')+'\')" title="여기 아래 삽입" style="border:none;background:none;color:var(--g);cursor:pointer;font-size:15px;font-weight:800;flex-shrink:0;line-height:1">＋</button>'+
