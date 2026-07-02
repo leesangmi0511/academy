@@ -1889,6 +1889,111 @@ function diagMatch(typeName){
   });
 }
 
+// ── 시험지 분석 (반자동): 내신·모의·월말 시험지 → 매쓰플랫 세부유형 ──
+var examOpen=false;
+var examProblems=[]; // [{no, text, type, wrong}]
+function examToggle(){ examOpen=!examOpen; renderDiagnosis(); }
+function examStatus(t,err){ var s=document.getElementById('exam-status'); if(!s) return; s.style.display='block'; s.textContent=t; s.style.color=err?'var(--rd)':'var(--acc)'; }
+function examTypeNames(){ var set={},out=[]; (DB.typeBank||[]).forEach(function(e){ var t=(e.type||'').trim(); if(t&&!set[t]){ set[t]=1; out.push(t); } }); return out; }
+function examSuggestType(text){
+  var n=diagNorm(text); if(!n) return '';
+  var best='', bestScore=0;
+  (DB.typeBank||[]).forEach(function(e){
+    var t=diagNorm(e.type); if(!t||t.length<2) return;
+    if(n.indexOf(t)>=0 && t.length>bestScore){ bestScore=t.length; best=e.type; }
+  });
+  return best;
+}
+function examSplit(pages){
+  var lines=[]; pages.forEach(function(p){ p.forEach(function(l){ lines.push(String(l)); }); });
+  var probs=[], cur=null;
+  var re=/^\s*(\d{1,2})\s*[.)]\s+/;
+  lines.forEach(function(l){
+    var m=l.match(re);
+    if(m){ if(cur) probs.push(cur); cur={no:parseInt(m[1],10), text:l.replace(re,'').trim()}; }
+    else if(cur){ cur.text=(cur.text+' '+l.trim()).trim(); }
+  });
+  if(cur) probs.push(cur);
+  probs.forEach(function(p){ p.text=(p.text||'').replace(/\s+/g,' ').slice(0,140); });
+  return probs;
+}
+function examFiles(files){
+  var pdfjsLib=window.pdfjsLib||window['pdfjs-dist/build/pdf'];
+  if(!pdfjsLib){ examStatus('PDF 라이브러리를 불러오지 못했습니다.', true); return; }
+  var list=[]; for(var i=0;i<files.length;i++){ if(files[i].type==='application/pdf'||/\.pdf$/i.test(files[i].name)) list.push(files[i]); }
+  var zips=[]; for(var zi=0;zi<files.length;zi++){ var zf=files[zi]; var zn=(zf.name||'').toLowerCase(); if(zn.slice(-4)==='.zip'||(zf.type||'').indexOf('zip')>=0) zips.push(zf); }
+  if(!list.length && !zips.length){ examStatus('시험지 PDF(또는 zip)를 올려주세요.', true); return; }
+  var srcs=[]; list.forEach(function(f){ srcs.push(function(){ return f.arrayBuffer(); }); });
+  examStatus(zips.length?'압축 여는 중…':'시험지 읽는 중…', false);
+  var prep=Promise.resolve();
+  zips.forEach(function(z){ prep=prep.then(function(){ return diagZipToPdfs(z); }).then(function(items){ items.forEach(function(it){ srcs.push((function(b){ return function(){ return Promise.resolve(b); }; })(it.buf)); }); }).catch(function(e){ console.warn(e); }); });
+  prep.then(function(){
+    var allPages=[]; var chain=Promise.resolve();
+    srcs.forEach(function(getBuf){ chain=chain.then(getBuf).then(function(buf){ return diagPdfToPages(buf); }).then(function(pages){ allPages=allPages.concat(pages); }).catch(function(e){ console.warn(e); }); });
+    chain.then(function(){
+      var probs=examSplit(allPages);
+      if(probs.length>=3){
+        examProblems=probs.map(function(p){ return {no:p.no, text:p.text, type:examSuggestType(p.text), wrong:false}; });
+        examStatus(examProblems.length+'문항 추출됨 · 세부유형을 확인·수정하고 오답을 표시하세요', false);
+      } else {
+        examStatus('텍스트 추출이 어려운 시험지예요(스캔본일 수 있음). 아래에 문항 수를 입력해 직접 지정하세요.', true);
+      }
+      renderExamList();
+    });
+  });
+}
+function examBuildRows(){
+  var n=parseInt((document.getElementById('exam-count')||{}).value||'0',10);
+  if(!n||n<1){ examStatus('문항 수를 입력하세요.', true); return; }
+  if(n>200) n=200;
+  examProblems=[]; for(var i=1;i<=n;i++) examProblems.push({no:i, text:'', type:'', wrong:false});
+  examStatus(n+'문항 생성됨 · 세부유형을 지정하고 오답을 표시하세요', false);
+  renderExamList();
+}
+function examSetType(i,v){ if(examProblems[i]) examProblems[i].type=v; }
+function examToggleWrong(i){ if(examProblems[i]){ examProblems[i].wrong=!examProblems[i].wrong; renderExamList(); } }
+function examListHTML(){
+  if(!examProblems.length) return '<div style="font-size:12px;color:var(--t3);padding:8px 0">아직 문항이 없어요. 시험지를 올리거나 문항 수를 입력하세요.</div>';
+  var h='';
+  examProblems.forEach(function(p,i){
+    h+='<div style="border:1px solid var(--s3);border-radius:10px;padding:9px 10px;margin-bottom:7px">';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">'
+      +'<span style="font-weight:800;color:var(--acc);font-size:13px;flex-shrink:0">'+(p.no||(i+1))+'번</span>'
+      +(p.text?'<span style="flex:1;min-width:0;font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(p.text)+'</span>':'<span style="flex:1"></span>')
+      +'<button onclick="examToggleWrong('+i+')" style="flex-shrink:0;font-size:11px;font-weight:700;border-radius:14px;padding:4px 12px;cursor:pointer;border:1px solid '+(p.wrong?'var(--rd)':'var(--s3)')+';background:'+(p.wrong?'var(--rdl)':'var(--s1)')+';color:'+(p.wrong?'var(--rd)':'var(--t3)')+'">'+(p.wrong?'✗ 오답':'○ 정답')+'</button>'
+      +'</div>';
+    h+='<input list="exam-types" value="'+dEsc(p.type||'')+'" onchange="examSetType('+i+',this.value)" placeholder="세부유형 (입력·선택)" style="width:100%;border:1px solid var(--s3);border-radius:8px;padding:7px 10px;font-size:12px;font-family:inherit">';
+    h+='</div>';
+  });
+  return h;
+}
+function renderExamList(){ var el=document.getElementById('exam-list'); if(el) el.innerHTML=examListHTML(); }
+function examAnalyze(){
+  var el=document.getElementById('exam-result'); if(!el) return;
+  if(!examProblems.length){ el.innerHTML=''; examStatus('먼저 문항을 만들어 주세요.', true); return; }
+  var agg={};
+  examProblems.forEach(function(p){ if(p.wrong && (p.type||'').trim()){ var t=p.type.trim(); (agg[t]=agg[t]||{count:0,nos:[]}); agg[t].count++; agg[t].nos.push(p.no); } });
+  var keys=Object.keys(agg).sort(function(a,b){ return agg[b].count-agg[a].count; });
+  var totalWrong=examProblems.filter(function(p){return p.wrong;}).length;
+  var untyped=examProblems.filter(function(p){return p.wrong && !(p.type||'').trim();}).length;
+  var h='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:13px;padding:14px;margin-top:12px">';
+  h+='<div style="font-size:14px;font-weight:800;color:var(--te);margin-bottom:4px">📊 취약 세부유형 · 보충 강의</div>';
+  h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:8px">총 '+examProblems.length+'문항 · 오답 '+totalWrong+'개'+(untyped?(' · 유형 미지정 오답 '+untyped+'개'):'')+'</div>';
+  if(!keys.length){ h+='<div style="font-size:12.5px;color:var(--g);font-weight:600">세부유형이 지정된 오답이 없어요. 오답 문항에 세부유형을 지정한 뒤 분석하세요.</div>'; }
+  else { keys.forEach(function(t){
+    var lecs=diagMatch(t);
+    h+='<div style="padding:9px 0;border-top:1px solid var(--s2)">';
+    h+='<div style="display:flex;align-items:center;gap:8px"><span style="flex:1;min-width:0;font-size:13px;font-weight:700;color:var(--te)">'+dEsc(t)+'</span><span style="flex-shrink:0;font-size:11.5px;font-weight:800;color:var(--rd)">오답 '+agg[t].count+'</span></div>';
+    h+='<div style="font-size:10.5px;color:var(--t3);margin-top:2px">문항 '+agg[t].nos.join(', ')+'</div>';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">';
+    if(lecs.length){ lecs.forEach(function(e){ h+='<a href="'+dEsc(e.url||'#')+'" target="_blank" rel="noopener" style="display:inline-flex;background:var(--acc);color:#fff;border-radius:16px;padding:4px 11px;font-size:11.5px;font-weight:600;text-decoration:none">▶ '+dEsc(e.title||e.type)+'</a>'; }); }
+    else { h+='<span style="font-size:11px;color:var(--t3)">등록된 강의 없음 — 유형은행에 추가하면 자동 추천됩니다</span>'; }
+    h+='</div></div>';
+  }); }
+  h+='</div>';
+  el.innerHTML=h;
+}
+
 // 파일 처리
 function ensureJSZip(){
   return new Promise(function(resolve, reject){
@@ -2290,6 +2395,20 @@ function renderDiagnosis(){
 
   // 유형 강의 은행
   var bank=DB.typeBank||[];
+  h+='<div id="exam-section" style="margin-top:14px"><button onclick="examToggle()" style="width:100%;text-align:left;background:var(--s1);border:1px solid var(--s3);border-radius:12px;padding:13px 15px;font-size:14px;font-weight:700;color:var(--te);cursor:pointer">📝 시험지 분석 · 내신·모의·월말 '+(examOpen?'▴':'▾')+'</button>';
+  if(examOpen){
+    h+='<div style="border:1px solid var(--s3);border-top:none;border-radius:0 0 12px 12px;background:var(--s1);padding:15px;margin-top:-4px">';
+    h+='<div style="font-size:12px;color:var(--t2);margin-bottom:10px;line-height:1.65">시험지를 올리면 문항을 추출해 세부유형을 <b>추천</b>합니다(반자동). 스캔본처럼 추출이 안 되면 <b>문항 수</b>만 입력해 직접 지정하세요. 오답을 표시하고 <b>분석</b>하면 취약 세부유형과 보충 강의를 뽑아줍니다.</div>';
+    h+='<div ondragover="event.preventDefault();this.style.borderColor=\'var(--acc)\';" ondragleave="this.style.borderColor=\'var(--s3)\';" ondrop="event.preventDefault();this.style.borderColor=\'var(--s3)\';if(event.dataTransfer&&event.dataTransfer.files&&event.dataTransfer.files.length)examFiles(event.dataTransfer.files);" onclick="document.getElementById(\'exam-file\').click()" style="border:2px dashed var(--s3);border-radius:12px;background:var(--s1);cursor:pointer;padding:16px;text-align:center;transition:border-color .15s"><div style="font-weight:700;color:var(--acc);font-size:13.5px">📄 시험지 올리기 (PDF·zip)</div><div style="font-size:11.5px;color:var(--t2);margin-top:3px">클릭 또는 끌어다 놓기</div><input type="file" id="exam-file" accept="application/pdf,.zip,application/zip" multiple style="display:none" onchange="examFiles(this.files)"></div>';
+    h+='<div style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="exam-count" type="number" min="1" placeholder="문항 수 직접 입력 (스캔본용)" style="flex:1;min-width:0;border:1px solid var(--s3);border-radius:8px;padding:8px 10px;font-size:12px;font-family:inherit"><button onclick="examBuildRows()" style="flex-shrink:0;background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">문항 생성</button></div>';
+    h+='<div id="exam-status" style="display:none;margin-top:9px;padding:9px 12px;border-radius:8px;background:var(--s2);font-size:12px;font-weight:600;color:var(--acc)"></div>';
+    h+='<datalist id="exam-types">'+examTypeNames().map(function(t){return '<option value="'+dEsc(t)+'">';}).join('')+'</datalist>';
+    h+='<div id="exam-list" style="margin-top:10px">'+examListHTML()+'</div>';
+    h+='<button onclick="examAnalyze()" style="width:100%;margin-top:10px;background:var(--g);color:#fff;border:none;border-radius:10px;padding:11px;font-size:14px;font-weight:800;cursor:pointer">📊 오답 분석 → 취약 세부유형·강의</button>';
+    h+='<div id="exam-result"></div>';
+    h+='</div>';
+  }
+  h+='</div>';
   h+='<div id="tb-section" style="margin-top:18px"><button onclick="diagToggleBank()" style="width:100%;text-align:left;background:var(--s1);border:1px solid var(--s3);border-radius:12px;padding:13px 15px;font-size:14px;font-weight:700;color:var(--te);cursor:pointer">📚 유형 강의 은행 '+(bank.length?'('+bank.length+')':'')+' '+(diagBankOpen?'▴':'▾')+'</button>';
   if(diagBankOpen){
     h+='<div style="border:1px solid var(--s3);border-top:none;border-radius:0 0 12px 12px;background:var(--s1);padding:15px;margin-top:-4px">';
