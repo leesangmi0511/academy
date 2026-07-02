@@ -2235,11 +2235,10 @@ function tbSearchGo(dir){
   tbSearchClearHi();
   var info=document.getElementById('tb-search-info');
   if(!q){ tbSearchIdx=-1; tbSearchQ=''; if(info) info.textContent=''; return; }
-  // 데이터에서 직접 검색 (렌더 여부와 무관) · 띄어쓰기 무시 + 키워드 부분 일치
-  var toks=q.split(/\s+/).filter(function(s){return s.length;});
+  // 데이터에서 직접 검색 (렌더 여부와 무관) · 띄어쓰기만 무시, 검색어를 통째로 부분일치(흩어진 부분 매칭 제외)
+  var qn=q.replace(/\s+/g,'');
   var matches=(DB.typeBank||[]).filter(function(e){
-    var txt=((e.type||'')+' '+(e.title||'')+' '+(e.path||'')+' '+(e.subject||'')+' '+(e.level||'')).toLowerCase().replace(/\s+/g,'');
-    return toks.every(function(t){ return txt.indexOf(t)>=0; });
+    return diagNorm(e.type||'').indexOf(qn)>=0 || (e.title && diagNorm(e.title).indexOf(qn)>=0);
   });
   if(q!==tbSearchQ){ tbSearchIdx=-1; tbSearchQ=q; }
   if(!matches.length){ tbSearchIdx=-1; if(info) info.textContent='결과 없음'; toast('"'+q+'" 검색 결과 없음'); return; }
