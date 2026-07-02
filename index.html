@@ -2319,8 +2319,8 @@ var tbInsertAfterId=null; // 대량 삽입 위치(특정 유형 id) — null이�
 var tbDepth={};           // 과목별 표시 깊이(레벨 rank) — 미설정이면 접힘(과목명만)
 var tbReorderMode=false;
 function tbToggleReorder(){ tbReorderMode=!tbReorderMode; renderDiagnosis(); }
-function tbToggleDepth(sub){ try{sub=decodeURIComponent(sub);}catch(e){} if(tbDepth[sub]!=null) tbDepth[sub]=undefined; else tbDepth[sub]=7; renderDiagnosis(); }
-function tbSetDepth(sub,rank){ try{sub=decodeURIComponent(sub);}catch(e){} if(tbDepth[sub]===rank) tbDepth[sub]=undefined; else tbDepth[sub]=rank; renderDiagnosis(); }
+function tbToggleDepth(sub){ try{sub=decodeURIComponent(sub);}catch(e){} tbDepth[sub] = (tbDepth[sub]===null) ? 7 : null; renderDiagnosis(); }
+function tbSetDepth(sub,rank){ try{sub=decodeURIComponent(sub);}catch(e){} if(tbDepth[sub]===rank) tbDepth[sub]=null; else tbDepth[sub]=rank; renderDiagnosis(); }
 function tbSubjectKeys(){ var gs={}; (DB.typeBank||[]).forEach(function(e){ gs[e.subject||'기타']=1; }); var keys=Object.keys(gs); var order=(DB.cfg&&DB.cfg.tbSubjectOrder)||[]; return keys.sort(function(a,b){ var ia=order.indexOf(a),ib=order.indexOf(b); if(ia<0&&ib<0)return 0; if(ia<0)return 1; if(ib<0)return -1; return ia-ib; }); }
 function tbMoveSub(sub,dir){ try{sub=decodeURIComponent(sub);}catch(e){} var order=tbSubjectKeys(); var i=order.indexOf(sub); if(i<0) return; var j=i+dir; if(j<0||j>=order.length) return; order.splice(j,0,order.splice(i,1)[0]); if(!DB.cfg) DB.cfg={}; DB.cfg.tbSubjectOrder=order; saveAll(); renderDiagnosis(); }
 var TB_ORDER={'과목':0,'상위단원':1,'대단원':2,'중단원':3,'소단원':4,'유형':5,'주제유형':6,'세부유형':7};
@@ -2563,7 +2563,7 @@ function renderDiagnosis(){
       subKeys.forEach(function(sub,_si){
         var g=groups[sub];
         var byLv={}; g.forEach(function(e){ var l=e.level||'기타'; byLv[l]=(byLv[l]||0)+1; });
-        var depth=tbDepth[sub];
+        var depth=tbDepth[sub]; if(depth===undefined) depth=7;
         h+='<div style="margin:12px 0 6px"><div style="display:flex;align-items:center;gap:6px">';
         if(tbReorderMode){
           h+='<button onclick="tbMoveSub(\''+encodeURIComponent(sub)+'\',-1)" style="border:1px solid var(--s3);background:var(--s1);border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:11px;flex-shrink:0;opacity:'+(_si===0?'.35':'1')+'">▲</button>';
