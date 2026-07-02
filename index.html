@@ -1081,7 +1081,8 @@ function saveAll() {
   _saveDirty = true;            // 저장 대기 중 → 폴링이 옛 데이터로 덮어쓰지 않도록
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
-    _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: DB.typeBank||[], withdrawn: DB.withdrawn||[]})
+    _FS.set('academy/typebank', {items: DB.typeBank||[]})
+      .then(function(){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[]}); })
       .then(function(){ _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _lastLocalSave = Date.now(); })
       .catch(function(e) {
         _saveFailed = true; console.warn('FB save error:', e);
@@ -5624,6 +5625,7 @@ function doReset() {
   if(!confirm('모든 데이터를 초기화하시겠어요?')) return;
   localStorage.clear();
   _FS.set('academy/data', {cfg:{adminPw:'',adminPhone:'',teachers:[]},subj:[],stu:[]}).catch(function(){});
+  _FS.set('academy/typebank', {items:[]}).catch(function(){});
   DB={cfg:{adminPw:'',adminPhone:'',teachers:[]},subj:[],stu:[]};
   toast('초기화됐어요','var(--am)');logout();
 }
@@ -5882,6 +5884,17 @@ _loadFirebase().then(function() {
   _FS.get('academy/data').then(function(doc) {
     var d = _FS.docToObj(doc);
     applyDB(d);
+    // 유형 은행 전용 문서 우선 로드 (용량 분리) + 미저장 로컬 데이터 복구
+    _FS.get('academy/typebank').then(function(tdoc){
+      var tb=_FS.docToObj(tdoc);
+      if(tb && tb.items && tb.items.length){ DB.typeBank=tb.items; }
+      else {
+        var local=[]; try{ local=JSON.parse(localStorage.getItem('ac_typeBank')||'[]'); }catch(_e){}
+        if(local.length > (DB.typeBank||[]).length){ DB.typeBank=local; }
+        if((DB.typeBank||[]).length) saveAll(); // 전용 문서로 1회 이관
+      }
+      if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
+    }).catch(function(){});
     // 데이터 로드 후 자동 로그인 시도
     tryAutoLogin();
     // 학부모·강사 메시지 → 문자상담 자동 동기화
@@ -5894,7 +5907,8 @@ _loadFirebase().then(function() {
       if (!d2) return;
       // 최근 15초 내 로컬 변경이 있으면 폴링 데이터로 덮어쓰지 않음 (방금 추가한 내용 보호)
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
-      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.typeBank=d2.typeBank||DB.typeBank; DB.withdrawn=d2.withdrawn||DB.withdrawn;
+      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
+      _FS.get('academy/typebank').then(function(tdoc){ if(_saveDirty||_saveFailed) return; var tb=_FS.docToObj(tdoc); if(tb && tb.items){ DB.typeBank=tb.items; if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){});
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
