@@ -712,6 +712,10 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
         <button class="btn sm" style="width:auto;padding:10px 16px;flex-shrink:0" onclick="saveNotifTime()">저장</button>
       </div>
     </div>
+    <div class="sec-box" style="margin-top:14px">
+      <div style="font-size:11px;color:var(--t3);font-weight:500;margin-bottom:4px">알림 종류별 켜기 / 끄기</div>
+      <div id="notif-list"></div>
+    </div>
     <button class="btn" style="margin-top:12px" onclick="doTestNotif()">📣 지금 테스트 알림 보내기</button>
     <button class="btn ghost" onclick="closeModal('ov-notif')">닫기</button>
   </div>
@@ -1271,6 +1275,7 @@ function injectNewbieBanner(){
   if(el) el.insertAdjacentHTML('afterbegin', b);
 }
 function newbieNotify(){
+  if(!notifOn('newbie')) return;
   var p=nbPending().filter(function(x){return x.o.lv==='urgent'||x.o.lv==='upcoming';});
   if(!p.length) return;
   showDirectNotif('ROUTETOP 신입생 상담', '기한 임박·초과 신입생 상담 '+p.length+'건이 있어요.');
@@ -1415,6 +1420,7 @@ function injectExtraBanner(){
   if(el) el.insertAdjacentHTML('afterbegin', b);
 }
 function extraNotify(){
+  if(!notifOn('extra')) return;
   var p=extraPending(); if(!p.length) return;
   showDirectNotif('ROUTETOP 추가 수업 알림', '특강·추가 수업 점검일 '+p.length+'건이 임박했어요.');
 }
@@ -3780,6 +3786,7 @@ function calcPeriodAvg() {
 
 // 매달 25일 평가 알림 체크
 function checkEvalReminder() {
+  if(!notifOn('eval')) return;
   if(!isAdminLevel()) return;
   var now = new Date();
   var day = now.getDate();
@@ -4111,6 +4118,7 @@ function setRiskStatus(si,ri,code){
   if(curTab==='home') renderHome();
 }
 function riskNotify(){
+  if(!notifOn('risk')) return;
   if(!isAdminLevel()) return;
   var p=riskPending();
   if(!p.length) return;
@@ -5441,6 +5449,34 @@ function checkConsultAndNotify() {
   showDirectNotif('ROUTETOP 학원관리', msg);
 }
 
+// ── 알림 종류별 켜기/끄기 관리 ──
+var NOTIF_ITEMS = [
+  {key:'risk',   icon:'⚠️', name:'위험 감지 알림',      desc:'미처리 상담 건이 쌓이면 알림'},
+  {key:'newbie', icon:'🆕', name:'신입생 상담 알림',    desc:'상담 기한 임박·초과 신입생 알림'},
+  {key:'extra',  icon:'📚', name:'추가 수업·특강 알림', desc:'지정한 점검일이 임박하면 알림'},
+  {key:'eval',   icon:'📋', name:'월말 평가 알림',      desc:'매달 25일 이후 평가 미완료 알림'}
+];
+function notifOn(key){ var p=(DB.cfg&&DB.cfg.notifPrefs)||{}; return p[key]!==false; } // 기본값: 활성화
+function toggleNotif(key){
+  if(!DB.cfg.notifPrefs) DB.cfg.notifPrefs={};
+  var cur = DB.cfg.notifPrefs[key]!==false;
+  DB.cfg.notifPrefs[key] = !cur;
+  saveAll(); renderNotifList();
+  toast(cur?'알림 해제됨':'알림 활성화됨', cur?'var(--t2)':'var(--g)');
+}
+function renderNotifList(){
+  var el=document.getElementById('notif-list'); if(!el) return;
+  var h='';
+  NOTIF_ITEMS.forEach(function(it){
+    var on=notifOn(it.key);
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--s2)">'
+      +'<div style="font-size:18px;flex-shrink:0">'+it.icon+'</div>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700;color:var(--te)">'+it.name+'</div><div style="font-size:11px;color:var(--t3);margin-top:1px">'+it.desc+'</div></div>'
+      +'<button onclick="toggleNotif(\''+it.key+'\')" title="'+(on?'해제':'활성화')+'" style="flex-shrink:0;width:46px;height:26px;border-radius:13px;border:none;cursor:pointer;position:relative;transition:background .15s;background:'+(on?'var(--g)':'var(--s3)')+'"><span style="position:absolute;top:3px;'+(on?'right:3px':'left:3px')+';width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25)"></span></button>'
+      +'</div>';
+  });
+  el.innerHTML=h;
+}
 function openNotifSettings() {
   if (!('Notification' in window)) {
     toast('이 브라우저는 알림을 지원하지 않아요', 'var(--rd)'); return;
@@ -5450,6 +5486,7 @@ function openNotifSettings() {
   if (sel) sel.value = savedHour;
   openModal('ov-notif');
   updateNotifStatus();
+  renderNotifList();
 }
 
 function updateNotifStatus() {
