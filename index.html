@@ -1942,6 +1942,18 @@ function tbClearSubject(sub){
   DB.typeBank=(DB.typeBank||[]).filter(function(e){return (e.subject||'기타')!==sub;});
   saveAll(); renderDiagnosis(); toast('['+sub+'] '+list.length+'개 삭제됨','var(--rd)');
 }
+// 특정 과목에 여러 유형 한꺼번에 붙여넣기 — 등록 과목을 해당 과목으로 고정하고 붙여넣기 영역으로 이동
+function tbBulkToSubject(sub){
+  try{ sub=decodeURIComponent(sub); }catch(err){}
+  diagBankOpen=true; renderDiagnosis();
+  setTimeout(function(){
+    var s=document.getElementById('tb-sub'); if(s) s.value=sub;
+    var b=document.getElementById('tb-bulk'); if(b) b.value='';
+    var pv=document.getElementById('tb-preview'); if(pv) pv.innerHTML='';
+    if(b){ b.scrollIntoView({behavior:'smooth', block:'center'}); b.focus(); }
+    toast('['+sub+']에 추가됩니다 · 다른 단원 유형을 붙여넣고 "정리"를 누르세요');
+  }, 70);
+}
 // 개별 유형 수정/추가
 function openTbEdit(id){
   var e=(DB.typeBank||[]).filter(function(x){return x.id===id;})[0]; if(!e) return;
@@ -2218,7 +2230,7 @@ function renderDiagnosis(){
              '<button onclick="openTbEdit(\''+e.id+'\')" style="border:none;background:none;color:var(--acc);cursor:pointer;font-size:11.5px;flex-shrink:0">수정</button>'+
              '<button onclick="tbDel(\''+e.id+'\')" style="border:none;background:none;color:var(--rd);cursor:pointer;font-weight:800;font-size:14px;flex-shrink:0">✕</button></div>';
         });
-        h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px"><button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600">+ 이 과목 끝에 유형 추가</button><button onclick="tbClearSubject(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--s2);color:var(--rd);border:1px solid var(--s3);border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600">이 과목 전체삭제</button></div>';
+        h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px"><button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600">+ 이 과목 끝에 유형 추가</button><button onclick="tbBulkToSubject(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600">📋 여러 유형 붙여넣기</button><button onclick="tbClearSubject(\''+encodeURIComponent(sub)+'\')" style="font-size:11px;background:var(--s2);color:var(--rd);border:1px solid var(--s3);border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600">이 과목 전체삭제</button></div>';
       });
     }
     h+='</div>';
