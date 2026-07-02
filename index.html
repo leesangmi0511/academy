@@ -1990,8 +1990,92 @@ function examAnalyze(){
     else { h+='<span style="font-size:11px;color:var(--t3)">등록된 강의 없음 — 유형은행에 추가하면 자동 추천됩니다</span>'; }
     h+='</div></div>';
   }); }
+  if(keys.length){
+    examLastAnalysis={ name:((document.getElementById('exam-name')||{}).value||'').trim(), weak: keys.map(function(t){ return {type:t, count:agg[t].count, nos:agg[t].nos}; }) };
+    h+='<div style="margin-top:14px;border-top:2px solid var(--s2);padding-top:12px"><div style="font-size:13.5px;font-weight:800;color:var(--te);margin-bottom:4px">📤 학생·학부모에게 공유</div><div style="font-size:11.5px;color:var(--t2);margin-bottom:8px">게시할 학생·반을 체크한 뒤 아래 버튼을 누르면, 관리자가 게시한 분석을 학생·학부모 앱에서 볼 수 있습니다. 체크 상태는 저장됩니다.</div><div id="exam-share-list"></div><button onclick="examPublish()" style="width:100%;margin-top:8px;background:var(--acc);color:#fff;border:none;border-radius:10px;padding:11px;font-size:13.5px;font-weight:800;cursor:pointer">📢 선택한 학생·학부모 앱에 게시</button><div id="exam-share-out"></div></div>';
+  } else { examLastAnalysis=null; }
   h+='</div>';
   el.innerHTML=h;
+  examRenderShare();
+}
+
+// ── 시험지 분석 결과 공유 (학생·학부모) ──
+var examLastAnalysis=null; // {name, weak:[{type,count,nos}]}
+function examShareGet(){ if(!DB.examShare) DB.examShare={stu:{}}; if(!DB.examShare.stu) DB.examShare.stu={}; return DB.examShare; }
+function examStuOn(name){ return examShareGet().stu[name]===true; }
+function examClassStudents(cls){ return (DB.stu||[]).filter(function(x){ return (x.class||'반 미지정')===cls; }); }
+function examClassAllOn(cls){ var l=examClassStudents(cls); return l.length>0 && l.every(function(x){ return examStuOn(x.name); }); }
+function examToggleStu(name){ try{name=decodeURIComponent(name);}catch(e){} var s=examShareGet(); if(s.stu[name]) delete s.stu[name]; else s.stu[name]=true; saveAll(); examRenderShare(); }
+function examToggleClass(cls){ try{cls=decodeURIComponent(cls);}catch(e){} var s=examShareGet(); var l=examClassStudents(cls); var allOn=examClassAllOn(cls); l.forEach(function(x){ if(allOn) delete s.stu[x.name]; else s.stu[x.name]=true; }); saveAll(); examRenderShare(); }
+function examRenderShare(){
+  var el=document.getElementById('exam-share-list'); if(!el) return;
+  var stu=(DB.stu||[]);
+  if(!stu.length){ el.innerHTML='<div style="font-size:12px;color:var(--t3)">등록된 학생이 없어요. 학생을 먼저 등록하세요.</div>'; return; }
+  var groups={}; stu.forEach(function(x){ var c=x.class||'반 미지정'; (groups[c]=groups[c]||[]).push(x); });
+  var total=0, h='';
+  Object.keys(groups).forEach(function(c){
+    var list=groups[c], allOn=examClassAllOn(c), onCount=list.filter(function(x){return examStuOn(x.name);}).length; total+=onCount;
+    h+='<div style="border:1px solid var(--s3);border-radius:10px;margin-bottom:8px;overflow:hidden">';
+    h+='<label style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--s2);cursor:pointer;font-weight:700;font-size:12.5px"><input type="checkbox" '+(allOn?'checked':'')+' onchange="examToggleClass(\''+encodeURIComponent(c)+'\')" style="width:16px;height:16px;accent-color:var(--acc)"><span style="flex:1;min-width:0">'+dEsc(c)+'</span><span style="font-size:11px;color:var(--t3);font-weight:600;flex-shrink:0">보낼 대상 '+onCount+'/'+list.length+'</span></label>';
+    h+='<div style="padding:5px 11px 8px">';
+    list.forEach(function(x){
+      h+='<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:12.5px"><input type="checkbox" '+(examStuOn(x.name)?'checked':'')+' onchange="examToggleStu(\''+encodeURIComponent(x.name)+'\')" style="width:15px;height:15px;accent-color:var(--acc)"><span>'+dEsc(x.name)+'</span></label>';
+    });
+    h+='</div></div>';
+  });
+  el.innerHTML='<div style="font-size:11.5px;color:var(--t2);margin:0 0 8px">보낼 학생·반을 체크하세요 (반 체크=반 전체) · 현재 <b>'+total+'명</b> 선택 · 선택은 저장됩니다</div>'+h;
+}
+function examPublish(){
+  var a=examLastAnalysis;
+  if(!a||!a.weak||!a.weak.length){ toast('먼저 오답 분석을 실행해 주세요','var(--rd)'); return; }
+  var s=examShareGet();
+  var names=Object.keys(s.stu).filter(function(n){ return s.stu[n]; });
+  if(!names.length){ toast('게시할 학생·반을 체크해 주세요','var(--rd)'); return; }
+  var out=document.getElementById('exam-share-out');
+  if(out) out.innerHTML='<div style="margin-top:10px;font-size:12px;color:var(--acc);font-weight:600">학생·학부모 앱에 게시 중…</div>';
+  var lecs=[]; a.weak.forEach(function(w){ (diagMatch(w.type)||[]).forEach(function(e){ if(e.title && lecs.indexOf(e.title)<0) lecs.push(e.title); }); });
+  var entry={ examName:(a.name||'시험'), date:today(), weak:a.weak.map(function(w){ return {type:w.type, count:w.count}; }), lectures:lecs.slice(0,8) };
+  fetchHwMain(function(err, doc){
+    if(err || !doc || !doc.fields){ if(out) out.innerHTML='<div style="margin-top:10px;font-size:12px;color:var(--rd);font-weight:600">과제앱 연결 실패 — 잠시 후 다시 시도하세요.</div>'; return; }
+    var existing=doc.fields;
+    var shared = existing.examShared ? (_FS._fromFS(existing.examShared)||{}) : {};
+    names.forEach(function(n){ var arr=(shared[n]&&shared[n].length)?shared[n]:[]; arr.unshift(entry); shared[n]=arr.slice(0,10); });
+    var body={ fields:{} };
+    Object.keys(existing).forEach(function(k){ body.fields[k]=existing[k]; }); // 기존 필드 모두 보존
+    body.fields.examShared = _FS._toFS(shared);
+    body.fields.lastUpdated = { stringValue:new Date().toISOString() };
+    fetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d && d.name){ if(out) out.innerHTML='<div style="margin-top:10px;padding:10px 12px;background:var(--gl);border-radius:9px;font-size:12.5px;color:var(--g);font-weight:700">✓ '+names.length+'명에게 게시됐어요. 학생·학부모 앱에서 확인할 수 있습니다.</div>'; toast('✓ '+names.length+'명 게시 완료','var(--g)'); }
+        else { if(out) out.innerHTML='<div style="margin-top:10px;font-size:12px;color:var(--rd);font-weight:600">게시 실패: '+dEsc(JSON.stringify(d).slice(0,120))+'</div>'; }
+      })
+      .catch(function(){ if(out) out.innerHTML='<div style="margin-top:10px;font-size:12px;color:var(--rd);font-weight:600">게시 실패 — 네트워크를 확인하세요.</div>'; });
+  });
+}
+function examMakeMessages(){
+  var a=examLastAnalysis;
+  if(!a || !a.weak || !a.weak.length){ toast('먼저 오답 분석을 실행해 주세요','var(--rd)'); return; }
+  var s=examShareGet();
+  var names=Object.keys(s.stu).filter(function(n){ return s.stu[n]; });
+  if(!names.length){ toast('보낼 학생·반을 체크해 주세요','var(--rd)'); return; }
+  var lines=a.weak.map(function(w){ return '· '+w.type+' (오답 '+w.count+'문항)'; }).join('\n');
+  var lecs=[]; a.weak.forEach(function(w){ (diagMatch(w.type)||[]).forEach(function(e){ if(e.title && lecs.indexOf(e.title)<0) lecs.push(e.title); }); });
+  var lecLine=lecs.length?('\n\n추천 보충 강의: '+lecs.slice(0,6).join(', ')):'';
+  var exam=a.name||'이번 시험';
+  var msgs=names.map(function(n){
+    return '[루트탑에듀] '+n+' 학생 · '+exam+' 분석 안내\n\n이번 시험 분석 결과, 아래 유형에서 보강이 필요해요.\n'+lines+lecLine+'\n\n가정에서도 관심과 응원 부탁드립니다. 감사합니다.';
+  });
+  examShowMsg(msgs.join('\n\n──────────\n\n'), names.length);
+}
+function examShowMsg(text, count){
+  var el=document.getElementById('exam-share-out'); if(!el) return;
+  el.innerHTML='<div style="margin-top:10px"><div style="font-size:11.5px;color:var(--t2);margin-bottom:5px">'+count+'명 메시지 준비됨 · 복사해서 카톡·문자로 보내세요</div><textarea id="exam-share-text" readonly style="width:100%;height:150px;border:1px solid var(--s3);border-radius:9px;padding:10px;font-size:12px;font-family:inherit;background:var(--s1);box-sizing:border-box">'+dEsc(text)+'</textarea><button onclick="examCopyMsg()" style="width:100%;margin-top:7px;background:var(--g);color:#fff;border:none;border-radius:9px;padding:10px;font-weight:800;cursor:pointer">📋 메시지 복사</button></div>';
+}
+function examCopyMsg(){
+  var t=(document.getElementById('exam-share-text')||{}).value||''; if(!t) return;
+  if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(function(){ toast('📋 복사됐어요 · 카톡·문자에 붙여넣으세요'); }).catch(function(){ fallbackCopyText(t); }); }
+  else fallbackCopyText(t);
 }
 
 // 파일 처리
@@ -2404,6 +2488,7 @@ function renderDiagnosis(){
   if(examOpen){
     h+='<div style="border:1px solid var(--s3);border-top:none;border-radius:0 0 12px 12px;background:var(--s1);padding:15px;margin-top:-4px">';
     h+='<div style="font-size:12px;color:var(--t2);margin-bottom:10px;line-height:1.65">시험지를 올리면 문항을 추출해 세부유형을 <b>추천</b>합니다(반자동). 스캔본처럼 추출이 안 되면 <b>문항 수</b>만 입력해 직접 지정하세요. 오답을 표시하고 <b>분석</b>하면 취약 세부유형과 보충 강의를 뽑아줍니다.</div>';
+    h+='<input id="exam-name" placeholder="시험명 (예: 3월 모의고사·1학기 중간)" style="width:100%;margin-bottom:8px;border:1px solid var(--s3);border-radius:9px;padding:8px 11px;font-size:12.5px;font-family:inherit;box-sizing:border-box">';
     h+='<div ondragover="event.preventDefault();this.style.borderColor=\'var(--acc)\';" ondragleave="this.style.borderColor=\'var(--s3)\';" ondrop="event.preventDefault();this.style.borderColor=\'var(--s3)\';if(event.dataTransfer&&event.dataTransfer.files&&event.dataTransfer.files.length)examFiles(event.dataTransfer.files);" onclick="document.getElementById(\'exam-file\').click()" style="border:2px dashed var(--s3);border-radius:12px;background:var(--s1);cursor:pointer;padding:16px;text-align:center;transition:border-color .15s"><div style="font-weight:700;color:var(--acc);font-size:13.5px">📄 시험지 올리기 (PDF·zip)</div><div style="font-size:11.5px;color:var(--t2);margin-top:3px">클릭 또는 끌어다 놓기</div><input type="file" id="exam-file" accept="application/pdf,.zip,application/zip" multiple style="display:none" onchange="examFiles(this.files)"></div>';
     h+='<div style="display:flex;gap:6px;align-items:center;margin-top:8px"><input id="exam-count" type="number" min="1" placeholder="문항 수 직접 입력 (스캔본용)" style="flex:1;min-width:0;border:1px solid var(--s3);border-radius:8px;padding:8px 10px;font-size:12px;font-family:inherit"><button onclick="examBuildRows()" style="flex-shrink:0;background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">문항 생성</button></div>';
     h+='<div id="exam-status" style="display:none;margin-top:9px;padding:9px 12px;border-radius:8px;background:var(--s2);font-size:12px;font-weight:600;color:var(--acc)"></div>';
