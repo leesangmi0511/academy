@@ -1104,10 +1104,10 @@ function saveAll() {
       .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
       .then(function(){ _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = _ver; _lastLocalSave = Date.now(); })
       .catch(function(e) {
-        _saveFailed = true; console.warn('FB save error:', e);
+        _saveFailed = true; window._lastSaveErr = (e && (e.message||e.status||e.code)) ? ((e.status?('HTTP '+e.status+' '):'')+(e.message||e.code||'')) : String(e); console.warn('FB save error:', e, window._lastSaveErr);
         if(!_fbFailNotified && typeof toast==='function'){
           _fbFailNotified = true;
-          toast('클라우드 저장 지연 — 기기에 보관됨, 재시도 중','var(--am)');
+          toast('클라우드 저장 지연 — 기기에 보관됨 ('+String(window._lastSaveErr).slice(0,60)+')','var(--am)');
           setTimeout(function(){ _fbFailNotified=false; }, 15000);
         }
         if(_saveRetries < 4){ _saveRetries++; clearTimeout(saveTimer); saveTimer = setTimeout(function(){ saveAll(); }, 6000); } // 자동 재시도(최대 4회)
@@ -2324,6 +2324,36 @@ var tbInsertAfterId=null; // 대량 삽입 위치(특정 유형 id) — null이�
 var tbDepth={};           // 과목별 표시 깊이(레벨 rank) — 미설정이면 접힘(과목명만)
 var tbReorderMode=false;
 function tbToggleReorder(){ tbReorderMode=!tbReorderMode; renderDiagnosis(); }
+function tbExport(){
+  try{
+    var data=JSON.stringify({v:1, ts:Date.now(), typeBank:DB.typeBank||[], subj:DB.subj||[]});
+    var blob=new Blob([data],{type:'application/json'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a'); a.href=url; a.download='routetop-유형백업-'+today()+'.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); },2000);
+    toast('📤 백업 파일 저장됨 · 유형 '+((DB.typeBank||[]).length)+'개');
+  }catch(e){ toast('내보내기 실패: '+((e&&e.message)||e),'var(--rd)'); }
+}
+function tbImportFile(input){
+  var f=input.files&&input.files[0]; if(!f){ return; }
+  var r=new FileReader();
+  r.onload=function(){
+    try{
+      var d=JSON.parse(r.result);
+      var tb=Array.isArray(d)?d:(d.typeBank||[]);
+      if(!Array.isArray(tb)||!tb.length) throw new Error('백업에 유형 데이터가 없어요');
+      if(!confirm('현재 유형 '+((DB.typeBank||[]).length)+'개를 백업의 '+tb.length+'개로 교체할까요?')){ input.value=''; return; }
+      DB.typeBank=tb;
+      if(d && d.subj && Array.isArray(d.subj) && d.subj.length){ DB.subj=d.subj; }
+      saveAll(); renderDiagnosis();
+      toast('📥 '+tb.length+'개 가져왔어요 (기기에 저장됨)');
+    }catch(e){ toast('가져오기 실패: '+((e&&e.message)||e),'var(--rd)'); }
+    input.value='';
+  };
+  r.onerror=function(){ toast('파일 읽기 실패','var(--rd)'); input.value=''; };
+  r.readAsText(f);
+}
 function tbToggleDepth(sub){ try{sub=decodeURIComponent(sub);}catch(e){} tbDepth[sub] = (tbDepth[sub]==null) ? 7 : null; renderDiagnosis(); }
 function tbSetDepth(sub,rank){ try{sub=decodeURIComponent(sub);}catch(e){} if(tbDepth[sub]===rank) tbDepth[sub]=null; else tbDepth[sub]=rank; renderDiagnosis(); }
 function tbSubjectKeys(){ var gs={}; (DB.typeBank||[]).forEach(function(e){ gs[e.subject||'기타']=1; }); var keys=Object.keys(gs); var order=(DB.cfg&&DB.cfg.tbSubjectOrder)||[]; return keys.sort(function(a,b){ var ia=order.indexOf(a),ib=order.indexOf(b); if(ia<0&&ib<0)return 0; if(ia<0)return 1; if(ib<0)return -1; return ia-ib; }); }
@@ -2563,7 +2593,7 @@ function renderDiagnosis(){
       var groups={}; bank.forEach(function(e){ (groups[e.subject||'기타']=groups[e.subject||'기타']||[]).push(e); });
       var _subOrder=(DB.cfg&&DB.cfg.tbSubjectOrder)||[];
       var subKeys=Object.keys(groups).sort(function(a,b){ var ia=_subOrder.indexOf(a),ib=_subOrder.indexOf(b); if(ia<0&&ib<0)return 0; if(ia<0)return 1; if(ib<0)return -1; return ia-ib; });
-      h+='<div style="display:flex;justify-content:flex-end;margin:4px 0 2px"><button onclick="tbToggleReorder()" style="font-size:11px;background:'+(tbReorderMode?'var(--acc)':'var(--s2)')+';color:'+(tbReorderMode?'#fff':'var(--acc)')+';border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">'+(tbReorderMode?'✓ 순서 편집 완료':'↕ 과목 순서 편집')+'</button></div>';
+      h+='<div style="display:flex;justify-content:space-between;gap:6px;margin:4px 0 2px;flex-wrap:wrap"><div style="display:flex;gap:6px"><button onclick="tbExport()" title="유형을 파일로 백업" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📤 백업</button><button onclick="document.getElementById(\'tb-import-file\').click()" title="백업 파일에서 가져오기" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📥 복원</button></div><button onclick="tbToggleReorder()" style="font-size:11px;background:'+(tbReorderMode?'var(--acc)':'var(--s2)')+';color:'+(tbReorderMode?'#fff':'var(--acc)')+';border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">'+(tbReorderMode?'✓ 순서 편집 완료':'↕ 과목 순서 편집')+'</button></div><input type="file" id="tb-import-file" accept=".json,application/json" style="display:none" onchange="tbImportFile(this)">';
       var _chipLv=[['대단원',2],['중단원',3],['소단원',4],['유형',5],['주제유형',6],['세부유형',7]];
       subKeys.forEach(function(sub,_si){
         var g=groups[sub];
