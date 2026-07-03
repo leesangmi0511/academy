@@ -2378,13 +2378,13 @@ function tbParse(text){
   var raw=(text||'').split('\n'), blocks=[], cur=[];
   raw.forEach(function(l){ if(l.trim()===''){ if(cur.length){blocks.push(cur);cur=[];} } else cur.push(l.replace(/\s+$/,'')); });
   if(cur.length) blocks.push(cur);
-  function badge(b){ var j=b.join('\n'); var t=j.match(/주제유형\s*-\s*(\d+)\s*개/); var d=j.match(/세부유형\s*-\s*(\d+)\s*개/); return {has:!!t, t:t?+t[1]:null, d:d?+d[1]:0}; } // 주제유형 배지만 있어도 유형으로 인식(세부유형 개수는 실제로 셈)
+  function badge(b){ var j=b.join('\n'); var t=j.match(/주제유형\s*[-:]?\s*(\d+)/); var d=j.match(/세부유형\s*[-:]?\s*(\d+)/); return {has:/주제유형/.test(j), t:t?+t[1]:null, d:d?+d[1]:0}; } // '주제유형' 단어만 있어도 유형으로 인식(개수는 실제로 셈)
   var items=[], mode='top', gT=0,gD=0, expectTopic=true, ci=-1, cidx=-1;
   blocks.forEach(function(b, bidx){
     var bi=badge(b);
     if(bi.has){
       cidx++;
-      items.push({text:tbStripBadge(b[0])||b[0], kind:'container', eT:bi.t, eD:bi.d, cidx:cidx, gT:0, gD:0});
+      items.push({text:tbStripBadge(b[0])||b[0], kind:'container', eT:(bi.t!=null?bi.t:9999), eD:bi.d, cidx:cidx, gT:0, gD:0});
       ci=items.length-1; mode='in'; gT=0; gD=0; expectTopic=true;
       return;
     }
@@ -2425,7 +2425,7 @@ function tbParse(text){
         for(var p=i;p<j;p++){ items[p].level = (p<=dup)?'대단원':(p===dup+1)?'중단원':'소단원'; }
       } else {
         // 기본: 유형 바로 위=소단원, 위로 갈수록 중단원·대단원
-        for(var p=i;p<j;p++){ var dist=(j-1)-p; items[p].level = dist===0?'소단원':dist===1?'중단원':dist===2?'대단원':'상위단원'; }
+        for(var p=i;p<j;p++){ var dist=(j-1)-p; items[p].level = dist===0?'소단원':dist===1?'중단원':(p===i?'대단원':'중단원'); } // 맨 위 하나만 대단원, 나머지 위쪽은 중단원(상위단원·대단원 남발 안 함)
       }
       i=j;
     } else i++;
