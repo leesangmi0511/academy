@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>업데이트 중…</title>
+</head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Malgun Gothic',sans-serif;padding:48px 20px;text-align:center;color:#222;background:#fff">
+  <div style="font-size:40px;margin-bottom:12px">🔄</div>
+  <h2 style="margin:0 0 8px;font-size:19px">앱을 최신으로 업데이트하는 중…</h2>
+  <p id="msg" style="color:#666;font-size:14px;line-height:1.6">잠시만 기다려 주세요. 자동으로 최신 화면으로 이동합니다.</p>
+  <p style="color:#aaa;font-size:12px;margin-top:24px">이동되지 않으면 아래를 눌러주세요.</p>
+  <a id="go" href="#" style="display:inline-block;margin-top:6px;background:#2563eb;color:#fff;text-decoration:none;border-radius:10px;padding:11px 20px;font-weight:700;font-size:14px">앱으로 이동</a>
+<script>
+(function(){
+  var msg = document.getElementById('msg');
+  var target = '/academy/?v=' + Date.now();
+  document.getElementById('go').setAttribute('href', target);
+  var went = false;
+  function go(){ if(went) return; went = true; location.replace(target); }
+  var tasks = [];
+  try {
+    if ('serviceWorker' in navigator) {
+      tasks.push(navigator.serviceWorker.getRegistrations().then(function(rs){
+        return Promise.all(rs.map(function(r){ return r.unregister(); }));
+      }).catch(function(){}));
+    }
+    if (window.caches && caches.keys) {
+      tasks.push(caches.keys().then(function(ks){
+        return Promise.all(ks.map(function(k){ return caches.delete(k); }));
+      }).catch(function(){}));
+    }
+  } catch(e) {}
+  Promise.all(tasks).then(function(){
+    if (msg) msg.textContent = '완료! 최신 화면으로 이동합니다…';
+    setTimeout(go, 700);
+  }).catch(function(){ setTimeout(go, 700); });
+  setTimeout(go, 4000); // 안전장치: 무슨 일이 있어도 이동
+})();
+</script>
+</body>
+</html>
