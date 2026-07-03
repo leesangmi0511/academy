@@ -1082,9 +1082,10 @@ function _tbChunkSave(){
   if(!chunks.length) chunks.push([]);
   return Promise.all(chunks.map(function(c,i){ return _FS.set('academy/tb'+i, {items:c}); })).then(function(){ return chunks.length; });
 }
+function _tbGetRetry(path, tries){ return _FS.get(path).catch(function(e){ if(tries>0) return new Promise(function(res){ setTimeout(res,400); }).then(function(){ return _tbGetRetry(path, tries-1); }); throw e; }); }
 function _tbChunkLoad(n){
   n=n||0; if(n<=0) return Promise.resolve(null);
-  var gets=[]; for(var i=0;i<n;i++) gets.push(_FS.get('academy/tb'+i));
+  var gets=[]; for(var i=0;i<n;i++) gets.push(_tbGetRetry('academy/tb'+i, 3));
   return Promise.all(gets).then(function(docs){ var all=[]; docs.forEach(function(doc){ var o=_FS.docToObj(doc); if(o && o.items) all=all.concat(_tbExpand(o.items)); }); return all; });
 }
 function saveAll() {
@@ -1098,6 +1099,7 @@ function saveAll() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
     var _ver = Date.now();
+    try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
     _tbChunkSave()
       .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
       .then(function(){ _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = _ver; _lastLocalSave = Date.now(); })
@@ -2244,9 +2246,10 @@ function tbSearchGo(dir){
   if(!matches.length){ tbSearchIdx=-1; if(info) info.textContent='결과 없음'; toast('"'+q+'" 검색 결과 없음'); return; }
   tbSearchIdx=(tbSearchIdx+dir+matches.length)%matches.length;
   var e=matches[tbSearchIdx];
-  tbDepth[e.subject||'기타']=7; renderDiagnosis(); // 해당 과목만 펼쳐서 이동 (재렌더)
+  var existing=document.getElementById('tbrow-'+e.id);
+  if(!existing){ tbDepth[e.subject||'기타']=7; renderDiagnosis(); var si=document.getElementById('tb-search'); if(si) si.value=q; } // 접힌 과목일 때만 재렌더 + 검색어 복원
   var inf=document.getElementById('tb-search-info'); if(inf) inf.textContent=(tbSearchIdx+1)+' / '+matches.length;
-  setTimeout(function(){ var el=document.getElementById('tbrow-'+e.id); if(el){ el.classList.add('tb-hit'); el.style.outline='2px solid var(--acc)'; el.style.background='var(--acc-l)'; el.scrollIntoView({behavior:'smooth', block:'center'}); } }, 40);
+  setTimeout(function(){ var el=document.getElementById('tbrow-'+e.id); if(el){ el.classList.add('tb-hit'); el.style.outline='2px solid var(--acc)'; el.style.background='var(--acc-l)'; el.scrollIntoView({behavior:'smooth', block:'center'}); } }, existing?0:40);
 }
 function tbSearchRun(){ tbSearchIdx=-1; tbSearchQ=''; tbSearchGo(1); }
 function tbGotoRegister(){
@@ -5913,12 +5916,13 @@ _loadFirebase().then(function() {
     var _nch=(d && d.tbChunks) ? d.tbChunks : 0;
     (_nch>0 ? _tbChunkLoad(_nch) : _FS.get('academy/typebank').then(function(td){ var o=_FS.docToObj(td); return (o&&o.items)?o.items:null; }))
       .then(function(items){
-        _tbLoadedVer = (d && d.tbVer) || 0;
+        var srvVer = (d && d.tbVer) || 0; _tbLoadedVer = srvVer;
         var srvLen = items?items.length:0;
-        if(srvLen){ DB.typeBank=items; }
+        var locVer=0; try{ locVer=parseInt(localStorage.getItem('ac_tbVer')||'0',10)||0; }catch(_e){}
         var local=[]; try{ local=JSON.parse(localStorage.getItem('ac_typeBank')||'[]'); }catch(_e){}
-        if(local.length > (DB.typeBank||[]).length){ DB.typeBank=local; }
-        if((DB.typeBank||[]).length && (!_nch || local.length > srvLen)) saveAll(); // 조각으로 이관/복구
+        if(srvLen){ DB.typeBank=items; }                                    // 서버 우선(기기 간 동기화)
+        if(local.length && (locVer>srvVer || !srvLen)){ DB.typeBank=local; } // 로컬이 더 최신이거나 서버가 비었을 때만 로컬
+        if((DB.typeBank||[]).length && (locVer>srvVer || !_nch)) saveAll();  // 미저장 최신분/조각 이관 시에만 재저장
         if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
       }).catch(function(){});
     // 데이터 로드 후 자동 로그인 시도
