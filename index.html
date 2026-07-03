@@ -2378,7 +2378,7 @@ function tbParse(text){
   var raw=(text||'').split('\n'), blocks=[], cur=[];
   raw.forEach(function(l){ if(l.trim()===''){ if(cur.length){blocks.push(cur);cur=[];} } else cur.push(l.replace(/\s+$/,'')); });
   if(cur.length) blocks.push(cur);
-  function badge(b){ var j=b.join('\n'); var t=j.match(/주제유형\s*-\s*(\d+)\s*개/); var d=j.match(/세부유형\s*-\s*(\d+)\s*개/); return {has:!!(t&&d), t:t?+t[1]:null, d:d?+d[1]:null}; }
+  function badge(b){ var j=b.join('\n'); var t=j.match(/주제유형\s*-\s*(\d+)\s*개/); var d=j.match(/세부유형\s*-\s*(\d+)\s*개/); return {has:!!t, t:t?+t[1]:null, d:d?+d[1]:0}; } // 주제유형 배지만 있어도 유형으로 인식(세부유형 개수는 실제로 셈)
   var items=[], mode='top', gT=0,gD=0, expectTopic=true, ci=-1, cidx=-1;
   blocks.forEach(function(b, bidx){
     var bi=badge(b);
