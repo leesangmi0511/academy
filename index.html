@@ -2389,10 +2389,12 @@ function tbParse(text){
       return;
     }
     if(mode==='in'){
-      // 경계는 개수가 아니라 구조로 판단: 다음 블록이 배지면 지금 1줄 블록은 주제가 아니라 다음 유형 앞의 단원
+      // 경계 판정 + 자체 보정: 주제유형이 선언 개수보다 많아도, 다음이 세부유형(여러 줄)이면 추가 주제유형으로 계속 넣음
       var next=blocks[bidx+1];
       var nextIsBadge=!!(next && badge(next).has);
-      if(expectTopic && ((items[ci] && gT>=items[ci].eT) || (b.length===1 && nextIsBadge))){
+      var reachedCount=!!(items[ci] && gT>=items[ci].eT);
+      var nextIsDetails=!!(next && next.length>1 && !nextIsBadge); // 여러 줄 & 배지 아님 = 세부유형 뭉치
+      if(expectTopic && ((b.length===1 && nextIsBadge) || (reachedCount && !nextIsDetails))){
         mode='top';   // 유형(컨테이너) 종료 → 아래에서 단원으로 처리
       } else {
         if(expectTopic){
