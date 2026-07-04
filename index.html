@@ -1080,7 +1080,9 @@ function _tbChunkSave(){
   var items=DB.typeBank||[], CH=700, chunks=[];
   for(var i=0;i<items.length;i+=CH) chunks.push(_tbCompact(items.slice(i,i+CH)));
   if(!chunks.length) chunks.push([]);
-  return Promise.all(chunks.map(function(c,i){ return _FS.set('academy/tb'+i, {items:c}); })).then(function(){ return chunks.length; });
+  var p=Promise.resolve();
+  chunks.forEach(function(c,idx){ p=p.then(function(){ return _FS.set('academy/tb'+idx, {items:c}); }); }); // 순차 저장(동시 저장 실패로 인한 부분 저장 방지)
+  return p.then(function(){ return chunks.length; });
 }
 function _tbGetRetry(path, tries){ return _FS.get(path).catch(function(e){ if(tries>0) return new Promise(function(res){ setTimeout(res,400); }).then(function(){ return _tbGetRetry(path, tries-1); }); throw e; }); }
 function _tbChunkLoad(n){
@@ -6012,9 +6014,10 @@ _loadFirebase().then(function() {
         var srvLen = items?items.length:0;
         var locVer=0; try{ locVer=parseInt(localStorage.getItem('ac_tbVer')||'0',10)||0; }catch(_e){}
         var local=[]; try{ local=JSON.parse(localStorage.getItem('ac_typeBank')||'[]'); }catch(_e){}
-        if(srvLen){ DB.typeBank=items; }                                    // 서버 우선(기기 간 동기화)
-        if(local.length && (locVer>srvVer || !srvLen)){ DB.typeBank=local; } // 로컬이 더 최신이거나 서버가 비었을 때만 로컬
-        if((DB.typeBank||[]).length && (locVer>srvVer || !_nch)) saveAll();  // 미저장 최신분/조각 이관 시에만 재저장
+        if(srvLen){ DB.typeBank=items; }                                    // 서버 우선
+        // 기기에 더 완전한(더 많은) 데이터거나 더 최신이면 그걸 사용 → 부분 저장 복구
+        if(local.length && (local.length > srvLen || locVer > srvVer || !srvLen)){ DB.typeBank=local; }
+        if((DB.typeBank||[]).length && ((DB.typeBank.length > srvLen) || locVer > srvVer || !_nch)) saveAll(); // 서버가 덜 저장됐으면 다시 완전 저장
         if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
       }).catch(function(){});
     // 데이터 로드 후 자동 로그인 시도
