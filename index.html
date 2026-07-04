@@ -1068,6 +1068,7 @@ var MOOD_E = {매우좋음:'😄',좋음:'🙂',보통:'😐',관심필요:'😟
 // ═══════════════════════════════════════
 var _lastLocalSave = 0;  // 마지막 로컬 변경 시각
 var _saveDirty = false;  // 저장 대기/진행 중 → 폴링 덮어쓰기 방지
+var _saving = false;     // 실제 클라우드 저장 진행 중 → 동시 저장(조각개수 덮어쓰기) 방지
 var _saveFailed = false; // 마지막 클라우드 저장 실패 여부
 var _fbFailNotified = false;
 var _saveRetries = 0;
@@ -1101,7 +1102,9 @@ function saveAll() {
   _lastLocalSave = Date.now();  // 변경 시각 기록 → 폴링 덮어쓰기 방지
   _saveDirty = true;            // 저장 대기 중 → 폴링이 옛 데이터로 덮어쓰지 않도록
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(function() {
+  saveTimer = setTimeout(function doSave() {
+    if(_saving){ clearTimeout(saveTimer); saveTimer = setTimeout(doSave, 500); return; } // 이미 저장 중이면 뒤로 미룸 → 동시 저장으로 조각 개수가 옛 값으로 덮어써지는 것 방지
+    _saving = true;
     // 무거운 로컬 저장(수만 개 직렬화)을 debounce 안으로 → 등록/편집 클릭이 즉시 반응
     try{ localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg)); }catch(_e){}
     try{ localStorage.setItem('ac_subj', JSON.stringify(DB.subj)); }catch(_e){}
@@ -1112,9 +1115,9 @@ function saveAll() {
     try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
     _tbChunkSave()
       .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
-      .then(function(){ _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = _ver; _lastLocalSave = Date.now(); })
+      .then(function(){ _saving = false; _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = _ver; _lastLocalSave = Date.now(); })
       .catch(function(e) {
-        _saveFailed = true; window._lastSaveErr = (e && (e.message||e.status||e.code)) ? ((e.status?('HTTP '+e.status+' '):'')+(e.message||e.code||'')) : String(e); console.warn('FB save error:', e, window._lastSaveErr);
+        _saving = false; _saveFailed = true; window._lastSaveErr = (e && (e.message||e.status||e.code)) ? ((e.status?('HTTP '+e.status+' '):'')+(e.message||e.code||'')) : String(e); console.warn('FB save error:', e, window._lastSaveErr);
         if(!_fbFailNotified && typeof toast==='function'){
           _fbFailNotified = true;
           toast('클라우드 저장 지연 — 기기에 보관됨 ('+String(window._lastSaveErr).slice(0,60)+')','var(--am)');
