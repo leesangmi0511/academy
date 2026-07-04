@@ -2567,10 +2567,14 @@ function tbRegisterChecked(){
   var cks=document.querySelectorAll('#tb-preview .tbck:checked');
   var added=0, dup=0, newRecs=[];
   if(!DB.typeBank) DB.typeBank=[];
+  var seen={}; // 빠른 중복 검사 색인(한 번만 생성) — 대량 등록 무반응 방지
+  for(var _si=0; _si<DB.typeBank.length; _si++){ var _e=DB.typeBank[_si]; seen[(_e.subject||'')+'\u0001'+(_e.type||'')+'\u0001'+(_e.level||'')]=1; }
   Array.prototype.forEach.call(cks,function(ck){
     var c=tbCands[parseInt(ck.getAttribute('data-i'))]; if(!c) return;
     var ty=(c.text||'').trim(); if(!ty) return;
-    if(DB.typeBank.some(function(e){return e.subject===defSub && e.type===ty && (e.level||'')===(c.level||'');}) || newRecs.some(function(r){return r.type===ty && (r.level||'')===(c.level||'');})){ dup++; return; }
+    var key=defSub+'\u0001'+ty+'\u0001'+(c.level||'');
+    if(seen[key]){ dup++; return; }
+    seen[key]=1;
     newRecs.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6)+added, subject:defSub, type:ty, title:ty, url:'', level:(c.level||''), path:(c.path||'') });
     added++;
   });
