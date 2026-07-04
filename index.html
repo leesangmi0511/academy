@@ -2584,7 +2584,7 @@ function tbRegisterChecked(){
     var c=tbCands[parseInt(ck.getAttribute('data-i'))]; if(!c) return;
     var ty=(c.text||'').trim(); if(!ty) return;
     var key=defSub+'\u0001'+ty+'\u0001'+(c.level||'');
-    if(seen[key]){ dup++; return; }
+    if(seen[key]){ dup++; } // 중복이어도 건너뛰지 않고 등록 (개수만 집계 → 목록에서 '중복' 표시)
     seen[key]=1;
     newRecs.push({ id:'tb'+Date.now()+Math.random().toString(36).slice(2,6)+added, subject:defSub, type:ty, title:ty, url:'', level:(c.level||''), path:(c.path||'') });
     added++;
@@ -2597,7 +2597,7 @@ function tbRegisterChecked(){
   var where=(pos>=0)?'지정 위치 아래':'맨 끝';
   tbInsertAfterId=null;
   saveAll();
-  toast(added+'개를 '+where+'에 등록했어요'+(dup?(' (중복 '+dup+'개 제외)'):''),'var(--g)');
+  toast(added+'개를 '+where+'에 등록했어요'+(dup?(' · 중복 '+dup+'개 포함'):''),'var(--g)');
   setTimeout(function(){ try{ renderDiagnosis(); }catch(_e){} }, 0); // 화면 갱신은 다음 틱으로 → 클릭 즉시 반응
 }
 function tbPrefill(sub,ty){
@@ -2671,6 +2671,7 @@ function renderDiagnosis(){
     else{
       h+='<div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 2px"><div style="font-size:12.5px;font-weight:700;color:var(--t2)">등록된 유형 '+bank.length+'개</div><button onclick="tbClearAll()" style="font-size:11px;background:var(--s2);color:var(--rd);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;font-weight:700;cursor:pointer">🗑 전체 삭제</button></div>';
       var groups={}; bank.forEach(function(e){ (groups[e.subject||'기타']=groups[e.subject||'기타']||[]).push(e); });
+      var _dupCount={}; bank.forEach(function(e){ var k=(e.subject||'')+'\u0001'+(e.type||'')+'\u0001'+(e.level||''); _dupCount[k]=(_dupCount[k]||0)+1; }); // 같은 과목·이름·레벨 개수 → 2 이상이면 중복 표시
       var _subOrder=(DB.cfg&&DB.cfg.tbSubjectOrder)||[];
       var subKeys=Object.keys(groups).sort(function(a,b){ var ia=_subOrder.indexOf(a),ib=_subOrder.indexOf(b); if(ia<0&&ib<0)return 0; if(ia<0)return 1; if(ib<0)return -1; return ia-ib; });
       h+='<div style="display:flex;justify-content:space-between;gap:6px;margin:4px 0 2px;flex-wrap:wrap"><div style="display:flex;gap:6px"><button onclick="tbExport()" title="유형을 파일로 백업" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📤 백업</button><button onclick="document.getElementById(\'tb-import-file\').click()" title="백업 파일에서 가져오기" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📥 복원</button><button onclick="tbSaveDiag()" title="서버 저장이 왜 안되는지 점검" style="font-size:11px;background:var(--s2);color:var(--t2);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🔧 저장점검</button><button onclick="tbPrintOpen()" title="과목·범위를 골라 인쇄" style="font-size:11px;background:var(--s2);color:var(--acc);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🖨️ 인쇄</button></div><button onclick="tbToggleReorder()" style="font-size:11px;background:'+(tbReorderMode?'var(--acc)':'var(--s2)')+';color:'+(tbReorderMode?'#fff':'var(--acc)')+';border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">'+(tbReorderMode?'✓ 순서 편집 완료':'↕ 과목 순서 편집')+'</button></div><input type="file" id="tb-import-file" accept=".json,application/json" style="display:none" onchange="tbImportFile(this)">';
@@ -2699,6 +2700,7 @@ function renderDiagnosis(){
           var lv=e.level?'<span style="font-size:9.5px;background:'+tbLvBg(e.level)+';color:'+tbLvC(e.level)+';padding:1px 6px;border-radius:6px;flex-shrink:0;font-weight:700">'+dEsc(e.level)+'</span>':'';
           h+='<div class="tb-row" id="tbrow-'+e.id+'" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid var(--s3);border-radius:9px;margin-bottom:6px;font-size:12.5px">'+
              lv+'<span style="flex:1;min-width:0;color:var(--te);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(e.type)+'</span>'+
+             (((_dupCount[(e.subject||'')+'\u0001'+(e.type||'')+'\u0001'+(e.level||'')]||1)>1)?'<span title="같은 과목·이름·레벨이 여러 개 있음" style="font-size:9px;background:#fdecea;color:#c0392b;border-radius:6px;padding:1px 6px;flex-shrink:0;font-weight:700">중복</span>':'')+
              (e.url?'<a href="'+dEsc(e.url)+'" target="_blank" rel="noopener" style="color:var(--acc);font-size:11.5px;text-decoration:none;flex-shrink:0">링크</a>':'')+
              '<button onclick="openTbAdd(\''+encodeURIComponent(sub)+'\',\''+e.id+'\',\''+(e.level||'세부유형')+'\')" title="여기 아래 삽입" style="border:none;background:none;color:var(--g);cursor:pointer;font-size:15px;font-weight:800;flex-shrink:0;line-height:1">＋</button>'+
              '<button onclick="tbBulkInsertAfter(\''+encodeURIComponent(sub)+'\',\''+e.id+'\')" title="여러 유형 여기 아래 삽입" style="border:none;background:none;color:var(--g);cursor:pointer;font-size:13px;flex-shrink:0;line-height:1">📋</button>'+
