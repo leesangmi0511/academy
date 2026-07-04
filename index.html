@@ -1818,6 +1818,7 @@ function deleteWd(){
 // 탭 네비게이션
 // ═══════════════════════════════════════
 function goTab(name) {
+  if (ME && name!=='detail' && !permAllowed(name, ME.role)) { if(typeof toast==='function') toast('이 기능은 접근 권한이 없어요','var(--rd)'); return; }
   if (name !== 'detail') prevTab = curTab;
   curTab = name;
   document.querySelectorAll('.screen').forEach(function(el){ el.classList.remove('on'); });
@@ -1834,10 +1835,53 @@ function goTab(name) {
   if (name === 'diagnosis') renderDiagnosis();
 }
 
-// 역할에 따라 탭 표시/숨김 (수강료는 원장/행정팀만)
+// 역할별 기능(탭) 접근 권한 — 원장이 설정, DB.cfg.perms에 저장
+var PERM_TABS = [ {k:'home',label:'현황'}, {k:'progress',label:'진도'}, {k:'consult',label:'상담'}, {k:'calendar',label:'일정'}, {k:'tuition',label:'수강료'}, {k:'diagnosis',label:'진단'} ];
+var PERM_ROLES = [ {k:'staff',label:'행정팀'}, {k:'admin',label:'관리자'}, {k:'teacher',label:'강사'} ];
+var PERM_DEFAULT = { home:{staff:1,admin:1,teacher:1}, progress:{staff:1,admin:1,teacher:1}, consult:{staff:1,admin:1,teacher:1}, calendar:{staff:1,admin:1,teacher:1}, tuition:{staff:1,admin:0,teacher:0}, diagnosis:{staff:1,admin:1,teacher:1} };
+function permAllowed(tab, role){
+  if(role==='owner') return true;   // 원장은 항상 허용
+  if(tab==='home') return true;     // 현황(홈)은 잠금 방지 위해 항상 허용
+  var p = (DB.cfg && DB.cfg.perms && DB.cfg.perms[tab]) ? DB.cfg.perms[tab] : null;
+  if(p && p[role]!==undefined) return !!p[role];
+  var d = PERM_DEFAULT[tab]; return d ? !!d[role] : true;
+}
+// 역할에 따라 탭 표시/숨김 (원장이 설정한 권한 반영)
 function updateTabVisibility() {
-  var tuiTab = document.getElementById('tab-tuition');
-  if (tuiTab) tuiTab.style.display = isOwnerLevel() ? '' : 'none';
+  PERM_TABS.forEach(function(t){ var tb=document.getElementById('tab-'+t.k); if(tb) tb.style.display = (ME && permAllowed(t.k, ME.role)) ? '' : 'none'; });
+}
+function openPermModal(){
+  if(!(ME && ME.role==='owner')){ toast('원장만 설정할 수 있어요','var(--rd)'); return; }
+  var h='<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)permCloseModal()">'
+    +'<div style="background:var(--s1);border-radius:16px;max-width:440px;width:100%;max-height:86vh;overflow:auto;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
+    +'<div style="font-size:16px;font-weight:800;margin-bottom:4px">🔐 기능 권한 관리</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:14px">역할별로 각 기능(탭) 접근을 허용/차단합니다. 원장은 항상 전체 접근이고, 현황(홈)은 항상 열려 있습니다. 변경은 바로 저장됩니다.</div>'
+    +'<div id="perm-grid">'+permGridHTML()+'</div>'
+    +'<button onclick="permCloseModal()" style="width:100%;margin-top:16px;background:var(--acc);color:#fff;border:none;border-radius:10px;padding:11px;font-weight:800;cursor:pointer">완료</button>'
+    +'</div></div>';
+  var d=document.createElement('div'); d.id='perm-wrap'; d.innerHTML=h; document.body.appendChild(d);
+}
+function permCloseModal(){ var w=document.getElementById('perm-wrap'); if(w) w.parentNode.removeChild(w); }
+function permGridHTML(){
+  var h='<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr><th style="text-align:left;padding:7px 6px;color:var(--t2)">기능</th>';
+  PERM_ROLES.forEach(function(r){ h+='<th style="padding:7px 6px;text-align:center;color:var(--t2)">'+r.label+'</th>'; });
+  h+='</tr></thead><tbody>';
+  PERM_TABS.forEach(function(t){
+    h+='<tr style="border-top:1px solid var(--s3)"><td style="padding:9px 6px;font-weight:700">'+t.label+(t.k==='home'?' <span style="font-size:10px;color:var(--t3);font-weight:400">(항상)</span>':'')+'</td>';
+    PERM_ROLES.forEach(function(r){
+      if(t.k==='home'){ h+='<td style="text-align:center;padding:9px 6px;color:var(--g);font-weight:700">✓</td>'; return; }
+      h+='<td style="text-align:center;padding:9px 6px"><input type="checkbox" '+(permAllowed(t.k,r.k)?'checked':'')+' onchange="togglePerm(\''+t.k+'\',\''+r.k+'\',this.checked)" style="width:18px;height:18px;accent-color:var(--acc);cursor:pointer"></td>';
+    });
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  return h;
+}
+function togglePerm(tab, role, on){
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.perms) DB.cfg.perms={}; if(!DB.cfg.perms[tab]) DB.cfg.perms[tab]={};
+  DB.cfg.perms[tab][role]=on?1:0;
+  saveAll(); updateTabVisibility();
+  toast('권한 저장됨','var(--g)');
 }
 function goBack() { goTab(prevTab); }
 
@@ -4518,7 +4562,7 @@ function renderAdminHome() {
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div>':'')
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>';
