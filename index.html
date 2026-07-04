@@ -1091,11 +1091,12 @@ function _tbChunkLoad(n){
   return Promise.all(gets).then(function(docs){ var all=[]; docs.forEach(function(doc){ var o=_FS.docToObj(doc); if(o && o.items) all=all.concat(_tbExpand(o.items)); }); return all; });
 }
 function saveAll() {
-  localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg));
-  localStorage.setItem('ac_subj', JSON.stringify(DB.subj));
-  localStorage.setItem('ac_stu', JSON.stringify(DB.stu));
-  localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{}));
-  localStorage.setItem('ac_typeBank', JSON.stringify(DB.typeBank||[]));
+  // 각 로컬 저장을 개별 try/catch로 감쌈 → 유형이 수만 개라 용량 초과가 나도 함수가 중단되지 않고 서버 저장이 예약됨
+  try{ localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg)); }catch(_e){}
+  try{ localStorage.setItem('ac_subj', JSON.stringify(DB.subj)); }catch(_e){}
+  try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu)); }catch(_e){}
+  try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
+  try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank||[]))); }catch(_e){} // 압축 저장(용량 절감), 초과 시 건너뜀(서버가 원본)
   _lastLocalSave = Date.now();  // 변경 시각 기록 → 폴링 덮어쓰기 방지
   _saveDirty = true;            // 저장 대기 중 → 폴링이 옛 데이터로 덮어쓰지 않도록
   clearTimeout(saveTimer);
@@ -5997,7 +5998,7 @@ _loadFirebase().then(function() {
       DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","admins":[],"teachers":[]}')
       if(!DB.cfg.admins) DB.cfg.admins=[]
       DB.evalHistory=JSON.parse(localStorage.getItem('ac_evalHistory')||'{}');
-      DB.typeBank=JSON.parse(localStorage.getItem('ac_typeBank')||'[]');
+      DB.typeBank=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]'));
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
       DB.stu=JSON.parse(localStorage.getItem('ac_stu')||'[]');
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
@@ -6017,7 +6018,7 @@ _loadFirebase().then(function() {
         var srvVer = (d && d.tbVer) || 0; _tbLoadedVer = srvVer;
         var srvLen = items?items.length:0;
         var locVer=0; try{ locVer=parseInt(localStorage.getItem('ac_tbVer')||'0',10)||0; }catch(_e){}
-        var local=[]; try{ local=JSON.parse(localStorage.getItem('ac_typeBank')||'[]'); }catch(_e){}
+        var local=[]; try{ local=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]')); }catch(_e){}
         if(srvLen){ DB.typeBank=items; }                                    // 서버 우선
         // 기기에 더 완전한(더 많은) 데이터거나 더 최신이면 그걸 사용 → 부분 저장 복구
         if(local.length && (local.length > srvLen || locVer > srvVer || !srvLen)){ DB.typeBank=local; }
