@@ -1887,16 +1887,15 @@ function accRoleLabel(r){ return r==='owner'?'원장':r==='staff'?'행정팀':r=
 function recordAccess(){
   if(!ME) return;
   var role=ME.role, name=ME.name;
-  var done=function(ip){
-    if(!DB.cfg) DB.cfg={}; if(!Array.isArray(DB.cfg.accessLog)) DB.cfg.accessLog=[];
-    var last=DB.cfg.accessLog[0];
-    if(last && last.name===name && last.role===role && last.ip===(ip||'') && (Date.now()-last.ts)<600000) return; // 10분 내 동일 접속 중복 기록 생략
-    DB.cfg.accessLog.unshift({ name:name, role:role, ip:(ip||''), ts:Date.now() });
-    DB.cfg.accessLog = DB.cfg.accessLog.slice(0,200); // 최근 200건 보관
-    saveAll();
-  };
-  try{ fetch('https://api.ipify.org?format=json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ done(d&&d.ip); }).catch(function(){ done(''); }); }
-  catch(e){ done(''); }
+  if(!DB.cfg) DB.cfg={}; if(!Array.isArray(DB.cfg.accessLog)) DB.cfg.accessLog=[];
+  var last=DB.cfg.accessLog[0];
+  if(last && last.name===name && last.role===role && (Date.now()-last.ts)<600000) return; // 10분 내 동일 접속 중복 기록 생략
+  var entry={ name:name, role:role, ip:'', ts:Date.now() };
+  DB.cfg.accessLog.unshift(entry);                 // IP를 기다리지 않고 접속을 먼저 기록
+  DB.cfg.accessLog = DB.cfg.accessLog.slice(0,200); // 최근 200건 보관
+  saveAll();
+  // IP는 비동기로 채움(조회 실패해도 접속 기록은 남음)
+  try{ fetch('https://api.ipify.org?format=json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ if(d&&d.ip){ entry.ip=d.ip; saveAll(); } }).catch(function(){}); }catch(e){}
 }
 function openAccessLog(){
   if(!(ME && ME.role==='owner')){ toast('원장만 볼 수 있어요','var(--rd)'); return; }
