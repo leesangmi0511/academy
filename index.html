@@ -6032,11 +6032,9 @@ _loadFirebase().then(function() {
         var srvLen = items?items.length:0;
         var locVer=0; try{ locVer=parseInt(localStorage.getItem('ac_tbVer')||'0',10)||0; }catch(_e){}
         var local=[]; try{ local=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]')); }catch(_e){}
-        if(srvLen){ DB.typeBank=items; }                                    // 서버 우선
-        // 기기에 더 완전한(더 많은) 데이터거나 더 최신이면 그걸 사용 → 부분 저장 복구
-        var _usedLocal = local.length && (local.length > srvLen || locVer > srvVer || !srvLen);
-        if(_usedLocal){ DB.typeBank=local; }
-        if((DB.typeBank||[]).length && (_usedLocal || (DB.typeBank.length > srvLen) || locVer > srvVer || !_nch)){ _tbChunkHash={}; saveAll(); } // 복구/이관 필요 → 조각 전체 재저장
+        if(srvLen){ DB.typeBank=items; }                                    // 서버가 원본(항상 우선)
+        if(local.length && !srvLen){ DB.typeBank=local; }                   // 서버가 완전히 비었을 때만 기기 데이터 사용(오프라인/최초)
+        if((DB.typeBank||[]).length && (!srvLen || !_nch)){ _tbChunkHash={}; saveAll(); } // 서버 비었거나 옛 형식(조각 없음)일 때만 조각으로 재저장
         else { _tbHashSync(); } // 서버와 동일 → 조각 해시 기록(이후 바뀐 조각만 저장)
         if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
       }).catch(function(){});
