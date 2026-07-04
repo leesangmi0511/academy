@@ -1077,6 +1077,20 @@ var _tbLoadedVer = 0;
 // 저장 압축: 긴 필드(중복 title, 빈 url, path) 제거 + 짧은 키 → 용량 대폭 축소
 function _tbCompact(items){ return (items||[]).map(function(e){ var o={i:e.id,s:e.subject,t:e.type,l:e.level}; if(e.title&&e.title!==e.type)o.n=e.title; if(e.url)o.u=e.url; return o; }); }
 function _tbExpand(arr){ return (arr||[]).map(function(o){ if(o && o.i!==undefined) return {id:o.i,subject:o.s,type:o.t,level:o.l,title:o.n||o.t,url:o.u||'',path:''}; return o; }); } // 옛 전체형식은 그대로 통과
+// IndexedDB 기기 백업(용량 제한 없음) — 유형 은행 로컬 백업(부분 저장/중단 복구용)
+var _idb=null, _idbFail=false;
+function _idbOpen(cb){
+  if(_idb){ cb(_idb); return; }
+  if(_idbFail || typeof indexedDB==='undefined'){ cb(null); return; }
+  try{
+    var req=indexedDB.open('routetop_db', 1);
+    req.onupgradeneeded=function(e){ var db=e.target.result; if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv'); };
+    req.onsuccess=function(e){ _idb=e.target.result; cb(_idb); };
+    req.onerror=function(){ _idbFail=true; cb(null); };
+  }catch(e){ _idbFail=true; cb(null); }
+}
+function _idbSet(key,val){ _idbOpen(function(db){ if(!db) return; try{ db.transaction('kv','readwrite').objectStore('kv').put(val,key); }catch(e){} }); }
+function _idbGet(key,cb){ _idbOpen(function(db){ if(!db){ cb(null); return; } try{ var r=db.transaction('kv','readonly').objectStore('kv').get(key); r.onsuccess=function(){ cb(r.result||null); }; r.onerror=function(){ cb(null); }; }catch(e){ cb(null); } }); }
 var _tbChunkHash={};
 function _rawChunkHash(items, start, end){ var h=0; for(var i=start;i<end;i++){ var o=items[i]||{}; var s=(o.id||'')+'\u0001'+(o.type||'')+'\u0001'+(o.level||'')+'\u0001'+(o.subject||''); for(var k=0;k<s.length;k++){ h=((h<<5)-h+s.charCodeAt(k))|0; } } return (end-start)+':'+h; }
 function _tbHashSync(){ _tbChunkHash={}; var items=DB.typeBank||[], CH=700, n=Math.max(1,Math.ceil(items.length/CH)); for(var idx=0;idx<n;idx++){ _tbChunkHash[idx]=_rawChunkHash(items, idx*CH, Math.min(items.length, idx*CH+CH)); } }
@@ -1111,7 +1125,8 @@ function saveAll() {
     try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu)); }catch(_e){}
     try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
     var _ver = Date.now();
-    if((DB.typeBank||[]).length <= 4000){ try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank))); }catch(_e){} } // 큰 데이터는 로컬 직렬화(느림·용량초과) 생략 — 서버가 원본
+    _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
+    if((DB.typeBank||[]).length <= 4000){ try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank))); }catch(_e){} } // 큰 데이터는 localStorage 생략(IndexedDB가 백업)
     try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
     _tbChunkSave()
       .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
@@ -2470,6 +2485,13 @@ function tbExport(){
     toast('📤 백업 파일 저장됨 · 유형 '+((DB.typeBank||[]).length)+'개');
   }catch(e){ toast('내보내기 실패: '+((e&&e.message)||e),'var(--rd)'); }
 }
+function tbForcePush(){
+  var n=(DB.typeBank||[]).length;
+  if(!confirm('현재 기기에 있는 유형 전체('+n+'개)를 서버에 다시 저장합니다.\n(서버에 일부만 저장된 것을 완전하게 맞춥니다.)\n진행할까요?')) return;
+  _tbChunkHash={}; // 증분 무시 → 모든 조각을 다시 저장(완전 저장)
+  saveAll();
+  toast('유형 '+n+'개를 서버에 전체 저장 중… 잠시 후 🔧 저장점검으로 확인하세요','var(--acc)');
+}
 function tbSaveDiag(){
   toast('저장 점검 중…');
   _FS.set('academy/_diag', {t:Date.now(), ok:1})
@@ -2750,7 +2772,7 @@ function renderDiagnosis(){
       var _dupCount={}; bank.forEach(function(e){ var k=(e.subject||'')+'\u0001'+(e.type||'')+'\u0001'+(e.level||''); _dupCount[k]=(_dupCount[k]||0)+1; }); // 같은 과목·이름·레벨 개수 → 2 이상이면 중복 표시
       var _subOrder=(DB.cfg&&DB.cfg.tbSubjectOrder)||[];
       var subKeys=Object.keys(groups).sort(function(a,b){ var ia=_subOrder.indexOf(a),ib=_subOrder.indexOf(b); if(ia<0&&ib<0)return 0; if(ia<0)return 1; if(ib<0)return -1; return ia-ib; });
-      h+='<div style="display:flex;justify-content:space-between;gap:6px;margin:4px 0 2px;flex-wrap:wrap"><div style="display:flex;gap:6px"><button onclick="tbExport()" title="유형을 파일로 백업" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📤 백업</button><button onclick="document.getElementById(\'tb-import-file\').click()" title="백업 파일에서 가져오기" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📥 복원</button><button onclick="tbSaveDiag()" title="서버 저장이 왜 안되는지 점검" style="font-size:11px;background:var(--s2);color:var(--t2);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🔧 저장점검</button><button onclick="tbPrintOpen()" title="과목·범위를 골라 인쇄" style="font-size:11px;background:var(--s2);color:var(--acc);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🖨️ 인쇄</button></div><button onclick="tbToggleReorder()" style="font-size:11px;background:'+(tbReorderMode?'var(--acc)':'var(--s2)')+';color:'+(tbReorderMode?'#fff':'var(--acc)')+';border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">'+(tbReorderMode?'✓ 순서 편집 완료':'↕ 과목 순서 편집')+'</button></div><input type="file" id="tb-import-file" accept=".json,application/json" style="display:none" onchange="tbImportFile(this)">';
+      h+='<div style="display:flex;justify-content:space-between;gap:6px;margin:4px 0 2px;flex-wrap:wrap"><div style="display:flex;gap:6px"><button onclick="tbExport()" title="유형을 파일로 백업" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📤 백업</button><button onclick="document.getElementById(\'tb-import-file\').click()" title="백업 파일에서 가져오기" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📥 복원</button><button onclick="tbSaveDiag()" title="서버 저장이 왜 안되는지 점검" style="font-size:11px;background:var(--s2);color:var(--t2);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🔧 저장점검</button><button onclick="tbForcePush()" title="현재 기기 유형 전체를 서버에 다시 저장(일부만 올라간 것 복구)" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">☁️ 전체저장</button><button onclick="tbPrintOpen()" title="과목·범위를 골라 인쇄" style="font-size:11px;background:var(--s2);color:var(--acc);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🖨️ 인쇄</button></div><button onclick="tbToggleReorder()" style="font-size:11px;background:'+(tbReorderMode?'var(--acc)':'var(--s2)')+';color:'+(tbReorderMode?'#fff':'var(--acc)')+';border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">'+(tbReorderMode?'✓ 순서 편집 완료':'↕ 과목 순서 편집')+'</button></div><input type="file" id="tb-import-file" accept=".json,application/json" style="display:none" onchange="tbImportFile(this)">';
       var _chipLv=[['대단원',2],['중단원',3],['소단원',4],['유형',5],['주제유형',6],['세부유형',7]];
       subKeys.forEach(function(sub,_si){
         var g=groups[sub];
@@ -6108,13 +6130,18 @@ _loadFirebase().then(function() {
       .then(function(items){
         var srvVer = (d && d.tbVer) || 0; _tbLoadedVer = srvVer;
         var srvLen = items?items.length:0;
-        var locVer=0; try{ locVer=parseInt(localStorage.getItem('ac_tbVer')||'0',10)||0; }catch(_e){}
         var local=[]; try{ local=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]')); }catch(_e){}
-        if(srvLen){ DB.typeBank=items; }                                    // 서버가 원본(항상 우선)
-        if(local.length && !srvLen){ DB.typeBank=local; }                   // 서버가 완전히 비었을 때만 기기 데이터 사용(오프라인/최초)
-        if((DB.typeBank||[]).length && (!srvLen || !_nch)){ _tbChunkHash={}; saveAll(); } // 서버 비었거나 옛 형식(조각 없음)일 때만 조각으로 재저장
-        else { _tbHashSync(); } // 서버와 동일 → 조각 해시 기록(이후 바뀐 조각만 저장)
-        if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
+        if(srvLen){ DB.typeBank=items; }                        // 서버가 원본
+        if(local.length && !srvLen){ DB.typeBank=local; }       // 서버가 완전히 비었을 때만 로컬
+        // IndexedDB 백업이 서버보다 최신이면(서버 저장이 덜 끝남) 그걸로 복구
+        _idbGet('tb', function(idb){
+          var idbLen = (idb && idb.items) ? idb.items.length : 0;
+          var idbVer = (idb && idb.ver) ? idb.ver : 0;
+          if(idbLen && idbVer > srvVer){ DB.typeBank = idb.items; } // 백업이 더 최신 → 복구
+          if((DB.typeBank||[]).length && (idbVer > srvVer || !srvLen || !_nch)){ _tbChunkHash={}; saveAll(); } // 복구/이관 시 서버에 전체 재저장
+          else { _tbHashSync(); }
+          if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
+        });
       }).catch(function(){});
     // 데이터 로드 후 자동 로그인 시도
     tryAutoLogin();
