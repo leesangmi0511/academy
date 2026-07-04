@@ -1076,13 +1076,20 @@ var _tbLoadedVer = 0;
 // 저장 압축: 긴 필드(중복 title, 빈 url, path) 제거 + 짧은 키 → 용량 대폭 축소
 function _tbCompact(items){ return (items||[]).map(function(e){ var o={i:e.id,s:e.subject,t:e.type,l:e.level}; if(e.title&&e.title!==e.type)o.n=e.title; if(e.url)o.u=e.url; return o; }); }
 function _tbExpand(arr){ return (arr||[]).map(function(o){ if(o && o.i!==undefined) return {id:o.i,subject:o.s,type:o.t,level:o.l,title:o.n||o.t,url:o.u||'',path:''}; return o; }); } // 옛 전체형식은 그대로 통과
+var _tbChunkHash={};
+function _rawChunkHash(items, start, end){ var h=0; for(var i=start;i<end;i++){ var o=items[i]||{}; var s=(o.id||'')+'\u0001'+(o.type||'')+'\u0001'+(o.level||'')+'\u0001'+(o.subject||''); for(var k=0;k<s.length;k++){ h=((h<<5)-h+s.charCodeAt(k))|0; } } return (end-start)+':'+h; }
+function _tbHashSync(){ _tbChunkHash={}; var items=DB.typeBank||[], CH=700, n=Math.max(1,Math.ceil(items.length/CH)); for(var idx=0;idx<n;idx++){ _tbChunkHash[idx]=_rawChunkHash(items, idx*CH, Math.min(items.length, idx*CH+CH)); } }
 function _tbChunkSave(){
-  var items=DB.typeBank||[], CH=700, chunks=[];
-  for(var i=0;i<items.length;i+=CH) chunks.push(_tbCompact(items.slice(i,i+CH)));
-  if(!chunks.length) chunks.push([]);
+  var items=DB.typeBank||[], CH=700, n=Math.max(1, Math.ceil(items.length/CH));
   var p=Promise.resolve();
-  chunks.forEach(function(c,idx){ p=p.then(function(){ return _FS.set('academy/tb'+idx, {items:c}); }); }); // 순차 저장(동시 저장 실패로 인한 부분 저장 방지)
-  return p.then(function(){ return chunks.length; });
+  var _mk=function(idx){
+    var start=idx*CH, end=Math.min(items.length, start+CH);
+    var h=_rawChunkHash(items,start,end);
+    if(_tbChunkHash[idx]===h) return; // 바뀐 조각만 저장(증분) → 대량 저장 속도·안정성↑
+    p=p.then(function(){ var c=_tbCompact(items.slice(start,end)); return _FS.set('academy/tb'+idx, {items:c}).then(function(){ _tbChunkHash[idx]=h; }); });
+  };
+  for(var idx=0; idx<n; idx++) _mk(idx);
+  return p.then(function(){ return n; });
 }
 function _tbGetRetry(path, tries){ return _FS.get(path).catch(function(e){ if(tries>0) return new Promise(function(res){ setTimeout(res,400); }).then(function(){ return _tbGetRetry(path, tries-1); }); throw e; }); }
 function _tbChunkLoad(n){
@@ -1101,7 +1108,7 @@ function saveAll() {
     try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu)); }catch(_e){}
     try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
     var _ver = Date.now();
-    try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank||[]))); }catch(_e){} // 압축 저장, 초과 시 건너뜀(서버가 원본)
+    if((DB.typeBank||[]).length <= 4000){ try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank))); }catch(_e){} } // 큰 데이터는 로컬 직렬화(느림·용량초과) 생략 — 서버가 원본
     try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
     _tbChunkSave()
       .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
@@ -6022,8 +6029,10 @@ _loadFirebase().then(function() {
         var local=[]; try{ local=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]')); }catch(_e){}
         if(srvLen){ DB.typeBank=items; }                                    // 서버 우선
         // 기기에 더 완전한(더 많은) 데이터거나 더 최신이면 그걸 사용 → 부분 저장 복구
-        if(local.length && (local.length > srvLen || locVer > srvVer || !srvLen)){ DB.typeBank=local; }
-        if((DB.typeBank||[]).length && ((DB.typeBank.length > srvLen) || locVer > srvVer || !_nch)) saveAll(); // 서버가 덜 저장됐으면 다시 완전 저장
+        var _usedLocal = local.length && (local.length > srvLen || locVer > srvVer || !srvLen);
+        if(_usedLocal){ DB.typeBank=local; }
+        if((DB.typeBank||[]).length && (_usedLocal || (DB.typeBank.length > srvLen) || locVer > srvVer || !_nch)){ _tbChunkHash={}; saveAll(); } // 복구/이관 필요 → 조각 전체 재저장
+        else { _tbHashSync(); } // 서버와 동일 → 조각 해시 기록(이후 바뀐 조각만 저장)
         if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
       }).catch(function(){});
     // 데이터 로드 후 자동 로그인 시도
@@ -6041,7 +6050,7 @@ _loadFirebase().then(function() {
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
-      if(_pnch>0 && _pver!==_tbLoadedVer){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; _tbLoadedVer=_pver; if(items && items.length){ DB.typeBank=items; if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
+      if(_pnch>0 && _pver!==_tbLoadedVer){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; _tbLoadedVer=_pver; if(items && items.length){ DB.typeBank=items; _tbHashSync(); if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
