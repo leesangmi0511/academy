@@ -2324,6 +2324,52 @@ var tbInsertAfterId=null; // 대량 삽입 위치(특정 유형 id) — null이�
 var tbDepth={};           // 과목별 표시 깊이(레벨 rank) — 미설정이면 접힘(과목명만)
 var tbReorderMode=false;
 function tbToggleReorder(){ tbReorderMode=!tbReorderMode; renderDiagnosis(); }
+function tbPrintOpen(){
+  var subs=tbSubjectKeys();
+  if(!subs.length){ toast('등록된 과목이 없어요','var(--rd)'); return; }
+  var subChk=subs.map(function(s){ return '<label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer"><input type="checkbox" class="tbpr-sub" value="'+encodeURIComponent(s)+'" checked style="width:16px;height:16px;accent-color:var(--acc)"><span>'+dEsc(s)+'</span></label>'; }).join('');
+  var opts=[['세부유형까지(전체)',7],['주제유형까지',6],['유형까지',5],['소단원까지',4],['중단원까지',3],['대단원만',2]];
+  var lv='<select id="tbpr-level" style="width:100%;border:1px solid var(--s3);border-radius:9px;padding:8px 11px;font-size:12.5px;font-family:inherit;background:var(--s1)">'+opts.map(function(o){return '<option value="'+o[1]+'"'+(o[1]===7?' selected':'')+'>'+o[0]+'</option>';}).join('')+'</select>';
+  var html='<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)tbPrintClose()">'
+    +'<div style="background:var(--s1);border-radius:16px;max-width:420px;width:100%;max-height:86vh;overflow:auto;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
+    +'<div style="font-size:16px;font-weight:800;margin-bottom:4px">🖨️ 유형 인쇄</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:14px">인쇄할 과목과 범위를 선택하세요.</div>'
+    +'<div style="font-weight:700;font-size:12.5px;margin-bottom:5px">범위(단계)</div>'+lv
+    +'<div style="display:flex;align-items:center;gap:8px;margin:16px 0 5px"><span style="font-weight:700;font-size:12.5px">과목</span><button onclick="tbPrintAll(1)" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:7px;padding:3px 10px;cursor:pointer;font-weight:600">전체선택</button><button onclick="tbPrintAll(0)" style="font-size:11px;background:var(--s2);color:var(--t2);border:1px solid var(--s3);border-radius:7px;padding:3px 10px;cursor:pointer;font-weight:600">전체해제</button></div>'
+    +'<div style="max-height:220px;overflow:auto;border:1px solid var(--s3);border-radius:10px;padding:6px 12px">'+subChk+'</div>'
+    +'<div style="display:flex;gap:8px;margin-top:16px"><button onclick="tbPrintClose()" style="flex:1;background:var(--s2);color:var(--te);border:1px solid var(--s3);border-radius:10px;padding:11px;font-weight:700;cursor:pointer">닫기</button><button onclick="tbPrintRun()" style="flex:2;background:var(--acc);color:#fff;border:none;border-radius:10px;padding:11px;font-weight:800;cursor:pointer">🖨️ 인쇄</button></div>'
+    +'</div></div>';
+  var d=document.createElement('div'); d.id='tbpr-wrap'; d.innerHTML=html; document.body.appendChild(d);
+}
+function tbPrintClose(){ var w=document.getElementById('tbpr-wrap'); if(w) w.parentNode.removeChild(w); }
+function tbPrintAll(on){ var cs=document.querySelectorAll('.tbpr-sub'); for(var i=0;i<cs.length;i++) cs[i].checked=!!on; }
+function tbPrintRun(){
+  var subs={}, cs=document.querySelectorAll('.tbpr-sub:checked');
+  for(var i=0;i<cs.length;i++){ var v=cs[i].value; try{v=decodeURIComponent(v);}catch(e){} subs[v]=1; }
+  if(!Object.keys(subs).length){ toast('과목을 선택하세요','var(--rd)'); return; }
+  var maxRank=parseInt((document.getElementById('tbpr-level')||{}).value||'7',10);
+  var groups={}; (DB.typeBank||[]).forEach(function(e){ var s=e.subject||'기타'; if(!subs[s]) return; var r=TB_ORDER[e.level]; if(r==null)r=7; if(r>maxRank) return; (groups[s]=groups[s]||[]).push(e); });
+  var order=tbSubjectKeys(); var body='';
+  order.forEach(function(s){ var g=groups[s]; if(!g||!g.length) return;
+    body+='<h2>'+dEsc(s)+' <span class="cnt">('+g.length+')</span></h2>';
+    g.forEach(function(e){ var r=TB_ORDER[e.level]; if(r==null)r=7; body+='<div class="row lv'+r+'"><span class="lvl">'+dEsc(e.level||'')+'</span>'+dEsc(e.type||'')+'</div>'; });
+  });
+  if(!body){ toast('인쇄할 유형이 없어요','var(--rd)'); return; }
+  var doc='<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>ROUTETOP 유형 목록</title><style>'
+    +'body{font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;padding:18px;color:#111;line-height:1.4}'
+    +'h1{font-size:18px;margin:0 0 4px} .sub{font-size:11px;color:#888;margin-bottom:10px}'
+    +'h2{font-size:15px;border-bottom:2px solid #333;padding-bottom:3px;margin:18px 0 6px} .cnt{font-size:12px;color:#999;font-weight:400}'
+    +'.row{font-size:12px;padding:2px 0;border-bottom:1px solid #eee}'
+    +'.lvl{display:inline-block;min-width:52px;font-size:9.5px;color:#555;background:#f0f0f0;border-radius:4px;padding:0 5px;margin-right:6px;text-align:center}'
+    +'.lv2{font-weight:700} .lv3{padding-left:12px} .lv4{padding-left:24px} .lv5{padding-left:34px} .lv6{padding-left:46px} .lv7{padding-left:58px}'
+    +'@media print{h2{page-break-after:avoid}.row{page-break-inside:avoid}}'
+    +'</style></head><body><h1>ROUTETOP 유형 목록</h1><div class="sub">'+today()+' · '+Object.keys(subs).length+'개 과목</div>'+body+'</body></html>';
+  var w=window.open('','_blank');
+  if(!w){ toast('팝업이 차단됐어요. 팝업 허용 후 다시 시도하세요','var(--rd)'); return; }
+  w.document.write(doc); w.document.close(); w.focus();
+  setTimeout(function(){ try{ w.print(); }catch(_e){} }, 400);
+  tbPrintClose();
+}
 function tbExport(){
   try{
     var data=JSON.stringify({v:1, ts:Date.now(), typeBank:DB.typeBank||[], subj:DB.subj||[]});
@@ -2609,7 +2655,7 @@ function renderDiagnosis(){
       var groups={}; bank.forEach(function(e){ (groups[e.subject||'기타']=groups[e.subject||'기타']||[]).push(e); });
       var _subOrder=(DB.cfg&&DB.cfg.tbSubjectOrder)||[];
       var subKeys=Object.keys(groups).sort(function(a,b){ var ia=_subOrder.indexOf(a),ib=_subOrder.indexOf(b); if(ia<0&&ib<0)return 0; if(ia<0)return 1; if(ib<0)return -1; return ia-ib; });
-      h+='<div style="display:flex;justify-content:space-between;gap:6px;margin:4px 0 2px;flex-wrap:wrap"><div style="display:flex;gap:6px"><button onclick="tbExport()" title="유형을 파일로 백업" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📤 백업</button><button onclick="document.getElementById(\'tb-import-file\').click()" title="백업 파일에서 가져오기" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📥 복원</button><button onclick="tbSaveDiag()" title="서버 저장이 왜 안되는지 점검" style="font-size:11px;background:var(--s2);color:var(--t2);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🔧 저장점검</button></div><button onclick="tbToggleReorder()" style="font-size:11px;background:'+(tbReorderMode?'var(--acc)':'var(--s2)')+';color:'+(tbReorderMode?'#fff':'var(--acc)')+';border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">'+(tbReorderMode?'✓ 순서 편집 완료':'↕ 과목 순서 편집')+'</button></div><input type="file" id="tb-import-file" accept=".json,application/json" style="display:none" onchange="tbImportFile(this)">';
+      h+='<div style="display:flex;justify-content:space-between;gap:6px;margin:4px 0 2px;flex-wrap:wrap"><div style="display:flex;gap:6px"><button onclick="tbExport()" title="유형을 파일로 백업" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📤 백업</button><button onclick="document.getElementById(\'tb-import-file\').click()" title="백업 파일에서 가져오기" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">📥 복원</button><button onclick="tbSaveDiag()" title="서버 저장이 왜 안되는지 점검" style="font-size:11px;background:var(--s2);color:var(--t2);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🔧 저장점검</button><button onclick="tbPrintOpen()" title="과목·범위를 골라 인쇄" style="font-size:11px;background:var(--s2);color:var(--acc);border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">🖨️ 인쇄</button></div><button onclick="tbToggleReorder()" style="font-size:11px;background:'+(tbReorderMode?'var(--acc)':'var(--s2)')+';color:'+(tbReorderMode?'#fff':'var(--acc)')+';border:1px solid var(--s3);border-radius:8px;padding:5px 11px;cursor:pointer;font-weight:700">'+(tbReorderMode?'✓ 순서 편집 완료':'↕ 과목 순서 편집')+'</button></div><input type="file" id="tb-import-file" accept=".json,application/json" style="display:none" onchange="tbImportFile(this)">';
       var _chipLv=[['대단원',2],['중단원',3],['소단원',4],['유형',5],['주제유형',6],['세부유형',7]];
       subKeys.forEach(function(sub,_si){
         var g=groups[sub];
