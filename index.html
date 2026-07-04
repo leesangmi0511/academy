@@ -1914,19 +1914,53 @@ function recordAccess(){
 }
 function openAccessLog(){
   if(!(ME && ME.role==='owner')){ toast('원장만 볼 수 있어요','var(--rd)'); return; }
-  var log=(DB.cfg && DB.cfg.accessLog)||[];
-  var rows = log.length ? log.map(function(e){
-    var d=new Date(e.ts||0), when=(d.getMonth()+1)+'/'+d.getDate()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
-    return '<tr style="border-top:1px solid var(--s3)"><td style="padding:7px 6px"><b>'+dEsc(e.name)+'</b> <span style="font-size:10px;color:var(--t3)">'+accRoleLabel(e.role)+'</span></td><td style="padding:7px 6px;font-family:monospace;font-size:11.5px">'+dEsc(e.ip||'-')+'</td><td style="padding:7px 6px;color:var(--t2);white-space:nowrap">'+when+'</td></tr>';
-  }).join('') : '<tr><td colspan="3" style="padding:18px;text-align:center;color:var(--t3)">접속 기록이 없습니다.</td></tr>';
+  var now=new Date();
+  var first=new Date(now.getFullYear(), now.getMonth(), 1);
+  var last=new Date(now.getFullYear(), now.getMonth()+1, 0);
+  var yf=first.getFullYear()+'-'+('0'+(first.getMonth()+1)).slice(-2)+'-01';
+  var yl=last.getFullYear()+'-'+('0'+(last.getMonth()+1)).slice(-2)+'-'+('0'+last.getDate()).slice(-2);
   var h='<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)accessLogClose()">'
-    +'<div style="background:var(--s1);border-radius:16px;max-width:460px;width:100%;max-height:86vh;overflow:auto;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
+    +'<div style="background:var(--s1);border-radius:16px;max-width:480px;width:100%;max-height:88vh;overflow:auto;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><div style="font-size:16px;font-weight:800">🌐 접속 기록</div><button onclick="accessLogClear()" style="font-size:11px;color:var(--rd);background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:4px 10px;cursor:pointer;font-weight:600">기록 삭제</button></div>'
-    +'<div style="font-size:12px;color:var(--t2);margin-bottom:12px">앱에 로그인한 아이디·IP·시각입니다 (최근 순, 최대 200건).</div>'
-    +'<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr><th style="text-align:left;padding:6px;color:var(--t2)">아이디</th><th style="text-align:left;padding:6px;color:var(--t2)">IP</th><th style="text-align:left;padding:6px;color:var(--t2)">시각</th></tr></thead><tbody>'+rows+'</tbody></table>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:10px">기간을 정해 보고 엑셀로 내려받을 수 있어요. (기본: 이번 달 1일~말일)</div>'
+    +'<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px"><input type="date" id="alog-from" value="'+yf+'" onchange="accessLogRender()" style="font-size:12px;padding:6px 8px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);font-family:inherit"><span style="color:var(--t3)">~</span><input type="date" id="alog-to" value="'+yl+'" onchange="accessLogRender()" style="font-size:12px;padding:6px 8px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);font-family:inherit"><button onclick="accessLogDownload()" style="margin-left:auto;font-size:12px;background:var(--g);color:#fff;border:none;border-radius:8px;padding:7px 12px;cursor:pointer;font-weight:700">📥 엑셀 다운로드</button></div>'
+    +'<div id="alog-count" style="font-size:11px;color:var(--t3);margin-bottom:6px"></div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr><th style="text-align:left;padding:6px;color:var(--t2)">아이디</th><th style="text-align:left;padding:6px;color:var(--t2)">IP</th><th style="text-align:left;padding:6px;color:var(--t2)">일시</th></tr></thead><tbody id="alog-body"></tbody></table>'
     +'<button onclick="accessLogClose()" style="width:100%;margin-top:16px;background:var(--acc);color:#fff;border:none;border-radius:10px;padding:11px;font-weight:800;cursor:pointer">닫기</button>'
     +'</div></div>';
   var w=document.createElement('div'); w.id='alog-wrap'; w.innerHTML=h; document.body.appendChild(w);
+  accessLogRender();
+}
+function accessLogEntries(){
+  var log=(DB.cfg && DB.cfg.accessLog)||[];
+  var f=((document.getElementById('alog-from')||{}).value)||'', t=((document.getElementById('alog-to')||{}).value)||'';
+  var fromTs = f? new Date(f+'T00:00:00').getTime() : 0;
+  var toTs = t? new Date(t+'T23:59:59').getTime() : 8640000000000000;
+  return log.filter(function(e){ var ts=e.ts||0; return ts>=fromTs && ts<=toTs; });
+}
+function accessLogFmt(ts){ var d=new Date(ts||0); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function accessLogRender(){
+  var body=document.getElementById('alog-body'); if(!body) return;
+  var list=accessLogEntries();
+  var cnt=document.getElementById('alog-count'); if(cnt) cnt.textContent=list.length+'건';
+  body.innerHTML = list.length ? list.map(function(e){
+    return '<tr style="border-top:1px solid var(--s3)"><td style="padding:7px 6px"><b>'+dEsc(e.name)+'</b> <span style="font-size:10px;color:var(--t3)">'+accRoleLabel(e.role)+'</span></td><td style="padding:7px 6px;font-family:monospace;font-size:11.5px">'+dEsc(e.ip||'-')+'</td><td style="padding:7px 6px;color:var(--t2);white-space:nowrap">'+accessLogFmt(e.ts)+'</td></tr>';
+  }).join('') : '<tr><td colspan="3" style="padding:18px;text-align:center;color:var(--t3)">해당 기간 접속 기록이 없습니다.</td></tr>';
+}
+function accessLogDownload(){
+  var list=accessLogEntries();
+  if(!list.length){ toast('해당 기간 기록이 없어요','var(--rd)'); return; }
+  var f=((document.getElementById('alog-from')||{}).value)||'', t=((document.getElementById('alog-to')||{}).value)||'';
+  var esc=function(c){ c=String(c==null?'':c); return /[",\n\r]/.test(c)?'"'+c.replace(/"/g,'""')+'"':c; };
+  var lines=['아이디,역할,IP,접속일시'];
+  list.forEach(function(e){ lines.push([esc(e.name),esc(accRoleLabel(e.role)),esc(e.ip||''),esc(accessLogFmt(e.ts))].join(',')); });
+  var csv='\ufeff'+lines.join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a'); a.href=url; a.download='접속기록_'+(f||'')+'_'+(t||'')+'.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(url); },2000);
+  toast('엑셀 파일 다운로드됨 · '+list.length+'건','var(--g)');
 }
 function accessLogClose(){ var w=document.getElementById('alog-wrap'); if(w) w.parentNode.removeChild(w); }
 function accessLogClear(){ if(!confirm('접속 기록을 모두 삭제할까요?')) return; if(DB.cfg) DB.cfg.accessLog=[]; saveAll(); accessLogClose(); toast('접속 기록 삭제됨'); }
