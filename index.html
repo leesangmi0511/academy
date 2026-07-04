@@ -1091,17 +1091,17 @@ function _tbChunkLoad(n){
   return Promise.all(gets).then(function(docs){ var all=[]; docs.forEach(function(doc){ var o=_FS.docToObj(doc); if(o && o.items) all=all.concat(_tbExpand(o.items)); }); return all; });
 }
 function saveAll() {
-  // 각 로컬 저장을 개별 try/catch로 감쌈 → 유형이 수만 개라 용량 초과가 나도 함수가 중단되지 않고 서버 저장이 예약됨
-  try{ localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg)); }catch(_e){}
-  try{ localStorage.setItem('ac_subj', JSON.stringify(DB.subj)); }catch(_e){}
-  try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu)); }catch(_e){}
-  try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
-  try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank||[]))); }catch(_e){} // 압축 저장(용량 절감), 초과 시 건너뜀(서버가 원본)
   _lastLocalSave = Date.now();  // 변경 시각 기록 → 폴링 덮어쓰기 방지
   _saveDirty = true;            // 저장 대기 중 → 폴링이 옛 데이터로 덮어쓰지 않도록
   clearTimeout(saveTimer);
   saveTimer = setTimeout(function() {
+    // 무거운 로컬 저장(수만 개 직렬화)을 debounce 안으로 → 등록/편집 클릭이 즉시 반응
+    try{ localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg)); }catch(_e){}
+    try{ localStorage.setItem('ac_subj', JSON.stringify(DB.subj)); }catch(_e){}
+    try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu)); }catch(_e){}
+    try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
     var _ver = Date.now();
+    try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank||[]))); }catch(_e){} // 압축 저장, 초과 시 건너뜀(서버가 원본)
     try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
     _tbChunkSave()
       .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
@@ -2586,8 +2586,9 @@ function tbRegisterChecked(){
   else newRecs.forEach(function(r){ DB.typeBank.push(r); });
   var where=(pos>=0)?'지정 위치 아래':'맨 끝';
   tbInsertAfterId=null;
-  saveAll(); renderDiagnosis();
+  saveAll();
   toast(added+'개를 '+where+'에 등록했어요'+(dup?(' (중복 '+dup+'개 제외)'):''),'var(--g)');
+  setTimeout(function(){ try{ renderDiagnosis(); }catch(_e){} }, 0); // 화면 갱신은 다음 틱으로 → 클릭 즉시 반응
 }
 function tbPrefill(sub,ty){
   diagBankOpen=true; renderDiagnosis();
