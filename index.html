@@ -4784,6 +4784,25 @@ function collectAlerts(){
 }
 var _alertOpenCat = '';  // 펼쳐진 카테고리 (재렌더에도 유지)
 var ALERT_CATS = [ {k:'eval',icon:'📋',label:'평가',color:'var(--acc)'}, {k:'tuition',icon:'💳',label:'수강료',color:'var(--rd)'}, {k:'risk',icon:'⚠',label:'상담 위험',color:'var(--am)'} ];
+function dismissAllAlerts(){
+  if(!(ME&&ME.role==='owner')) return;
+  var active=collectAlerts().filter(function(a){return !a.done;});
+  if(!active.length) return;
+  if(!confirm('현재 알림 '+active.length+'건을 모두 해제할까요?')) return;
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.alertDone) DB.cfg.alertDone={};
+  active.forEach(function(a){ DB.cfg.alertDone[a.key]=1; });
+  saveAll(); renderAdminHome(); toast('알림 '+active.length+'건 전체 해제됨','var(--g)');
+}
+function dismissCatAlerts(cat){
+  if(!(ME&&ME.role==='owner')) return;
+  var active=collectAlerts().filter(function(a){return !a.done && a.cat===cat;});
+  if(!active.length) return;
+  var cn=''; for(var i=0;i<ALERT_CATS.length;i++){ if(ALERT_CATS[i].k===cat){ cn=ALERT_CATS[i].label; break; } }
+  if(!confirm(cn+' 알림 '+active.length+'건을 모두 해제할까요?')) return;
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.alertDone) DB.cfg.alertDone={};
+  active.forEach(function(a){ DB.cfg.alertDone[a.key]=1; });
+  saveAll(); renderAdminHome(); toast(cn+' 알림 '+active.length+'건 해제됨','var(--g)');
+}
 function toggleAlertCat(c){ _alertOpenCat = (_alertOpenCat===c ? '' : c); renderAdminHome(); }
 function alertCenterHTML(){
   var all=collectAlerts();
@@ -4793,7 +4812,8 @@ function alertCenterHTML(){
   var byCat={}; active.forEach(function(a){ (byCat[a.cat]=byCat[a.cat]||[]).push(a); });
   var total=active.length;
   var h='<div class="sl2"><div class="d8" style="background:var(--rd)"></div>알림 센터 🔔'
-      + (total?' <span style="font-size:11px;color:var(--rd);font-weight:700;margin-left:4px">'+total+'건</span>':'') + '</div>';
+      + (total?' <span style="font-size:11px;color:var(--rd);font-weight:700;margin-left:4px">'+total+'건</span>':'')
+      + ((owner&&total)?'<button onclick="dismissAllAlerts()" style="margin-left:auto;font-size:10.5px;color:var(--t2);background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:4px 10px;cursor:pointer;font-weight:600">✓ 전체 해제</button>':'') + '</div>';
   // 카테고리 요약 칩 (누르면 펼침)
   h+='<div style="display:flex;gap:6px;margin-bottom:'+(_alertOpenCat?'8px':'12px')+'">';
   ALERT_CATS.forEach(function(c){
@@ -4812,6 +4832,7 @@ function alertCenterHTML(){
       h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:14px;text-align:center;color:var(--g);font-size:12.5px;font-weight:600;margin-bottom:12px">이 항목의 알림이 없어요 ✓</div>';
     } else {
       h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);margin-bottom:12px">';
+      if(owner) h+='<div style="display:flex;justify-content:flex-end;padding:7px 10px 3px;border-bottom:1px solid var(--s2)"><button onclick="dismissCatAlerts(\''+_alertOpenCat+'\')" style="font-size:10.5px;color:var(--t2);background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:4px 10px;cursor:pointer;font-weight:600">✓ 이 항목 전체 해제</button></div>';
       list.forEach(function(a){
         var k=(a.key||'').replace(/'/g,'');
         h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid var(--s2)">'
