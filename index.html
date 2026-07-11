@@ -4328,30 +4328,52 @@ function calcPeriodAvg() {
   document.getElementById('period-result').style.display = 'block';
 }
 
-// 매달 25일 평가 알림 체크
+// 매달 마지막 주 월요일~말일: 평가 미완료 팝업 (하루 1회)
+function lastMondayDate(y,m0){ var last=new Date(y,m0+1,0); var back=(last.getDay()-1+7)%7; return last.getDate()-back; }
 function checkEvalReminder() {
-  if(!notifOn('eval')) return;
-  if(!notifRoleAllowed('eval')) return;
-  var now = new Date();
-  var day = now.getDate();
-  var ym = getYearMonth();
-  // 25일~말일 사이 + 이번 달 아직 안 알림
-  if(day < 25) return;
-  var lastRemind = localStorage.getItem('eval_remind_'+ym);
-  if(lastRemind) return;
-  localStorage.setItem('eval_remind_'+ym, '1');
-  // 이번 달 평가 완료 여부 확인
-  var eh = DB.evalHistory || {};
-  var thisMonth = eh[ym] || {};
-  var teachers = DB.cfg.teachers;
-  var notDone = teachers.filter(function(t){ return !thisMonth.teachers||thisMonth.teachers[t.name]===undefined; });
-  var adminDone = thisMonth.admin !== undefined;
-  if(notDone.length > 0 || (!adminDone && ME.role==='owner')) {
-    var msg = '📋 이번 달 평가 기간이에요!\n';
-    if(notDone.length > 0) msg += notDone.map(function(t){return t.name;}).join(', ')+' 강사 평가 미완료\n';
-    if(!adminDone && ME.role==='owner') msg += '👔 관리자 평가 미완료';
+  if(!ME || !isOwnerLevel()) return;                 // 평가자(원장·행정팀)에게만
+  var now=new Date(), day=now.getDate();
+  var lastMon=lastMondayDate(now.getFullYear(), now.getMonth());
+  if(day < lastMon) return;                            // 마지막 주 월요일 전이면 안 함
+  var ym=getYearMonth();
+  var flag='eval_remind_'+ym+'_'+day;                  // 같은 날 1회
+  if(localStorage.getItem(flag)) return;
+  var eh=DB.evalHistory||{}, thisMonth=eh[ym]||{};
+  var teachers=DB.cfg.teachers||[];
+  var notDone=teachers.filter(function(t){ return !thisMonth.teachers||thisMonth.teachers[t.name]===undefined; });
+  var adminUndone=(ME.role==='owner') && (thisMonth.admin===undefined);
+  if(notDone.length===0 && !adminUndone) return;       // 모두 완료 → 알림 없음
+  localStorage.setItem(flag,'1');
+  showEvalRemindPopup(notDone, adminUndone);
+}
+function showEvalRemindPopup(notDone, adminUndone){
+  var owner=(ME&&ME.role==='owner');
+  var h='<div class="ov" id="ov-eval-remind" onclick="ovClose(event,this)" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">📋 이번 달 평가 기간입니다</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:12px">마지막 주 월요일부터 말일까지가 평가 기간이에요. 미완료 평가를 완료해 주세요.</div>';
+  if(notDone.length){
+    h+='<div style="background:var(--rdl);border:1px solid var(--rd);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px">'
+      +'<div style="font-size:12.5px;font-weight:700;color:var(--rd);margin-bottom:6px">강사 평가 미완료 '+notDone.length+'명</div>'
+      +'<div style="font-size:12px;color:var(--te);line-height:1.5">'+notDone.map(function(t){return dEsc(t.name);}).join(', ')+'</div>'
+      +'<button onclick="document.getElementById(\'ov-eval-remind\').remove();openTeacherEvalMenu()" style="width:100%;margin-top:8px;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:9px;font-weight:700;cursor:pointer">강사 평가하러 가기</button></div>';
+  }
+  if(adminUndone){
+    h+='<div style="background:var(--aml);border:1px solid var(--pu);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px">'
+      +'<div style="font-size:12.5px;font-weight:700;color:var(--pu);margin-bottom:6px">👔 관리자 평가 미완료</div>'
+      +'<button onclick="document.getElementById(\'ov-eval-remind\').remove();openAdminEval()" style="width:100%;background:var(--pu);color:#fff;border:none;border-radius:8px;padding:9px;font-weight:700;cursor:pointer">관리자 평가하러 가기</button></div>';
+  }
+  if(owner && notDone.length){
+    h+='<div style="background:#fff8e6;border:1px solid #f0d79a;border-radius:var(--rs);padding:10px 12px;margin-bottom:10px">'
+      +'<div style="font-size:12px;font-weight:700;color:#8a6d1f;margin-bottom:4px">🔔 원장 확인 — 미완료 '+notDone.length+'명</div>'
+      +'<div style="font-size:11.5px;color:#8a6d1f;line-height:1.5">'+notDone.map(function(t){return dEsc(t.name);}).join(', ')+' 강사 평가가 아직 안 됐어요.</div></div>';
+  }
+  h+='<button class="btn ghost" onclick="document.getElementById(\'ov-eval-remind\').remove()">나중에</button></div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+  if(typeof showDirectNotif==='function' && typeof notifOn==='function' && notifOn('eval')){
+    var msg='📋 이번 달 평가 기간이에요!\n';
+    if(notDone.length) msg+='강사 평가 미완료: '+notDone.map(function(t){return t.name;}).join(', ')+'\n';
+    if(adminUndone) msg+='👔 관리자 평가 미완료';
     showDirectNotif('ROUTETOP 평가 알림', msg.trim());
-    toast('📋 이번 달 평가 기간이에요! (25일~말일)', 'var(--acc)');
   }
 }
 
@@ -4727,6 +4749,86 @@ function riskNotify(){
   showDirectNotif('ROUTETOP 위험 감지', '미처리 상담 '+p.length+'건이 있어요. 확인해 주세요.');
 }
 
+// ── 알림 센터: 평가 미완료 · 수강료 미납 · 상담 위험을 모아서 표시, 원장이 체크로 해제
+function collectAlerts(){
+  var out=[], ym=getYearMonth();
+  var done=(DB.cfg&&DB.cfg.alertDone)||{};
+  // 1) 평가 미완료 (마지막 주 월요일~말일)
+  var now=new Date(), day=now.getDate();
+  var lastMon=lastMondayDate(now.getFullYear(), now.getMonth());
+  if(day>=lastMon){
+    var eh=DB.evalHistory||{}, tm=eh[ym]||{};
+    (DB.cfg.teachers||[]).forEach(function(t){
+      if(!tm.teachers||tm.teachers[t.name]===undefined)
+        out.push({key:'eval_t_'+ym+'_'+t.name, icon:'📋', color:'var(--acc)', title:'강사 평가 미완료', detail:t.name+' 강사', action:'openTeacherEvalMenu'});
+    });
+    if(ME&&ME.role==='owner' && tm.admin===undefined)
+      out.push({key:'eval_admin_'+ym, icon:'👔', color:'var(--pu)', title:'관리자 평가 미완료', detail:'이번 달 관리자 평가', action:'openAdminEval'});
+  }
+  // 2) 수강료 미납 (원장·행정팀)
+  if(isOwnerLevel() && typeof getStuPayStatus==='function'){
+    var tym=(typeof getTuitionMonth==='function')?getTuitionMonth():ym;
+    (DB.stu||[]).forEach(function(s){
+      var ps=getStuPayStatus(s, tym);
+      if(ps.status==='미납')
+        out.push({key:'unpaid_'+tym+'_'+(s.id||s.name), icon:'💳', color:'var(--rd)', title:'수강료 미납', detail:s.name+(ps.amount?(' · '+(ps.amount).toLocaleString()+'원'):''), action:null});
+    });
+  }
+  // 3) 상담 위험(긴급) 학생
+  (DB.stu||[]).forEach(function(s){
+    var c=cSt(s);
+    if(c.lv==='urgent')
+      out.push({key:'risk_'+(s.id||s.name)+'_'+ym, icon:'⚠', color:'var(--rd)', title:'상담 위험', detail:s.name+' · '+c.lb, action:null});
+  });
+  return out.map(function(a){ a.done=!!done[a.key]; return a; });
+}
+function alertCenterHTML(){
+  var all=collectAlerts();
+  var active=all.filter(function(a){return !a.done;});
+  var dismissed=all.filter(function(a){return a.done;});
+  var owner=(ME&&ME.role==='owner');
+  var h='<div class="sl2"><div class="d8" style="background:var(--rd)"></div>알림 센터 🔔'
+      + (active.length?' <span style="font-size:11px;color:var(--rd);font-weight:700;margin-left:4px">'+active.length+'건</span>':'')
+      + '</div>';
+  if(!active.length && !dismissed.length)
+    return h+'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:14px;text-align:center;color:var(--t3);font-size:12.5px;margin-bottom:12px">확인할 알림이 없어요 ✓</div>';
+  h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 2px;margin-bottom:'+(owner&&dismissed.length?'4px':'12px')+'">';
+  if(!active.length) h+='<div style="padding:12px;text-align:center;color:var(--g);font-size:12.5px;font-weight:600">모든 알림을 확인했어요 ✓</div>';
+  active.forEach(function(a){
+    var k=(a.key||'').replace(/'/g,'');
+    h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid var(--s2)">'
+      +'<span style="font-size:16px;flex-shrink:0">'+a.icon+'</span>'
+      +'<div style="flex:1;min-width:0'+(a.action?';cursor:pointer':'')+'"'+(a.action?(' onclick="'+a.action+'()"'):'')+'>'
+        +'<div style="font-size:12.5px;font-weight:700;color:'+a.color+'">'+a.title+'</div>'
+        +'<div style="font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(a.detail)+'</div>'
+      +'</div>'
+      + (owner?('<label style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:var(--t3)"><input type="checkbox" onchange="dismissAlert(\''+k+'\')" style="width:17px;height:17px;accent-color:var(--g);cursor:pointer">해제</label>'):'')
+    +'</div>';
+  });
+  h+='</div>';
+  if(owner && dismissed.length){
+    h+='<details style="margin:0 0 12px"><summary style="font-size:11px;color:var(--t3);cursor:pointer;padding:2px 6px">해제됨 '+dismissed.length+'건 (되돌리기)</summary>';
+    dismissed.forEach(function(a){
+      var k=(a.key||'').replace(/'/g,'');
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11.5px;color:var(--t3)">'
+        +'<span style="flex-shrink:0">'+a.icon+'</span>'
+        +'<span style="flex:1;text-decoration:line-through;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+a.title+' · '+dEsc(a.detail)+'</span>'
+        +'<button onclick="restoreAlert(\''+k+'\')" style="flex-shrink:0;font-size:10.5px;color:var(--acc);background:none;border:none;cursor:pointer">되돌리기</button>'
+      +'</div>';
+    });
+    h+='</details>';
+  }
+  return h;
+}
+function dismissAlert(key){
+  if(!(ME&&ME.role==='owner')) return;
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.alertDone) DB.cfg.alertDone={};
+  DB.cfg.alertDone[key]=1; saveAll(); renderAdminHome();
+}
+function restoreAlert(key){
+  if(!(ME&&ME.role==='owner')) return;
+  if(DB.cfg&&DB.cfg.alertDone){ delete DB.cfg.alertDone[key]; saveAll(); renderAdminHome(); }
+}
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
@@ -4747,6 +4849,9 @@ function renderAdminHome() {
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>';
+
+  // 알림 센터
+  h += alertCenterHTML();
 
   // 통계
   h += '<div class="'+(canSeeStudentCount()?'sg4':'sg3')+'">'
@@ -5644,6 +5749,7 @@ function doLogin() {
   updateTabVisibility();
   recordAccess();
   goTab('home');
+  setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} }, 800);
 }
 
 // 저장된 자동 로그인 정보로 자동 로그인 시도
@@ -5688,6 +5794,7 @@ function tryAutoLogin() {
   updateTabVisibility();
   recordAccess();
   goTab('home');
+  setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} }, 800);
   return true;
 }
 function logout() {
