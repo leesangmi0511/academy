@@ -3632,6 +3632,28 @@ function syncHwProgressToSubj(){
   return updated;
 }
 function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var sp=hwData.fields.studentProgress;if(!sp||!sp.mapValue||!sp.mapValue.fields)return 0;var spFields=sp.mapValue.fields;if(!stuList||!stuList.length)return 0;var totalDone=0,totalAll=0;var hwUsers=hwData.fields.users?hwData.fields.users.arrayValue.values||[]:[];stuList.forEach(function(stu){var hwUser=hwUsers.find(function(u){var f=u.mapValue?u.mapValue.fields:null;return f&&(f.name?f.name.stringValue:'')===stu.name;});if(!hwUser)return;var hwId=(hwUser.mapValue.fields.id||{}).stringValue||'';if(!hwId||!spFields[hwId])return;var stuSp=spFields[hwId].mapValue?spFields[hwId].mapValue.fields:null;if(!stuSp)return;Object.keys(stuSp).forEach(function(key){var vals=stuSp[key].arrayValue?stuSp[key].arrayValue.values||[]:[];totalAll++;if(vals.filter(function(v){return v.stringValue&&v.stringValue!=='t0';}).length>0)totalDone++;});});return totalAll>0?Math.round(totalDone/totalAll*100):0;}
+// 과제앱 오답데이 완료율 (1차=15일까지, 2차=말일까지). 반환 {score,rate1,rate2} 또는 null(데이터 없음)
+function calcOhdapRate(stuList){
+  if(!hwData||!hwData.fields||!stuList||!stuList.length) return null;
+  var ohdap = hwData.fields.ohdap ? (_FS._fromFS(hwData.fields.ohdap)||{}) : {};
+  var months = ohdap.months||{};
+  var now=new Date(); var mk=now.getFullYear()+'-'+('0'+(now.getMonth()+1)).slice(-2);
+  var md = months[mk] || {round1:{},round2:{}};
+  var r1=md.round1||{}, r2=md.round2||{};
+  var hwUsers = hwData.fields.users ? (hwData.fields.users.arrayValue.values||[]) : [];
+  var ids=[];
+  stuList.forEach(function(stu){
+    var u=hwUsers.find(function(u){var f=u.mapValue?u.mapValue.fields:null; return f&&(f.name?f.name.stringValue:'')===stu.name;});
+    if(u){ var id=(u.mapValue.fields.id||{}).stringValue||''; if(id) ids.push(id); }
+  });
+  if(!ids.length) return null;
+  var d1=0,d2=0;
+  ids.forEach(function(id){ if(r1[id]) d1++; if(r2[id]) d2++; });
+  var rate1=Math.round(d1/ids.length*100), rate2=Math.round(d2/ids.length*100);
+  var day=now.getDate();
+  var score = (day<=15) ? rate1 : Math.round((rate1+rate2)/2); // 15일까지 1차만, 이후 1·2차 평균
+  return {score:score, rate1:rate1, rate2:rate2, day:day};
+}
 
 // ═══ 강사 평가 ═══
 var currentEvalTeacher = null; // 평가 중인 강사 이름
@@ -4565,19 +4587,21 @@ function computeAllTeacherMetrics(){
     var evalScore=getEvalScore(t.name)||0;
     var wAll=(DB.withdrawn||[]).filter(function(r){return r.teacher===t.name;}).length;
     var wDenom=tSt.length+wAll; var wdRate=wDenom?Math.round(wAll/wDenom*100):0;
-    return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate};
+    var oh=calcOhdapRate(tSt); // 오답데이 완료율 (없으면 null)
+    return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate, ohdapScore:(oh?oh.score:null), ohdapR1:(oh?oh.rate1:null), ohdapR2:(oh?oh.rate2:null)};
   });
 }
 function teacherComposite(t){
   var parts=[
-    {k:'진도율', v:t.progressAvg||0, unit:'%'},
-    {k:'상담', v:t.consultRate||0, unit:'%'},
-    {k:'과제', v:t.hwRate||0, unit:'%'},
-    {k:'평가', v:t.evalScore||0, unit:'점'},
-    {k:'퇴원안정', v:100-(t.wdRate||0), unit:'%'}
+    {k:'진도율', v:t.progressAvg||0, unit:'%', on:true},
+    {k:'상담', v:t.consultRate||0, unit:'%', on:true},
+    {k:'과제', v:t.hwRate||0, unit:'%', on:true},
+    {k:'평가', v:t.evalScore||0, unit:'점', on:true},
+    {k:'퇴원안정', v:100-(t.wdRate||0), unit:'%', on:true},
+    {k:'오답데이', v:(t.ohdapScore!=null?t.ohdapScore:0), unit:'%', on:(t.ohdapScore!=null)}
   ];
-  var sum=0; parts.forEach(function(p){ sum+=p.v; });
-  return {score:Math.round(sum/parts.length), parts:parts};
+  var sum=0,cnt=0; parts.forEach(function(p){ if(p.on){ sum+=p.v; cnt++; } });
+  return {score:(cnt?Math.round(sum/cnt):0), parts:parts};
 }
 function teacherOverallHTML(){
   var data=computeAllTeacherMetrics();
@@ -4590,9 +4614,10 @@ function teacherOverallHTML(){
     var sc=t.composite;
     var col=sc>=80?'var(--g)':sc>=60?'var(--acc)':sc>=40?'var(--am)':'var(--rd)';
     var parts=t.parts.map(function(p){
+      var val = p.on ? (p.v+'<span style="font-size:9px;color:var(--t3)">'+p.unit+'</span>') : '<span style="color:var(--t3)">-</span>';
       return '<div style="flex:1;text-align:center;min-width:0">'
         +'<div style="font-size:9.5px;color:var(--t3);margin-bottom:2px">'+p.k+'</div>'
-        +'<div style="font-size:12.5px;font-weight:700;color:var(--te)">'+p.v+'<span style="font-size:9px;color:var(--t3)">'+p.unit+'</span></div></div>';
+        +'<div style="font-size:12.5px;font-weight:700;color:var(--te)">'+val+'</div></div>';
     }).join('');
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 14px;margin-bottom:8px;cursor:pointer" onclick="showTDetail('+t.idx+')">'
       +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">'
@@ -4765,7 +4790,7 @@ function renderAdminHome() {
 
   // ── 강사 종합 평가 (강사평가 + 순위 지표 종합)
   h += '<div class="sl2"><div class="d8" style="background:var(--g)"></div>강사 종합 평가 🏅</div>';
-  h += '<div style="font-size:11px;color:var(--t3);margin:-4px 0 10px">진도율·상담·과제·강사평가·퇴원안정을 평균한 종합 점수입니다. (강사 카드를 누르면 상세)</div>';
+  h += '<div style="font-size:11px;color:var(--t3);margin:-4px 0 10px">진도율·상담·과제·강사평가·퇴원안정·오답데이를 평균한 종합 점수입니다. 오답데이는 1차(15일까지)·2차(말일까지) 완료율 기준. (강사 카드를 누르면 상세)</div>';
   h += teacherOverallHTML();
 
   // ── 강사 순위
