@@ -4760,10 +4760,10 @@ function collectAlerts(){
     var eh=DB.evalHistory||{}, tm=eh[ym]||{};
     (DB.cfg.teachers||[]).forEach(function(t){
       if(!tm.teachers||tm.teachers[t.name]===undefined)
-        out.push({key:'eval_t_'+ym+'_'+t.name, icon:'📋', color:'var(--acc)', title:'강사 평가 미완료', detail:t.name+' 강사', action:'openTeacherEvalMenu'});
+        out.push({key:'eval_t_'+ym+'_'+t.name, cat:'eval', icon:'📋', color:'var(--acc)', title:'강사 평가 미완료', detail:t.name+' 강사', action:'openTeacherEvalMenu'});
     });
     if(ME&&ME.role==='owner' && tm.admin===undefined)
-      out.push({key:'eval_admin_'+ym, icon:'👔', color:'var(--pu)', title:'관리자 평가 미완료', detail:'이번 달 관리자 평가', action:'openAdminEval'});
+      out.push({key:'eval_admin_'+ym, cat:'eval', icon:'👔', color:'var(--pu)', title:'관리자 평가 미완료', detail:'이번 달 관리자 평가', action:'openAdminEval'});
   }
   // 2) 수강료 미납 (원장·행정팀)
   if(isOwnerLevel() && typeof getStuPayStatus==='function'){
@@ -4771,43 +4771,68 @@ function collectAlerts(){
     (DB.stu||[]).forEach(function(s){
       var ps=getStuPayStatus(s, tym);
       if(ps.status==='미납')
-        out.push({key:'unpaid_'+tym+'_'+(s.id||s.name), icon:'💳', color:'var(--rd)', title:'수강료 미납', detail:s.name+(ps.amount?(' · '+(ps.amount).toLocaleString()+'원'):''), action:null});
+        out.push({key:'unpaid_'+tym+'_'+(s.id||s.name), cat:'tuition', icon:'💳', color:'var(--rd)', title:'수강료 미납', detail:s.name+(ps.amount?(' · '+(ps.amount).toLocaleString()+'원'):''), action:null});
     });
   }
   // 3) 상담 위험(긴급) 학생
   (DB.stu||[]).forEach(function(s){
     var c=cSt(s);
     if(c.lv==='urgent')
-      out.push({key:'risk_'+(s.id||s.name)+'_'+ym, icon:'⚠', color:'var(--rd)', title:'상담 위험', detail:s.name+' · '+c.lb, action:null});
+      out.push({key:'risk_'+(s.id||s.name)+'_'+ym, cat:'risk', icon:'⚠', color:'var(--rd)', title:'상담 위험', detail:s.name+' · '+c.lb, action:null});
   });
   return out.map(function(a){ a.done=!!done[a.key]; return a; });
 }
+var _alertOpenCat = '';  // 펼쳐진 카테고리 (재렌더에도 유지)
+var ALERT_CATS = [ {k:'eval',icon:'📋',label:'평가',color:'var(--acc)'}, {k:'tuition',icon:'💳',label:'수강료',color:'var(--rd)'}, {k:'risk',icon:'⚠',label:'상담 위험',color:'var(--am)'} ];
+function toggleAlertCat(c){ _alertOpenCat = (_alertOpenCat===c ? '' : c); renderAdminHome(); }
 function alertCenterHTML(){
   var all=collectAlerts();
   var active=all.filter(function(a){return !a.done;});
   var dismissed=all.filter(function(a){return a.done;});
   var owner=(ME&&ME.role==='owner');
+  var byCat={}; active.forEach(function(a){ (byCat[a.cat]=byCat[a.cat]||[]).push(a); });
+  var total=active.length;
   var h='<div class="sl2"><div class="d8" style="background:var(--rd)"></div>알림 센터 🔔'
-      + (active.length?' <span style="font-size:11px;color:var(--rd);font-weight:700;margin-left:4px">'+active.length+'건</span>':'')
-      + '</div>';
-  if(!active.length && !dismissed.length)
-    return h+'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:14px;text-align:center;color:var(--t3);font-size:12.5px;margin-bottom:12px">확인할 알림이 없어요 ✓</div>';
-  h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 2px;margin-bottom:'+(owner&&dismissed.length?'4px':'12px')+'">';
-  if(!active.length) h+='<div style="padding:12px;text-align:center;color:var(--g);font-size:12.5px;font-weight:600">모든 알림을 확인했어요 ✓</div>';
-  active.forEach(function(a){
-    var k=(a.key||'').replace(/'/g,'');
-    h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid var(--s2)">'
-      +'<span style="font-size:16px;flex-shrink:0">'+a.icon+'</span>'
-      +'<div style="flex:1;min-width:0'+(a.action?';cursor:pointer':'')+'"'+(a.action?(' onclick="'+a.action+'()"'):'')+'>'
-        +'<div style="font-size:12.5px;font-weight:700;color:'+a.color+'">'+a.title+'</div>'
-        +'<div style="font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(a.detail)+'</div>'
-      +'</div>'
-      + (owner?('<label style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:var(--t3)"><input type="checkbox" onchange="dismissAlert(\''+k+'\')" style="width:17px;height:17px;accent-color:var(--g);cursor:pointer">해제</label>'):'')
-    +'</div>';
+      + (total?' <span style="font-size:11px;color:var(--rd);font-weight:700;margin-left:4px">'+total+'건</span>':'') + '</div>';
+  // 카테고리 요약 칩 (누르면 펼침)
+  h+='<div style="display:flex;gap:6px;margin-bottom:'+(_alertOpenCat?'8px':'12px')+'">';
+  ALERT_CATS.forEach(function(c){
+    var n=(byCat[c.k]||[]).length, open=_alertOpenCat===c.k;
+    h+='<button onclick="toggleAlertCat(\''+c.k+'\')" style="flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:2px;padding:9px 4px;border-radius:12px;cursor:pointer;'
+      +(open?('background:'+c.color+';border:1.5px solid '+c.color+';color:#fff'):('background:var(--s1);border:1.5px solid '+(n?c.color:'var(--s3)')+';color:'+(n?c.color:'var(--t3)')))+'">'
+      +'<span style="font-size:16px">'+c.icon+'</span>'
+      +'<span style="font-size:11px;font-weight:700">'+c.label+'</span>'
+      +'<span style="font-size:13px;font-weight:800">'+n+'</span></button>';
   });
   h+='</div>';
+  // 펼친 카테고리 상세
+  if(_alertOpenCat){
+    var list=byCat[_alertOpenCat]||[];
+    if(!list.length){
+      h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:14px;text-align:center;color:var(--g);font-size:12.5px;font-weight:600;margin-bottom:12px">이 항목의 알림이 없어요 ✓</div>';
+    } else {
+      h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);margin-bottom:12px">';
+      list.forEach(function(a){
+        var k=(a.key||'').replace(/'/g,'');
+        h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid var(--s2)">'
+          +'<span style="font-size:15px;flex-shrink:0">'+a.icon+'</span>'
+          +'<div style="flex:1;min-width:0'+(a.action?';cursor:pointer':'')+'"'+(a.action?(' onclick="'+a.action+'()"'):'')+'>'
+            +'<div style="font-size:12.5px;font-weight:700;color:'+a.color+'">'+a.title+'</div>'
+            +'<div style="font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(a.detail)+'</div>'
+          +'</div>'
+          + (owner?('<label style="flex-shrink:0;display:flex;align-items:center;gap:4px;cursor:pointer;font-size:10.5px;color:var(--t3)"><input type="checkbox" onchange="dismissAlert(\''+k+'\')" style="width:17px;height:17px;accent-color:var(--g);cursor:pointer">해제</label>'):'')
+        +'</div>';
+      });
+      h+='</div>';
+    }
+  } else if(total){
+    h+='<div style="font-size:11px;color:var(--t3);text-align:center;margin-bottom:12px">위 항목을 눌러 상세 알림을 확인하세요</div>';
+  } else {
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px;text-align:center;color:var(--t3);font-size:12px;margin-bottom:12px">확인할 알림이 없어요 ✓</div>';
+  }
+  // 해제됨 (원장, 접기)
   if(owner && dismissed.length){
-    h+='<details style="margin:0 0 12px"><summary style="font-size:11px;color:var(--t3);cursor:pointer;padding:2px 6px">해제됨 '+dismissed.length+'건 (되돌리기)</summary>';
+    h+='<details style="margin:-4px 0 12px"><summary style="font-size:11px;color:var(--t3);cursor:pointer;padding:2px 6px">해제됨 '+dismissed.length+'건 (되돌리기)</summary>';
     dismissed.forEach(function(a){
       var k=(a.key||'').replace(/'/g,'');
       h+='<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11.5px;color:var(--t3)">'
