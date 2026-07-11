@@ -447,32 +447,94 @@ function WithdrawalModal({ student, ctx, cur, onClose, onConfirm }) {
 
 // 퇴원 기록 + 강사 평가 (매니저 이상)
 function AdminWithdrawals({ withdrawals, setWithdrawals, users, forceSave }) {
-  var list = (withdrawals || []).slice().sort(function(a, b) { return (b.date || "").localeCompare(a.date || ""); });
+  var [fromD, setFromD] = useState("");
+  var [toD, setToD] = useState("");
+  var all = (withdrawals || []).slice().sort(function(a, b) { return (b.date || "").localeCompare(a.date || ""); });
+  var lastDate = all.length ? all[0].date : null;
   var insts = users.filter(function(u) { return u.role === "instructor"; });
   var evalScore = function(instId) { return (withdrawals || []).filter(function(w) { return w.teacherId === instId && w.match; }).length; };
   var remove = function(id) { if (window.confirm("이 퇴원 기록을 삭제할까요?")) { setWithdrawals(function(p) { return (p || []).filter(function(w) { return w.id !== id; }); }); forceSave(); } };
+  var fmt = function(d) { return (d || "").replace(/-/g, "."); };
+  var mLabel = function(m) { var p = m.split("-"); return p.length === 2 ? p[0] + "년 " + (+p[1]) + "월" : m; };
+  var thisMonth = function() { var ym = td().slice(0, 7); setFromD(ym + "-01"); setToD(ym + "-31"); };
+  var thisYear = function() { var y = td().slice(0, 4); setFromD(y + "-01-01"); setToD(y + "-12-31"); };
+  var clearRange = function() { setFromD(""); setToD(""); };
+
+  var filtered = all.filter(function(w) { var d = w.date || ""; return (!fromD || d >= fromD) && (!toD || d <= toD); });
+  var groups = {}; filtered.forEach(function(w) { var m = (w.date || "").slice(0, 7) || "기타"; (groups[m] = groups[m] || []).push(w); });
+  var months = Object.keys(groups).sort().reverse();
+  var ranged = !!(fromD || toD);
+
+  var dInput = { padding: "8px 10px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'" };
+  var qBtn = { padding: "7px 12px", borderRadius: 18, border: "1px solid var(--bdr)", background: "#fff", fontSize: 12.5, fontWeight: 700, color: "var(--tx2)", cursor: "pointer", fontFamily: "'Noto Sans KR'" };
+
   return (
     <div>
-      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>강사 평가 — 진단 일치 점수</h3>
+      {/* 요약 */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+        <div style={{ flex: 1, background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11.5, color: "var(--tx2)" }}>총 퇴원생</div>
+          <div style={{ fontSize: 24, fontWeight: 800, color: "var(--pri)" }}>{all.length}<span style={{ fontSize: 13, fontWeight: 600 }}>명</span></div>
+        </div>
+        <div style={{ flex: 1.4, background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11.5, color: "var(--tx2)" }}>마지막 퇴원처리 날짜</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: "var(--tx)" }}>{lastDate ? fmt(lastDate) : "—"}</div>
+        </div>
+      </div>
+
+      {/* 기간 조회 */}
+      <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8, color: "var(--tx)" }}>📅 퇴원 기간 조회</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <input type="date" value={fromD} onChange={function(e) { setFromD(e.target.value); }} style={dInput} />
+          <span style={{ color: "var(--tx2)" }}>~</span>
+          <input type="date" value={toD} onChange={function(e) { setToD(e.target.value); }} style={dInput} />
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button style={qBtn} onClick={thisMonth}>이번 달</button>
+          <button style={qBtn} onClick={thisYear}>올해</button>
+          <button style={Object.assign({}, qBtn, ranged ? {} : { borderColor: "var(--pri)", color: "var(--pri)" })} onClick={clearRange}>전체</button>
+          {ranged && <span style={{ fontSize: 12, color: "var(--tx2)", alignSelf: "center", marginLeft: 4 }}>조회 결과 {filtered.length}건</span>}
+        </div>
+      </div>
+
+      {/* 강사 평가 */}
+      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>강사 평가 — 진단 일치 점수</h3>
       <div className="sg" style={{ marginBottom: 18 }}>
         {insts.length === 0 ? <div style={{ fontSize: 12, color: "var(--tx2)" }}>강사가 없습니다</div> : insts.map(function(it) {
           return <div className="sc" key={it.id}><div className="sl">{it.avatar} {it.name}</div><div className="sv g">+{evalScore(it.id)}</div></div>;
         })}
       </div>
-      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>퇴원 기록 ({list.length})</h3>
-      {list.length === 0 ? <div className="empty"><div className="eic">🚪</div><p>퇴원 기록이 없습니다</p></div> :
-        list.map(function(w) {
+
+      {/* 월별 정리 */}
+      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>월별 퇴원 정리</h3>
+      {months.length === 0 ? <div className="empty"><div className="eic">🚪</div><p>{ranged ? "해당 기간의 퇴원 기록이 없습니다" : "퇴원 기록이 없습니다"}</p></div> :
+        months.map(function(m) {
+          var recs = groups[m];
           return (
-            <div key={w.id} className="card" style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 14, fontWeight: 800 }}>{w.studentName}</span>
-                <span style={{ fontSize: 11, color: "var(--tx2)" }}>{w.classId} · {w.date}{w.teacherName ? " · 담임 " + w.teacherName : ""}</span>
-                {w.match && <span style={{ fontSize: 10, fontWeight: 800, color: "#065f46", background: "#d1fae5", borderRadius: 10, padding: "1px 8px" }}>일치 +1</span>}
-                <button className="btn-d" style={{ marginLeft: "auto", fontSize: 13 }} onClick={function() { remove(w.id); }}>✕</button>
+            <div key={m} style={{ marginBottom: 18 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", background: "var(--pri)", color: "#fff", borderRadius: 10, marginBottom: 8 }}>
+                <span style={{ fontSize: 14, fontWeight: 800 }}>{mLabel(m)}</span>
+                <span style={{ fontSize: 12, marginLeft: "auto", background: "rgba(255,255,255,.22)", borderRadius: 10, padding: "1px 9px", fontWeight: 700 }}>{recs.length}명</span>
               </div>
-              <div style={{ fontSize: 12, marginBottom: 4 }}><b style={{ color: "var(--pri)" }}>담임 진단:</b> {(w.teacherReasons || []).map(function(k) { return WLABEL[k]; }).join(", ")}{w.teacherEtc ? " (" + w.teacherEtc + ")" : ""}</div>
-              {w.teacherNote && <div style={{ fontSize: 11.5, color: "var(--tx2)", marginBottom: 4 }}>메모: {w.teacherNote}</div>}
-              <div style={{ fontSize: 12, background: "#eef2ff", borderRadius: 8, padding: "7px 10px" }}><b style={{ color: "#3730a3" }}>🤖 AI 진단:</b> {(w.ai && w.ai.summary) || "—"}</div>
+              {recs.map(function(w) {
+                var stu = users.find(function(u) { return u.id === w.studentId; });
+                return (
+                  <div key={w.id} className="card" style={{ marginBottom: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                      <span style={{ fontSize: 18 }}>{stu ? stu.avatar : "🎒"}</span>
+                      <span style={{ fontSize: 15, fontWeight: 800 }}>{w.studentName}</span>
+                      <span style={{ fontSize: 11.5, color: "var(--tx2)" }}>{w.classId}{w.teacherName ? " · 담임 " + w.teacherName : ""}</span>
+                      {w.match && <span style={{ fontSize: 10, fontWeight: 800, color: "#065f46", background: "#d1fae5", borderRadius: 10, padding: "1px 8px" }}>일치 +1</span>}
+                      <button className="btn-d" style={{ marginLeft: "auto", fontSize: 13 }} onClick={function() { remove(w.id); }}>✕</button>
+                    </div>
+                    <div style={{ display: "inline-block", fontSize: 11.5, fontWeight: 700, color: "var(--pri)", background: "var(--prib)", borderRadius: 8, padding: "2px 9px", marginBottom: 7 }}>🚪 퇴원처리 {fmt(w.date)}</div>
+                    <div style={{ fontSize: 12.5, marginBottom: 4 }}><b style={{ color: "var(--pri)" }}>퇴원 사유:</b> {(w.teacherReasons || []).map(function(k) { return WLABEL[k]; }).join(", ") || "—"}{w.teacherEtc ? " (" + w.teacherEtc + ")" : ""}</div>
+                    {w.teacherNote && <div style={{ fontSize: 11.5, color: "var(--tx2)", marginBottom: 4 }}>메모: {w.teacherNote}</div>}
+                    <div style={{ fontSize: 12, background: "#eef2ff", borderRadius: 8, padding: "7px 10px" }}><b style={{ color: "#3730a3" }}>🤖 AI 진단:</b> {(w.ai && w.ai.summary) || "—"}</div>
+                  </div>
+                );
+              })}
             </div>
           );
         })}
@@ -480,7 +542,150 @@ function AdminWithdrawals({ withdrawals, setWithdrawals, users, forceSave }) {
   );
 }
 
-function AdminPage({ users, setUsers, textbooks, setTextbooks, curriculum, setCurriculum, allA, sp, classList, setClassList, hideCount, ohdap, setOhdap, forceSave, attendance, setAttendance, scores, setScores, selfCodes, setSelfCodes, messages, cur, withdrawals, setWithdrawals }) {
+// ═══════════════════════════════════════
+// 내신 성적 → 상담필요 (하락/70점 이하 감지 + 상담 기록)
+// ═══════════════════════════════════════
+function scoreCounselTriggers(newExam, prevExams) {
+  var triggers = [];
+  var subs = newExam.subjects || {};
+  var prevNaeshin = (prevExams || []).filter(function(e) { return e.type === "내신"; }).sort(function(a, b) { return (b.date || "").localeCompare(a.date || ""); })[0];
+  Object.keys(subs).forEach(function(sub) {
+    var raw = (subs[sub] || {}).score;
+    if (raw === "" || raw == null) return;
+    var sc = Number(raw); if (isNaN(sc)) return;
+    var rs = [];
+    if (sc <= 70) rs.push("70점 이하");
+    if (prevNaeshin && prevNaeshin.subjects && prevNaeshin.subjects[sub]) {
+      var pv = Number(prevNaeshin.subjects[sub].score);
+      if (!isNaN(pv) && pv >= 0 && pv <= 100 && sc < pv) rs.push("이전 " + pv + "점 → 하락");
+    }
+    if (rs.length) triggers.push({ sub: sub, score: sc, reasons: rs });
+  });
+  return triggers;
+}
+function fireNotif(title, body) { try { if (window.Notification && Notification.permission === "granted") new Notification(title, { body: body, icon: "/icon-192.png" }); } catch (e) {} }
+
+function CounselModal({ counsel, onClose, onSave }) {
+  var [note, setNote] = useState(counsel.note || "");
+  return (
+    <div className="mo" onClick={onClose}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 480 }}>
+      <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>📋 상담 기록 — {counsel.studentName} <span style={{ fontSize: 12, color: "var(--tx2)", fontWeight: 500 }}>{counsel.classId}{counsel.teacherName ? " · 담임 " + counsel.teacherName : ""}</span></h3>
+      <div style={{ fontSize: 12.5, background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca", borderRadius: 9, padding: "9px 11px", margin: "8px 0 12px", fontWeight: 600 }}>⚠️ 상담 필요 사유: {counsel.reason}</div>
+      <div className="fg"><label>상담 사항</label>
+        <textarea value={note} onChange={function(e) { setNote(e.target.value); }} placeholder="상담 내용을 기록하세요 (학생 상태, 상담 결과, 후속 조치 등)" rows={5} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", resize: "vertical" }} autoFocus />
+      </div>
+      <div className="br"><button className="btn btn-g" onClick={onClose}>닫기</button><button className="btn btn-p" onClick={function() { if (!note.trim()) { window.alert("상담 사항을 입력하세요."); return; } onSave(note.trim()); }}>상담 완료 저장</button></div>
+    </div></div>
+  );
+}
+
+// ═══════════════════════════════════════
+// 접속 기록 (관리자·매니저·강사 로그인 로그)
+// ═══════════════════════════════════════
+function fetchClientIP(cb) {
+  try {
+    fetch("https://api.ipify.org?format=json").then(function(r) { return r.json(); }).then(function(d) { cb(d && d.ip ? d.ip : ""); }).catch(function() { cb(""); });
+  } catch (e) { cb(""); }
+}
+
+function AdminAccessLogs({ accessLogs, setAccessLogs, forceSave }) {
+  var pad = function(x) { return x < 10 ? "0" + x : "" + x; };
+  var monthRange = function(offset) { var n = new Date(); var d = new Date(n.getFullYear(), n.getMonth() + (offset || 0), 1); var y = d.getFullYear(), m = d.getMonth(); return [y + "-" + pad(m + 1) + "-01", y + "-" + pad(m + 1) + "-" + pad(new Date(y, m + 1, 0).getDate())]; };
+  var _mr = monthRange(0);
+  var [roleF, setRoleF] = useState("all");
+  var [fromD, setFromD] = useState(_mr[0]);
+  var [toD, setToD] = useState(_mr[1]);
+  var RL = { admin: "관리자", manager: "매니저", instructor: "강사" };
+  var RC = { admin: "#c0392b", manager: "#7c5cbf", instructor: "#1a6fa8" };
+  var fmt = function(t) { if (!t) return "—"; var d = new Date(t); if (isNaN(d.getTime())) return t; return d.getFullYear() + "." + pad(d.getMonth() + 1) + "." + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+  var localDate = function(t) { var d = new Date(t); if (isNaN(d.getTime())) return ""; return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
+
+  var logs = (accessLogs || []).slice().sort(function(a, b) { return (b.time || "").localeCompare(a.time || ""); });
+  var lastTime = logs.length ? logs[0].time : null;
+  var periodLogs = logs.filter(function(l) { var d = localDate(l.time); return (!fromD || d >= fromD) && (!toD || d <= toD); });
+  var filtered = roleF === "all" ? periodLogs : periodLogs.filter(function(l) { return l.role === roleF; });
+
+  var clearAll = function() { if (window.confirm("접속 기록을 모두 삭제할까요?")) { setAccessLogs(function() { return []; }); forceSave(); } };
+  var setThisMonth = function() { var r = monthRange(0); setFromD(r[0]); setToD(r[1]); };
+  var setLastMonth = function() { var r = monthRange(-1); setFromD(r[0]); setToD(r[1]); };
+  var setAllPeriod = function() { setFromD(""); setToD(""); };
+
+  var downloadExcel = function() {
+    if (filtered.length === 0) { window.alert("다운로드할 접속 기록이 없습니다."); return; }
+    var rows = [["구분", "사용자", "접속일시", "IP주소"]];
+    filtered.forEach(function(l) { rows.push([RL[l.role] || l.role, l.userName, fmt(l.time), l.ip || "확인불가"]); });
+    var csv = "\uFEFF" + rows.map(function(r) { return r.map(function(c) { var s = String(c == null ? "" : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(","); }).join("\r\n");
+    var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a"); a.href = url;
+    a.download = "ROUTETOP_접속기록_" + (fromD || "전체") + "~" + (toD || "전체") + ".csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  };
+
+  var dInput = { padding: "8px 10px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'" };
+  var qBtn = function(on) { return { padding: "7px 12px", borderRadius: 18, border: on ? "2px solid var(--pri)" : "1px solid var(--bdr)", background: on ? "var(--prib)" : "#fff", fontSize: 12.5, fontWeight: 700, color: on ? "var(--pri)" : "var(--tx2)", cursor: "pointer", fontFamily: "'Noto Sans KR'" }; };
+  var pill = function(key, label) {
+    var on = roleF === key;
+    return <button key={key} onClick={function() { setRoleF(key); }} style={qBtn(on)}>{label}</button>;
+  };
+  var roleCount = function(key) { return key === "all" ? periodLogs.length : periodLogs.filter(function(l) { return l.role === key; }).length; };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700 }}>🔐 접속 기록</h3>
+        <span style={{ fontSize: 12, color: "var(--tx2)" }}>마지막 접속: {lastTime ? fmt(lastTime) : "—"}</span>
+        {logs.length > 0 && <button className="btn btn-g btn-s" style={{ marginLeft: "auto", color: "#c0392b" }} onClick={clearAll}>전체 삭제</button>}
+      </div>
+
+      {/* 기간 설정 + 엑셀 다운로드 */}
+      <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--tx)" }}>📅 조회 기간</span>
+          <button className="btn btn-p btn-s" style={{ marginLeft: "auto" }} onClick={downloadExcel}>📥 엑셀 다운로드</button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <input type="date" value={fromD} onChange={function(e) { setFromD(e.target.value); }} style={dInput} />
+          <span style={{ color: "var(--tx2)" }}>~</span>
+          <input type="date" value={toD} onChange={function(e) { setToD(e.target.value); }} style={dInput} />
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button style={qBtn(false)} onClick={setThisMonth}>이번 달</button>
+          <button style={qBtn(false)} onClick={setLastMonth}>지난 달</button>
+          <button style={qBtn(!fromD && !toD)} onClick={setAllPeriod}>전체 기간</button>
+          <span style={{ fontSize: 12, color: "var(--tx2)", alignSelf: "center", marginLeft: 4 }}>조회 {filtered.length}건</span>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        {pill("all", "전체 " + roleCount("all"))}
+        {pill("admin", "관리자 " + roleCount("admin"))}
+        {pill("manager", "매니저 " + roleCount("manager"))}
+        {pill("instructor", "강사 " + roleCount("instructor"))}
+      </div>
+
+      {filtered.length === 0 ? <div className="empty"><div className="eic">🔐</div><p>해당 기간의 접속 기록이 없습니다</p></div> :
+        <div>
+          <div style={{ display: "flex", alignItems: "center", padding: "6px 12px", fontSize: 11, color: "var(--tx2)", fontWeight: 700 }}>
+            <span style={{ width: 54 }}>구분</span><span style={{ flex: 1 }}>사용자</span><span style={{ width: 116, textAlign: "right" }}>접속 시간</span><span style={{ width: 108, textAlign: "right" }}>IP 주소</span>
+          </div>
+          {filtered.map(function(l) {
+            return (
+              <div key={l.id} style={{ display: "flex", alignItems: "center", padding: "9px 12px", background: "#fff", border: "1px solid var(--bdr)", borderRadius: 10, marginBottom: 6 }}>
+                <span style={{ width: 54 }}><span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: RC[l.role] || "#888", borderRadius: 8, padding: "2px 7px" }}>{RL[l.role] || l.role}</span></span>
+                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>{l.userName}</span>
+                <span style={{ width: 116, textAlign: "right", fontSize: 12, color: "var(--tx)" }}>{fmt(l.time)}</span>
+                <span style={{ width: 108, textAlign: "right", fontSize: 11.5, color: "var(--tx2)", fontFamily: "monospace" }}>{l.ip || "확인불가"}</span>
+              </div>
+            );
+          })}
+        </div>}
+      <div style={{ fontSize: 11, color: "var(--tx2)", marginTop: 10, lineHeight: 1.5 }}>＊ 기본 조회 기간은 이번 달(1일~말일)입니다. IP는 로그인 시점의 공인 IP이며 최근 500건까지 보관됩니다. 엑셀 다운로드는 현재 조회된 기록을 CSV(UTF-8)로 저장합니다.</div>
+    </div>
+  );
+}
+
+function AdminPage({ users, setUsers, textbooks, setTextbooks, curriculum, setCurriculum, allA, sp, classList, setClassList, hideCount, ohdap, setOhdap, forceSave, attendance, setAttendance, scores, setScores, selfCodes, setSelfCodes, messages, cur, withdrawals, setWithdrawals, counsels, setCounsels, accessLogs, setAccessLogs }) {
   var [tab, setTab] = useState("students");
   var [openThread, setOpenThread] = useState(null);
   var students = users.filter(function(u) { return u.role === "student"; });
@@ -528,23 +733,23 @@ function AdminPage({ users, setUsers, textbooks, setTextbooks, curriculum, setCu
       </div></div>}
 
       <div className="tabs notranslate" translate="no">
-        {[["students", "🎒 학생"], ["attendance", "📋 출석"], ["scores", "📝 성적"], ["ohdap", "📝 오답데이"], ["stats", "📊 통계"], ["instructors", "👨‍🏫 직원"], ["parents", "👨‍👩‍👧 학부모"], ["textbooks", "📚 교재"], ["curriculum", "📖 진도배정"], ["withdrawals", "🚪 퇴원"], ["results", "📋 결과"], ["settings", "⚙️ 설정"]].map(function(item) {
+        {[["students", "🎒 학생"], ["attendance", "📋 출석"], ["scores", "📝 성적"], ["ohdap", "📝 오답데이"], ["stats", "📊 통계·결과"], ["instructors", "👨‍🏫 직원"], ["parents", "👨‍👩‍👧 학부모"], ["textbooks", "📚 교재"], ["curriculum", "📖 진도배정"], ["withdrawals", "🚪 퇴원"], ...(cur && cur.role === "admin" ? [["access", "🔐 접속기록"]] : []), ["settings", "⚙️ 설정"]].map(function(item) {
           var k = item[0], l = item[1];
           return <button key={k} className={cn("tab", tab === k && "on")} onClick={function() { setTab(k); }}>{l}</button>;
         })}
       </div>
       {tab === "students" && <AdminStudents users={users} setUsers={setUsers} allClasses={allClasses} hideCount={hideCount} forceSave={forceSave} allA={allA} sp={sp} scores={scores} attendance={attendance} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={setWithdrawals} />}
       {tab === "attendance" && <AdminAttendance users={users} attendance={attendance} setAttendance={setAttendance} forceSave={forceSave} selfCodes={selfCodes} setSelfCodes={setSelfCodes} />}
-      {tab === "scores" && <AdminScores users={users} scores={scores} setScores={setScores} forceSave={forceSave} />}
-      {tab === "ohdap" && <AdminOhdap users={users} ohdap={ohdap} setOhdap={setOhdap} />}
+      {tab === "scores" && <AdminScores users={users} scores={scores} setScores={setScores} forceSave={forceSave} cur={cur} counsels={counsels} setCounsels={setCounsels} />}
+      {tab === "ohdap" && <AdminOhdap users={users} ohdap={ohdap} setOhdap={setOhdap} forceSave={forceSave} />}
       {tab === "settings" && <AdminSettings users={users} setUsers={setUsers} classList={classList} setClassList={setClassList} forceSave={forceSave} hideCount={hideCount} />}
       {tab === "stats" && <AdminStats users={users} allA={allA} sp={sp} hideCount={hideCount} />}
       {tab === "instructors" && <AdminInstructors users={users} setUsers={setUsers} forceSave={forceSave} allClasses={allClasses} withdrawals={withdrawals} />}
       {tab === "parents" && <AdminParents users={users} setUsers={setUsers} forceSave={forceSave} />}
       {tab === "textbooks" && <AdminTextbooks textbooks={textbooks} setTextbooks={setTextbooks} />}
       {tab === "curriculum" && <AdminCurriculum users={users} textbooks={textbooks} curriculum={curriculum} setCurriculum={setCurriculum} />}
-      {tab === "results" && <AdminResults users={users} allA={allA} sp={sp} />}
       {tab === "withdrawals" && <AdminWithdrawals withdrawals={withdrawals} setWithdrawals={setWithdrawals} users={users} forceSave={forceSave} />}
+      {tab === "access" && cur && cur.role === "admin" && <AdminAccessLogs accessLogs={accessLogs} setAccessLogs={setAccessLogs} forceSave={forceSave} />}
     </div>
   );
 }
@@ -1092,6 +1297,7 @@ function AdminSettings({ users, setUsers, classList, setClassList, forceSave, hi
 
 function AdminStats({ users, allA, sp, hideCount }) {
   var [cf, setCf] = useState("all");
+  var [view, setView] = useState("summary");
   var students = users.filter(function(u) { return u.role === "student"; });
   var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
   var filtered = cf === "all" ? students : students.filter(function(s) { return s.classId === cf; });
@@ -1105,12 +1311,36 @@ function AdminStats({ users, allA, sp, hideCount }) {
   var inProgress = studentStats.filter(function(s) { return s.pct > 0 && s.pct < 100; }).length;
   var notStarted = studentStats.filter(function(s) { return s.pct === 0 && s.totalItems > 0; }).length;
   var barData = studentStats.filter(function(s) { return s.totalItems > 0; }).sort(function(a, b) { return a.pct - b.pct; }).map(function(s) { return { name: s.name, avatar: s.avatar, pct: s.pct }; });
+  var segBtn = function(key, label) {
+    var on = view === key;
+    return <button onClick={function() { setView(key); }} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", background: on ? "var(--pri)" : "transparent", color: on ? "#fff" : "var(--tx2)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Noto Sans KR'" }}>{label}</button>;
+  };
   return (
     <div>
       <div className="fb"><button className={cn("fc", cf === "all" && "on")} onClick={function() { setCf("all"); }}>전체</button>{classes.map(function(c) { return <button key={c} className={cn("fc", cf === c && "on")} onClick={function() { setCf(c); }}>{c}</button>; })}</div>
-      {!hideCount && <div className="sg"><div className="sc"><div className="sl">전체 학생</div><div className="sv b">{filtered.length}</div></div><div className="sc"><div className="sl">과제 완료</div><div className="sv g">{completed}명</div></div><div className="sc"><div className="sl">진행중</div><div className="sv a">{inProgress}명</div></div><div className="sc"><div className="sl">미시작</div><div className="sv r">{notStarted}명</div></div></div>}
-      <div className="chart-card"><div className="chart-title">📊 전체 완료 현황</div><DonutChart completed={completed} inProgress={inProgress} notStarted={notStarted} total={completed + inProgress + notStarted} /></div>
-      {barData.length > 0 && <BarChart data={barData} title="📈 학생별 진행률 (낮은 순)" />}
+      <div style={{ display: "flex", gap: 4, background: "#f1f3f5", borderRadius: 10, padding: 4, marginBottom: 14 }}>
+        {segBtn("summary", "📊 요약 (차트)")}
+        {segBtn("detail", "📋 상세 (과제별)")}
+      </div>
+      {view === "summary" ? (
+        <>
+          {!hideCount && <div className="sg"><div className="sc"><div className="sl">전체 학생</div><div className="sv b">{filtered.length}</div></div><div className="sc"><div className="sl">과제 완료</div><div className="sv g">{completed}명</div></div><div className="sc"><div className="sl">진행중</div><div className="sv a">{inProgress}명</div></div><div className="sc"><div className="sl">미시작</div><div className="sv r">{notStarted}명</div></div></div>}
+          <div className="chart-card"><div className="chart-title">📊 전체 완료 현황</div><DonutChart completed={completed} inProgress={inProgress} notStarted={notStarted} total={completed + inProgress + notStarted} /></div>
+          {barData.length > 0 && <BarChart data={barData} title="📈 학생별 진행률 (낮은 순)" />}
+        </>
+      ) : (
+        <div className="card"><div className="tw"><table><thead><tr><th>학생</th><th>반</th><th>과제</th><th>진행률</th><th>상태</th></tr></thead><tbody>
+          {filtered.map(function(s) {
+            var rel = allA.filter(function(a) { return a.classId === s.classId; });
+            if (rel.length === 0) return (<tr key={s.id}><td style={{ fontWeight: 600 }}>{s.avatar} {s.name}</td><td><span className="chip">{s.classId}</span></td><td colSpan={3} style={{ color: "var(--tx2)" }}>과제 없음</td></tr>);
+            return rel.map(function(a, i) {
+              var p = getPct(sp, s.id, a.id, a.items);
+              var st = p === 100 ? { l: "완료", c: "var(--ok)", b: "var(--okb)" } : p > 0 ? { l: "진행중", c: "var(--warn)", b: "var(--warnb)" } : { l: "미시작", c: "var(--pri)", b: "var(--prib)" };
+              return (<tr key={s.id + "-" + a.id}>{i === 0 && <><td rowSpan={rel.length} style={{ fontWeight: 600, verticalAlign: "middle" }}>{s.avatar} {s.name}</td><td rowSpan={rel.length} style={{ verticalAlign: "middle" }}><span className="chip">{s.classId}</span></td></>}<td style={{ fontSize: 11 }}>{a.title}</td><td style={{ minWidth: 120 }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><div style={{ flex: 1 }}><PBar pct={p} /></div><span style={{ fontSize: 10, fontWeight: 700 }}>{p}%</span></div></td><td><span className="dbadge" style={{ color: st.c, background: st.b }}>{st.l}</span></td></tr>);
+            });
+          })}
+        </tbody></table></div></div>
+      )}
     </div>
   );
 }
@@ -1520,29 +1750,6 @@ function AdminCurriculum({ users, textbooks, curriculum, setCurriculum }) {
   );
 }
 
-function AdminResults({ users, allA, sp }) {
-  var [cf, setCf] = useState("all");
-  var students = users.filter(function(u) { return u.role === "student"; });
-  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
-  var filtered = cf === "all" ? students : students.filter(function(s) { return s.classId === cf; });
-  return (
-    <div>
-      <div className="fb"><button className={cn("fc", cf === "all" && "on")} onClick={function() { setCf("all"); }}>전체</button>{classes.map(function(c) { return <button key={c} className={cn("fc", cf === c && "on")} onClick={function() { setCf(c); }}>{c}</button>; })}</div>
-      <div className="card"><div className="tw"><table><thead><tr><th>학생</th><th>반</th><th>과제</th><th>진행률</th><th>상태</th></tr></thead><tbody>
-        {filtered.map(function(s) {
-          var rel = allA.filter(function(a) { return a.classId === s.classId; });
-          if (rel.length === 0) return (<tr key={s.id}><td style={{ fontWeight: 600 }}>{s.avatar} {s.name}</td><td><span className="chip">{s.classId}</span></td><td colSpan={3} style={{ color: "var(--tx2)" }}>과제 없음</td></tr>);
-          return rel.map(function(a, i) {
-            var p = getPct(sp, s.id, a.id, a.items);
-            var st = p === 100 ? { l: "완료", c: "var(--ok)", b: "var(--okb)" } : p > 0 ? { l: "진행중", c: "var(--warn)", b: "var(--warnb)" } : { l: "미시작", c: "var(--pri)", b: "var(--prib)" };
-            return (<tr key={s.id + "-" + a.id}>{i === 0 && <><td rowSpan={rel.length} style={{ fontWeight: 600, verticalAlign: "middle" }}>{s.avatar} {s.name}</td><td rowSpan={rel.length} style={{ verticalAlign: "middle" }}><span className="chip">{s.classId}</span></td></>}<td style={{ fontSize: 11 }}>{a.title}</td><td style={{ minWidth: 120 }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><div style={{ flex: 1 }}><PBar pct={p} /></div><span style={{ fontSize: 10, fontWeight: 700 }}>{p}%</span></div></td><td><span className="dbadge" style={{ color: st.c, background: st.b }}>{st.l}</span></td></tr>);
-          });
-        })}
-      </tbody></table></div></div>
-    </div>
-  );
-}
-
 function pendingReplyThreads(messages) {
   var byStu = {};
   (messages || []).forEach(function(m) { if (!m || !m.studentId) return; (byStu[m.studentId] = byStu[m.studentId] || []).push(m); });
@@ -1584,7 +1791,21 @@ function MessageThread({ studentId, cur, messages, onSend }) {
   );
 }
 
-function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, attendance, scores, classList, forceSave, withdrawals, setWithdrawals }) {
+function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, attendance, scores, classList, forceSave, withdrawals, setWithdrawals, counsels, setCounsels }) {
+  var [counselModal, setCounselModal] = useState(null);
+  var csNotifSeen = useRef(null);
+  var myPendingCounsels = (counsels || []).filter(function(c) { return c.status === "needed" && (c.teacherId === user.id || (!c.teacherId && (user.assignedClasses || []).indexOf(c.classId) >= 0)); });
+  useEffect(function() {
+    var ids = myPendingCounsels.map(function(c) { return c.id; });
+    if (csNotifSeen.current === null) { csNotifSeen.current = ids; return; }
+    var fresh = ids.filter(function(id) { return csNotifSeen.current.indexOf(id) < 0; });
+    if (fresh.length) { var c = myPendingCounsels.find(function(x) { return x.id === fresh[0]; }); if (c) fireNotif("⚠️ 상담 필요 — " + c.studentName, c.reason); }
+    csNotifSeen.current = ids;
+  });
+  var saveCounsel = function(id, note) {
+    setCounsels(function(p) { return (p || []).map(function(c) { return c.id === id ? Object.assign({}, c, { note: note, status: "done", doneDate: td(), doneBy: user.name }) : c; }); });
+    setCounselModal(null); if (forceSave) forceSave();
+  };
   var [wdStudent, setWdStudent] = useState(null);
   var wdCtx = { allA: allA, sp: sp, scores: scores, attendance: attendance, messages: messages, users: users };
   var isWithdrawn = function(sid) { return (withdrawals || []).some(function(w) { return w.studentId === sid; }); };
@@ -1688,6 +1909,17 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
       </div>
 
       {wdStudent && <WithdrawalModal student={wdStudent} ctx={wdCtx} cur={user} onClose={function() { setWdStudent(null); }} onConfirm={confirmWithdraw} />}
+      {counselModal && <CounselModal counsel={counselModal} onClose={function() { setCounselModal(null); }} onSave={function(note) { saveCounsel(counselModal.id, note); }} />}
+
+      {myPendingCounsels.length > 0 && <div className="card" style={{ marginBottom: 14, border: "1px solid #fecaca", background: "#fef2f2" }}>
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#b91c1c", marginBottom: 8 }}>⚠️ 상담 필요 ({myPendingCounsels.length})</div>
+        {myPendingCounsels.map(function(c) {
+          return <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderTop: "1px solid #fde0e0" }}>
+            <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{c.studentName} <span style={{ fontSize: 10, color: "var(--tx2)" }}>{c.classId} · {c.date}</span></div><div style={{ fontSize: 11.5, color: "#7f1d1d" }}>{c.reason}</div></div>
+            <button className="btn btn-p btn-s" onClick={function() { setCounselModal(c); }}>상담 기록</button>
+          </div>;
+        })}
+      </div>}
 
       {mainView === "consult" && (inbox.length > 0 ? <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
@@ -1868,7 +2100,8 @@ function getMonthLabel(key) {
   return parseInt(parts[1]) + "월";
 }
 
-function AdminOhdap({ users, ohdap, setOhdap }) {
+function AdminOhdap({ users, ohdap, setOhdap, forceSave }) {
+  var save = function() { if (forceSave) forceSave(); };
   var [cf, setCf] = useState("all");
   var curMonth = getMonthKey(0);
   var [viewMonth, setViewMonth] = useState(curMonth);
@@ -1876,8 +2109,6 @@ function AdminOhdap({ users, ohdap, setOhdap }) {
   var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
   var filtered = cf === "all" ? students : students.filter(function(s) { return s.classId === cf; });
   var week = Math.ceil(new Date().getDate() / 7);
-  var activeRound = Number(ohdap.active) || 0;
-  var activeMonth = ohdap.activeMonth || "";
   var months = ohdap.months || {};
   var viewData = months[viewMonth] || { round1: {}, round2: {} };
   var r1 = viewData.round1 || {};
@@ -1892,24 +2123,6 @@ function AdminOhdap({ users, ohdap, setOhdap }) {
   if (allMonths.indexOf(prevMonth) < 0) allMonths.push(prevMonth);
   allMonths.sort();
 
-  var startRound = function(round) {
-    setOhdap(function(prev) {
-      var next = JSON.parse(JSON.stringify(prev));
-      next.active = round;
-      next.activeMonth = viewMonth;
-      if (!next.months) next.months = {};
-      if (!next.months[viewMonth]) next.months[viewMonth] = { round1: {}, round2: {} };
-      return next;
-    });
-  };
-  var stopRound = function() {
-    setOhdap(function(prev) {
-      var next = JSON.parse(JSON.stringify(prev));
-      next.active = 0;
-      next.activeMonth = "";
-      return next;
-    });
-  };
   var resetMonth = function() {
     if (window.confirm(getMonthLabel(viewMonth) + " 기록을 초기화할까요?")) {
       setOhdap(function(prev) {
@@ -1918,6 +2131,7 @@ function AdminOhdap({ users, ohdap, setOhdap }) {
         next.months[viewMonth] = { round1: {}, round2: {} };
         return next;
       });
+      save();
     }
   };
   var checkStudent = function(sid, round) {
@@ -1930,9 +2144,22 @@ function AdminOhdap({ users, ohdap, setOhdap }) {
       next.months[viewMonth][key][sid] = !next.months[viewMonth][key][sid];
       return next;
     });
+    save();
   };
 
-  var isActiveThisMonth = activeRound > 0 && activeMonth === viewMonth;
+  var setAllRound = function(round, val) {
+    setOhdap(function(prev) {
+      var next = JSON.parse(JSON.stringify(prev));
+      if (!next.months) next.months = {};
+      if (!next.months[viewMonth]) next.months[viewMonth] = { round1: {}, round2: {} };
+      var key = "round" + round;
+      if (!next.months[viewMonth][key]) next.months[viewMonth][key] = {};
+      filtered.forEach(function(s) { if (val) next.months[viewMonth][key][s.id] = true; else delete next.months[viewMonth][key][s.id]; });
+      return next;
+    });
+    save();
+  };
+  var allDone = function(round) { var m = round === 1 ? r1 : r2; return filtered.length > 0 && filtered.every(function(s) { return m[s.id]; }); };
 
   return (
     <div>
@@ -1940,8 +2167,6 @@ function AdminOhdap({ users, ohdap, setOhdap }) {
         <h3 style={{ fontSize: 15, fontWeight: 700 }}>📝 오답데이 (월별 관리)</h3>
         <p style={{ fontSize: 11, color: "var(--tx2)", marginTop: 2 }}>{week}째주{(week === 2 || week === 4) ? " · " : ""}{(week === 2 || week === 4) && <span style={{ color: "var(--pri)", fontWeight: 700 }}>오답데이 주간!</span>}</p>
       </div>
-
-      {isActiveThisMonth && <div style={{ padding: "12px 16px", borderRadius: "var(--r)", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 600, background: "#fef2f4", border: "1px solid #fecdd3", color: "#be123c" }}><span style={{ fontSize: 20 }}>🔥</span><span>{getMonthLabel(activeMonth)} {activeRound}회차 진행 중</span><button className="btn btn-p btn-s" style={{ marginLeft: "auto" }} onClick={stopRound}>종료</button></div>}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, fontWeight: 700 }}>📅 월 선택:</span>
@@ -1951,21 +2176,19 @@ function AdminOhdap({ users, ohdap, setOhdap }) {
         })}
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <div style={{ flex: 1, padding: 14, background: (activeRound === 1 && activeMonth === viewMonth) ? "#fef2f4" : "var(--card)", border: (activeRound === 1 && activeMonth === viewMonth) ? "2px solid var(--pri)" : "1px solid var(--bdr)", borderRadius: "var(--r)", textAlign: "center" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>1회차</div>
-          {(activeRound === 1 && activeMonth === viewMonth) ? <div className="dbadge" style={{ background: "#fef2f4", color: "var(--pri)", display: "inline-flex" }}>🔥 진행 중</div> : <button className="btn btn-ok btn-s" onClick={function() { startRound(1); }}>시작</button>}
-        </div>
-        <div style={{ flex: 1, padding: 14, background: (activeRound === 2 && activeMonth === viewMonth) ? "#fef2f4" : "var(--card)", border: (activeRound === 2 && activeMonth === viewMonth) ? "2px solid var(--pri)" : "1px solid var(--bdr)", borderRadius: "var(--r)", textAlign: "center" }}>
-          <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>2회차</div>
-          {(activeRound === 2 && activeMonth === viewMonth) ? <div className="dbadge" style={{ background: "#fef2f4", color: "var(--pri)", display: "inline-flex" }}>🔥 진행 중</div> : <button className="btn btn-ok btn-s" onClick={function() { startRound(2); }}>시작</button>}
-        </div>
-        <div style={{ padding: 14, display: "flex", alignItems: "center" }}><button className="btn btn-g btn-s" onClick={resetMonth}>🔄 {getMonthLabel(viewMonth)} 초기화</button></div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, justifyContent: "flex-end" }}>
+        <button className="btn btn-g btn-s" onClick={resetMonth}>🔄 {getMonthLabel(viewMonth)} 초기화</button>
       </div>
 
       <div className="fb">
         <button className={cn("fc", cf === "all" && "on")} onClick={function() { setCf("all"); }}>전체</button>
         {classes.map(function(c) { return <button key={c} className={cn("fc", cf === c && "on")} onClick={function() { setCf(c); }}>{c}</button>; })}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "4px 0 10px" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--tx2)" }}>{cf === "all" ? "전체" : cf} 일괄:</span>
+        <button className="btn btn-ok btn-s" onClick={function() { setAllRound(1, !allDone(1)); }}>1회차 {allDone(1) ? "전원 해제" : "전원 체크"}</button>
+        <button className="btn btn-ok btn-s" onClick={function() { setAllRound(2, !allDone(2)); }}>2회차 {allDone(2) ? "전원 해제" : "전원 체크"}</button>
       </div>
 
       <div className="card">
@@ -2214,7 +2437,23 @@ function ParentDashboard({ user, users, allA, sp, attendance, messages, onSend }
   );
 }
 
-function AdminScores({ users, scores, setScores, forceSave }) {
+function AdminScores({ users, scores, setScores, forceSave, cur, counsels, setCounsels }) {
+  var [counselModal, setCounselModal] = useState(null);
+  var pendingFor = function(sid) { return (counsels || []).filter(function(c) { return c.studentId === sid && c.status === "needed"; }); };
+  var openCounsel = function(student, reason) {
+    var pend = pendingFor(student.id)[0];
+    if (pend) { setCounselModal(pend); return; }
+    var hr = findHomeroom(student, users);
+    var rec = { id: "cs_" + mkid(), studentId: student.id, studentName: student.name, classId: student.classId, teacherId: hr ? hr.id : "", teacherName: hr ? hr.name : "", reason: reason || "수동 상담 요청", note: "", status: "needed", date: td(), by: cur ? { id: cur.id, role: cur.role, name: cur.name } : {} };
+    setCounsels(function(p) { return (p || []).concat([rec]); });
+    if (hr) fireNotif("상담 필요 — " + student.name, rec.reason + (hr ? " (담임 " + hr.name + ")" : ""));
+    forceSave();
+    setCounselModal(rec);
+  };
+  var saveCounsel = function(id, note) {
+    setCounsels(function(p) { return (p || []).map(function(c) { return c.id === id ? Object.assign({}, c, { note: note, status: "done", doneDate: td(), doneBy: cur ? cur.name : "" }) : c; }); });
+    setCounselModal(null); forceSave();
+  };
   var [cf, setCf] = useState("all");
   var [selStu, setSelStu] = useState(null);
   var [cat, setCat] = useState("내신");
@@ -2235,6 +2474,74 @@ function AdminScores({ users, scores, setScores, forceSave }) {
   var [addTitle, setAddTitle] = useState("");
   var [addDate, setAddDate] = useState(td().substring(0, 7));
   var [addGrades, setAddGrades] = useState({});
+
+  // ── 반 일괄 성적 입력 ──
+  var [showBulk, setShowBulk] = useState(false);
+  var [bulkClass, setBulkClass] = useState("");
+  var [bulkCat, setBulkCat] = useState("내신");
+  var [bulkTitle, setBulkTitle] = useState("");
+  var [bulkDate, setBulkDate] = useState(td().substring(0, 7));
+  var [bulkMonth, setBulkMonth] = useState(new Date().getMonth() + 1);
+  var [bulkGrades, setBulkGrades] = useState({});
+  var openBulk = function() {
+    var c = cf !== "all" ? cf : (classes[0] || "");
+    setBulkClass(c); setBulkCat(cat); setBulkTitle(""); setBulkGrades({});
+    setBulkDate(cat === "내신" ? (selYear + "-01") : td().substring(0, 7));
+    setBulkMonth(new Date().getMonth() + 1);
+    setShowBulk(true);
+  };
+  var setBulkCell = function(sid, sub, field, val) {
+    setBulkGrades(function(p) {
+      var n = JSON.parse(JSON.stringify(p));
+      if (!n[sid]) n[sid] = {};
+      if (!n[sid][sub]) n[sid][sub] = {};
+      n[sid][sub][field] = val === "" ? "" : Number(val);
+      return n;
+    });
+  };
+  var saveBulk = function() {
+    if (!bulkClass) { window.alert("반을 선택하세요."); return; }
+    if (!bulkTitle.trim()) { window.alert("시험명을 입력하세요."); return; }
+    var clsStudents = students.filter(function(s) { return s.classId === bulkClass; });
+    var built = [];
+    clsStudents.forEach(function(s) {
+      var g = bulkGrades[s.id]; if (!g) return;
+      var subjects = {};
+      Object.keys(g).forEach(function(sub) {
+        var gg = g[sub] || {};
+        var hasG = gg.grade !== "" && gg.grade != null;
+        var hasS = gg.score !== "" && gg.score != null;
+        if (hasG || hasS) { subjects[sub] = {}; if (hasG) subjects[sub].grade = gg.grade; if (hasS) subjects[sub].score = gg.score; }
+      });
+      if (!Object.keys(subjects).length) return;
+      var exam = { id: "ex_" + mkid(), type: bulkCat, title: bulkTitle.trim(), date: bulkDate, month: bulkCat === "학력평가" ? bulkMonth : 0, subjects: subjects };
+      var prevExams = (scores[s.id] && scores[s.id].exams) ? scores[s.id].exams : [];
+      var triggers = bulkCat === "내신" ? scoreCounselTriggers(exam, prevExams) : [];
+      built.push({ student: s, exam: exam, triggers: triggers });
+    });
+    if (!built.length) { window.alert("입력된 성적이 없습니다."); return; }
+    setScores(function(prev) {
+      var next = JSON.parse(JSON.stringify(prev));
+      built.forEach(function(b) { if (!next[b.student.id]) next[b.student.id] = { exams: [], memo: "" }; next[b.student.id].exams.push(b.exam); });
+      return next;
+    });
+    var triggered = built.filter(function(b) { return b.triggers.length; });
+    if (triggered.length) {
+      setCounsels(function(p) {
+        var arr = (p || []).slice();
+        triggered.forEach(function(b) {
+          var hr = findHomeroom(b.student, users);
+          var reason = "내신 " + b.exam.title + " — " + b.triggers.map(function(t) { return t.sub + " " + t.score + "점(" + t.reasons.join(", ") + ")"; }).join(" / ");
+          arr.push({ id: "cs_" + mkid(), studentId: b.student.id, studentName: b.student.name, classId: b.student.classId, teacherId: hr ? hr.id : "", teacherName: hr ? hr.name : "", reason: reason, note: "", status: "needed", date: td(), by: cur ? { id: cur.id, role: cur.role, name: cur.name } : {} });
+        });
+        return arr;
+      });
+      fireNotif("⚠️ 상담 필요 " + triggered.length + "명", bulkClass + " " + bulkTitle.trim());
+    }
+    forceSave();
+    setShowBulk(false); setBulkTitle(""); setBulkGrades({});
+    window.alert(built.length + "명의 성적을 저장했습니다." + (triggered.length ? "\n⚠️ 상담필요 " + triggered.length + "명 발생 (담임에게 알림)" : ""));
+  };
 
   var getStudentScores = function(sid) { return scores[sid] || { exams: [], memo: "" }; };
   var getExams = function(sid, type) { var s = getStudentScores(sid); return (s.exams || []).filter(function(e) { return e.type === type && e.date && e.date.substring(0, 4) === String(selYear); }); };
@@ -2266,6 +2573,7 @@ function AdminScores({ users, scores, setScores, forceSave }) {
   var addExam = function() {
     if (!selStu || !addTitle.trim()) return;
     var exam = { id: "ex_" + mkid(), type: cat, title: addTitle.trim(), date: addDate, month: cat === "학력평가" ? addMonth : 0, subjects: JSON.parse(JSON.stringify(addGrades)) };
+    var prevExams = (scores[selStu] && scores[selStu].exams) ? scores[selStu].exams : [];
     setScores(function(prev) {
       var next = JSON.parse(JSON.stringify(prev));
       if (!next[selStu]) next[selStu] = { exams: [], memo: "" };
@@ -2274,6 +2582,20 @@ function AdminScores({ users, scores, setScores, forceSave }) {
     });
     forceSave();
     setShowAdd(false); setAddTitle(""); setAddGrades({});
+    // 내신 하락/70점 이하 → 상담필요 자동 감지
+    if (cat === "내신") {
+      var triggers = scoreCounselTriggers(exam, prevExams);
+      if (triggers.length) {
+        var stuObj = users.find(function(u) { return u.id === selStu; });
+        var hr = findHomeroom(stuObj, users);
+        var reason = "내신 " + exam.title + " — " + triggers.map(function(t) { return t.sub + " " + t.score + "점(" + t.reasons.join(", ") + ")"; }).join(" / ");
+        var rec = { id: "cs_" + mkid(), studentId: selStu, studentName: stuObj ? stuObj.name : "", classId: stuObj ? stuObj.classId : "", teacherId: hr ? hr.id : "", teacherName: hr ? hr.name : "", reason: reason, note: "", status: "needed", date: td(), by: cur ? { id: cur.id, role: cur.role, name: cur.name } : {} };
+        setCounsels(function(p) { return (p || []).concat([rec]); });
+        fireNotif("⚠️ 상담 필요 — " + rec.studentName, reason + (hr ? " · 담임 " + hr.name : ""));
+        forceSave();
+        setTimeout(function() { setCounselModal(rec); }, 100);
+      }
+    }
   };
 
   var delExam = function(sid, examId) {
@@ -2337,7 +2659,7 @@ function AdminScores({ users, scores, setScores, forceSave }) {
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700 }}>📝 성적 관리</h3>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{yearSelector()}<button className="btn btn-ok btn-s" onClick={function() { setShowDownload(true); setDlExams([]); }}>📥 성적 다운로드</button></div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>{yearSelector()}<button className="btn btn-p btn-s" onClick={openBulk}>📋 반 일괄 입력</button><button className="btn btn-ok btn-s" onClick={function() { setShowDownload(true); setDlExams([]); }}>📥 성적 다운로드</button></div>
         </div>
         <div className="fb">
           <button className={cn("fc", cf === "all" && "on")} onClick={function() { setCf("all"); }}>전체</button>
@@ -2377,6 +2699,53 @@ function AdminScores({ users, scores, setScores, forceSave }) {
           <div style={{ marginTop: 10, fontSize: 11, color: "var(--tx2)" }}>선택: {dlExams.length}개 시험 · 대상: {filtered.length}명 ({cf === "all" ? "전체" : cf})</div>
           <div className="br"><button className="btn btn-g" onClick={function() { setShowDownload(false); }}>취소</button><button className="btn btn-p" onClick={downloadExcel}>📥 CSV 다운로드</button></div>
         </div></div>}
+
+        {showBulk && <div className="mo" onClick={function() { setShowBulk(false); }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 680, maxHeight: "85vh", overflow: "auto" }}>
+          <h3>📋 반 일괄 성적 입력</h3>
+          <p style={{ fontSize: 12, color: "var(--tx2)", margin: "4px 0 10px" }}>같은 반 학생들의 한 시험 성적을 한 화면에서 입력합니다.</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <div className="fg" style={{ flex: "1 1 110px" }}><label>반</label>
+              <select value={bulkClass} onChange={function(e) { setBulkClass(e.target.value); }}>{classes.map(function(c) { return <option key={c} value={c}>{c}</option>; })}</select></div>
+            <div className="fg" style={{ flex: "1 1 110px" }}><label>시험 종류</label>
+              <select value={bulkCat} onChange={function(e) { var v = e.target.value; setBulkCat(v); setBulkDate(v === "내신" ? (selYear + "-01") : td().substring(0, 7)); }}>
+                <option value="내신">내신</option><option value="모의고사">모의고사</option><option value="학력평가">학력평가</option></select></div>
+            <div className="fg" style={{ flex: "2 1 140px" }}><label>시험명</label>
+              <input value={bulkTitle} onChange={function(e) { setBulkTitle(e.target.value); }} placeholder={bulkCat === "내신" ? "1학기 중간고사" : bulkCat === "모의고사" ? "6월 모의고사" : "3월 학력평가"} /></div>
+            {bulkCat === "내신"
+              ? <div className="fg" style={{ flex: "1 1 80px" }}><label>연도</label><select value={bulkDate.substring(0, 4)} onChange={function(e) { setBulkDate(e.target.value + "-01"); }}>{yearOptions.map(function(y) { return <option key={y} value={y}>{y}년</option>; })}</select></div>
+              : <div className="fg" style={{ flex: "1 1 110px" }}><label>년/월</label><input type="month" value={bulkDate} onChange={function(e) { setBulkDate(e.target.value); }} /></div>}
+            {bulkCat === "학력평가" && <div className="fg" style={{ flex: "1 1 70px" }}><label>월</label><select value={bulkMonth} onChange={function(e) { setBulkMonth(Number(e.target.value)); }}>{[1,2,3,4,5,6,7,8,9,10,11,12].map(function(m) { return <option key={m} value={m}>{m}월</option>; })}</select></div>}
+          </div>
+          {(function() {
+            var subs = getSubjects(bulkCat);
+            var clsStudents = students.filter(function(s) { return s.classId === bulkClass; });
+            if (!clsStudents.length) return <div style={{ padding: 20, textAlign: "center", color: "var(--tx2)" }}>이 반에 학생이 없습니다.</div>;
+            return (
+              <div style={{ overflowX: "auto", marginTop: 4 }}>
+                <div style={{ minWidth: 92 + subs.length * 130 }}>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 6, padding: "6px 0", borderBottom: "2px solid var(--bdr)", fontSize: 11, fontWeight: 700, color: "var(--tx2)" }}>
+                    <div style={{ width: 84 }}>학생</div>
+                    {subs.map(function(sub) { return <div key={sub} style={{ width: 124, textAlign: "center" }}>{sub}<div style={{ fontWeight: 500, fontSize: 10 }}>등급 / 원점수</div></div>; })}
+                  </div>
+                  {clsStudents.map(function(s) {
+                    return <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 0", borderBottom: "1px solid #f3f4f6" }}>
+                      <div style={{ width: 84, fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+                      {subs.map(function(sub) {
+                        var cell = (bulkGrades[s.id] || {})[sub] || {};
+                        return <div key={sub} style={{ width: 124, display: "flex", gap: 4, justifyContent: "center" }}>
+                          <input type="number" min="1" max="9" value={cell.grade == null ? "" : cell.grade} onChange={function(e) { setBulkCell(s.id, sub, "grade", e.target.value); }} placeholder="등급" style={{ width: 52, padding: "5px", border: "1px solid var(--bdr)", borderRadius: 6, fontSize: 12, textAlign: "center", fontFamily: "Noto Sans KR" }} />
+                          <input type="number" min="0" max="100" value={cell.score == null ? "" : cell.score} onChange={function(e) { setBulkCell(s.id, sub, "score", e.target.value); }} placeholder="점수" style={{ width: 58, padding: "5px", border: "1px solid var(--bdr)", borderRadius: 6, fontSize: 12, textAlign: "center", fontFamily: "Noto Sans KR" }} />
+                        </div>;
+                      })}
+                    </div>;
+                  })}
+                </div>
+              </div>
+            );
+          })()}
+          <div style={{ fontSize: 11, color: "var(--tx2)", marginTop: 8 }}>＊ 값을 입력한 학생만 저장됩니다. 내신은 70점 이하·이전보다 하락 시 자동으로 상담필요가 생성됩니다.</div>
+          <div className="br"><button className="btn btn-g" onClick={function() { setShowBulk(false); }}>취소</button><button className="btn btn-p" onClick={saveBulk}>일괄 저장</button></div>
+        </div></div>}
       </div>
     );
   }
@@ -2401,6 +2770,24 @@ function AdminScores({ users, scores, setScores, forceSave }) {
         <label style={{ fontSize: 11, fontWeight: 700 }}>📝 기타 메모</label>
         <textarea value={sd.memo || ""} onChange={function(e) { updateMemo(selStu, e.target.value); }} onBlur={function() { forceSave(); }} placeholder="학생에 대한 메모 (예: 수학 보충 필요, 태도 우수...)" style={{ width: "100%", minHeight: 60, padding: 8, border: "1px solid var(--bdr)", borderRadius: "var(--rs)", fontSize: 12, fontFamily: "Noto Sans KR", resize: "vertical" }} />
       </div>
+
+      {(function() {
+        var pend = pendingFor(selStu);
+        var done = (counsels || []).filter(function(c) { return c.studentId === selStu && c.status === "done"; });
+        return (
+          <div style={{ marginBottom: 14 }}>
+            {pend.map(function(c) {
+              return <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "10px 12px", marginBottom: 6 }}>
+                <span style={{ fontSize: 16 }}>⚠️</span>
+                <div style={{ flex: 1 }}><div style={{ fontSize: 12.5, fontWeight: 700, color: "#b91c1c" }}>상담 필요</div><div style={{ fontSize: 11.5, color: "#7f1d1d" }}>{c.reason}</div></div>
+                <button className="btn btn-p btn-s" onClick={function() { setCounselModal(c); }}>상담 기록</button>
+              </div>;
+            })}
+            <button className="btn btn-g btn-s" style={{ color: "#dc2626", borderColor: "#fecaca" }} onClick={function() { openCounsel(stu, "수동 상담 요청"); }}>📋 상담필요 등록</button>
+            {done.length > 0 && <span style={{ fontSize: 11, color: "var(--ok)", marginLeft: 8 }}>✓ 상담 완료 {done.length}건</span>}
+          </div>
+        );
+      })()}
 
       <div className="fb" style={{ marginBottom: 14 }}>
         <button className={cn("fc", cat === "내신" && "on")} onClick={function() { setCat("내신"); }}>📖 내신</button>
@@ -2441,6 +2828,8 @@ function AdminScores({ users, scores, setScores, forceSave }) {
           );
         })
       }
+
+      {counselModal && <CounselModal counsel={counselModal} onClose={function() { setCounselModal(null); }} onSave={function(note) { saveCounsel(counselModal.id, note); }} />}
 
       {showAdd && <div className="mo" onClick={function() { setShowAdd(false); }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 500 }}>
         <h3>{cat} 시험 추가</h3>
@@ -2905,6 +3294,8 @@ export default function App() {
   var [selfCodes, setSelfCodes] = useState({});
   var [messages, setMessages] = useState([]);
   var [withdrawals, setWithdrawals] = useState([]);
+  var [counsels, setCounsels] = useState([]);
+  var [accessLogs, setAccessLogs] = useState([]);
   var [classList, setClassList] = useState(["A반", "B반"]);
   var [cur, setCurState] = useState(function() {
     try { var saved = localStorage.getItem("rt_user"); return saved ? JSON.parse(saved) : null; } catch(e) { return null; }
@@ -2922,10 +3313,10 @@ export default function App() {
   var saveTimer = useRef(null);
   var justSaved = useRef(false);
   var pendingChanges = useRef(false);
-  var dataRef = useRef({ users: INIT_USERS, textbooks: INIT_TB, curriculum: INIT_CUR, sp: INIT_SP, classList: ["A반", "B반"], ohdap: { active: 0, activeMonth: "", months: {} }, attendance: {}, scores: {}, selfCodes: {}, messages: [], withdrawals: [] });
+  var dataRef = useRef({ users: INIT_USERS, textbooks: INIT_TB, curriculum: INIT_CUR, sp: INIT_SP, classList: ["A반", "B반"], ohdap: { active: 0, activeMonth: "", months: {} }, attendance: {}, scores: {}, selfCodes: {}, messages: [], withdrawals: [], counsels: [], accessLogs: [] });
   var allA = useMemo(function() { return buildAssignments(textbooks, curriculum); }, [textbooks, curriculum]);
 
-  useEffect(function() { dataRef.current = { users: users, textbooks: textbooks, curriculum: curriculum, sp: sp, classList: classList, ohdap: ohdap, attendance: attendance, scores: scores, selfCodes: selfCodes, messages: messages, withdrawals: withdrawals }; }, [users, textbooks, curriculum, sp, classList, ohdap, attendance, scores, selfCodes, messages, withdrawals]);
+  useEffect(function() { dataRef.current = { users: users, textbooks: textbooks, curriculum: curriculum, sp: sp, classList: classList, ohdap: ohdap, attendance: attendance, scores: scores, selfCodes: selfCodes, messages: messages, withdrawals: withdrawals, counsels: counsels, accessLogs: accessLogs }; }, [users, textbooks, curriculum, sp, classList, ohdap, attendance, scores, selfCodes, messages, withdrawals, counsels, accessLogs]);
 
   var localSetUsers = useCallback(function(fn) { setUsers(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetTextbooks = useCallback(function(fn) { setTextbooks(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
@@ -2938,6 +3329,8 @@ export default function App() {
   var localSetSelfCodes = useCallback(function(fn) { setSelfCodes(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetMessages = useCallback(function(fn) { setMessages(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetWithdrawals = useCallback(function(fn) { setWithdrawals(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetCounsels = useCallback(function(fn) { setCounsels(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetAccessLogs = useCallback(function(fn) { setAccessLogs(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var sendMessage = useCallback(function(studentId, text) {
     if (!studentId || !text || !text.trim() || !cur) return;
     var msg = { id: "m_" + mkid(), studentId: studentId, fromId: cur.id, fromRole: cur.role, fromName: cur.name, text: text.trim(), ts: Date.now() };
@@ -2955,7 +3348,7 @@ export default function App() {
       setSyncStatus("saving");
       setDoc(doc(db, "appData", "main"), {
         users: d.users, textbooks: d.textbooks, curriculum: d.curriculum,
-        studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], lastUpdated: new Date().toISOString()
+        studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], counsels: d.counsels || [], accessLogs: d.accessLogs || [], lastUpdated: new Date().toISOString()
       }).then(function() {
         setSyncStatus("synced");
         pendingChanges.current = false;
@@ -2967,6 +3360,10 @@ export default function App() {
       });
     }, 100); // 100ms - state 업데이트 반영 대기
   }, []);
+
+  var loginWithLog = function(u) { setCur(u); };
+  var accessLogged = useRef(false);
+
 
   // 브라우저 자동 번역 방지
   useEffect(function() {
@@ -3009,6 +3406,8 @@ export default function App() {
           if (d.selfCodes) setSelfCodes(d.selfCodes);
           if (d.messages) setMessages(d.messages);
           if (d.withdrawals) setWithdrawals(d.withdrawals);
+          if (d.counsels) setCounsels(d.counsels);
+          if (d.accessLogs) setAccessLogs(d.accessLogs);
         } else {
           await setDoc(ref, { users: INIT_USERS, textbooks: INIT_TB, curriculum: INIT_CUR, studentProgress: INIT_SP, classList: ["A반", "B반"], ohdap: { active: 0, activeMonth: "", months: {} } });
         }
@@ -3047,6 +3446,8 @@ export default function App() {
           if (d.selfCodes) setSelfCodes(d.selfCodes);
           if (d.messages) setMessages(d.messages);
           if (d.withdrawals) setWithdrawals(d.withdrawals);
+          if (d.counsels) setCounsels(d.counsels);
+          if (d.accessLogs) setAccessLogs(d.accessLogs);
     }, function(e) { console.error("Sync error:", e); setSyncStatus("error"); });
     return function() { unsub(); };
   }, [dataLoaded]);
@@ -3062,7 +3463,7 @@ export default function App() {
         justSaved.current = true;
         await setDoc(doc(db, "appData", "main"), {
           users: d.users, textbooks: d.textbooks, curriculum: d.curriculum,
-          studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], lastUpdated: new Date().toISOString()
+          studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], counsels: d.counsels || [], accessLogs: d.accessLogs || [], lastUpdated: new Date().toISOString()
         });
         setSyncStatus("synced");
         pendingChanges.current = false;
@@ -3075,6 +3476,26 @@ export default function App() {
     }, 1000);
     return function() { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [saveVersion, dataLoaded]);
+
+  // 접속기록: 데이터 로드 후 세션(앱 열 때)마다 1회 기록 — 자동 로그인 포함
+  useEffect(function() {
+    if (!cur) { accessLogged.current = false; return; }
+    if (!dataLoaded) return;
+    if (cur.role !== "admin" && cur.role !== "manager" && cur.role !== "instructor") return;
+    if (accessLogged.current) return;
+    accessLogged.current = true;
+    fetchClientIP(function(ip) {
+      var rec = { id: "al_" + mkid(), userId: cur.id, userName: cur.name, role: cur.role, time: new Date().toISOString(), ip: ip || "확인불가" };
+      setAccessLogs(function(p) {
+        var arr = (p || []).concat([rec]);
+        if (arr.length > 500) arr = arr.slice(arr.length - 500);
+        try { dataRef.current = Object.assign({}, dataRef.current, { accessLogs: arr }); } catch (e) {}
+        return arr;
+      });
+      setSaveVersion(function(v) { return v + 1; });
+      if (forceSave) forceSave();
+    });
+  }, [dataLoaded, cur]);
 
   // 자가출석 코드 자동 발급 (직원 기기에서만 생성 → 학생은 학원에 와야 코드 확인 가능)
   var codeGenGuard = useRef("");
@@ -3220,7 +3641,7 @@ export default function App() {
     var iv = setInterval(check, 5 * 60 * 1000);
     return function() { clearInterval(iv); };
   }, [cur, messages, users]);
-  if (!cur) return (<><style>{CSS}</style><Login users={users} onLogin={setCur} onParent={function() { setParentMode(true); }} /><SyncBadge status={syncStatus} /></>);
+  if (!cur) return (<><style>{CSS}</style><Login users={users} onLogin={loginWithLog} onParent={function() { setParentMode(true); }} /><SyncBadge status={syncStatus} /></>);
   var rl = { admin: "관리자", manager: "매니저", instructor: "강사", student: "학생", parent: "학부모" };
   var sideIcon = cur.role === "admin" ? "🛡️" : cur.role === "manager" ? "👔" : cur.role === "instructor" ? "📊" : cur.role === "parent" ? "👨‍👩‍👧" : "📋";
   var sideLabel = cur.role === "admin" ? "관리 패널" : cur.role === "manager" ? "매니저 패널" : cur.role === "instructor" ? "과제 현황" : cur.role === "parent" ? "학부모" : "전체";
@@ -3235,9 +3656,9 @@ export default function App() {
           <div className="mob-name">{cur.name}<div className="mob-role">{rl[cur.role]}</div></div>
           <button className="mob-lo" onClick={function() { setCur(null); }}>⏻ 로그아웃</button>
         </div>
-        {cur.role === "admin" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} />}
-        {cur.role === "manager" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} hideCount={true} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} />}
-        {cur.role === "instructor" && <InstructorPage user={cur} users={users} allA={allA} sp={sp} selfCodes={selfCodes} messages={messages} onSend={sendMessage} attendance={attendance} scores={scores} classList={classList} forceSave={forceSave} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} />}
+        {cur.role === "admin" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} />}
+        {cur.role === "manager" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} hideCount={true} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} />}
+        {cur.role === "instructor" && <InstructorPage user={cur} users={users} allA={allA} sp={sp} selfCodes={selfCodes} messages={messages} onSend={sendMessage} attendance={attendance} scores={scores} classList={classList} forceSave={forceSave} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} />}
         {cur.role === "student" && <StudentPage user={cur} allA={allA} sp={sp} setSp={localSetSp} ohdap={ohdap} setOhdap={localSetOhdap} attendance={attendance} setAttendance={localSetAttendance} forceSave={forceSave} selfCodes={selfCodes} />}
         {cur.role === "parent" && <ParentDashboard user={cur} users={users} allA={allA} sp={sp} attendance={attendance} messages={messages} onSend={sendMessage} />}
       </div>
