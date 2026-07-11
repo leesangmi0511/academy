@@ -4538,6 +4538,61 @@ function saveAdminEval() {
   renderAdminHome();
 }
 
+// 강사 종합 평가: 강사순위 지표 + 강사평가를 하나의 점수로 종합
+function computeAllTeacherMetrics(){
+  var T=(DB.cfg&&DB.cfg.teachers)||[];
+  return T.map(function(t,i){
+    var tS=DB.subj.filter(function(s){return s.teacher===t.name;});
+    var tSt=DB.stu.filter(function(s){return s.teacher===t.name;});
+    var tR=tS.map(calcRate);
+    var progressAvg=tR.length?Math.round(tR.reduce(function(a,b){return a+b;},0)/tR.length):0;
+    var consultDone=tSt.filter(function(s){return cSt(s).lv==='ok';}).length;
+    var consultRate=tSt.length?Math.round(consultDone/tSt.length*100):0;
+    var hwRate=calcHwRate(t.name,tSt);
+    var evalScore=getEvalScore(t.name)||0;
+    var wAll=(DB.withdrawn||[]).filter(function(r){return r.teacher===t.name;}).length;
+    var wDenom=tSt.length+wAll; var wdRate=wDenom?Math.round(wAll/wDenom*100):0;
+    return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate};
+  });
+}
+function teacherComposite(t){
+  var parts=[
+    {k:'진도율', v:t.progressAvg||0, unit:'%'},
+    {k:'상담', v:t.consultRate||0, unit:'%'},
+    {k:'과제', v:t.hwRate||0, unit:'%'},
+    {k:'평가', v:t.evalScore||0, unit:'점'},
+    {k:'퇴원안정', v:100-(t.wdRate||0), unit:'%'}
+  ];
+  var sum=0; parts.forEach(function(p){ sum+=p.v; });
+  return {score:Math.round(sum/parts.length), parts:parts};
+}
+function teacherOverallHTML(){
+  var data=computeAllTeacherMetrics();
+  if(!data.length) return '<div class="empty">강사가 없어요. 계정 관리에서 추가하세요.</div>';
+  data.forEach(function(t){ var c=teacherComposite(t); t.composite=c.score; t.parts=c.parts; });
+  data.sort(function(a,b){ return b.composite-a.composite; });
+  var medals=['🥇','🥈','🥉'];
+  var h='';
+  data.forEach(function(t,rank){
+    var sc=t.composite;
+    var col=sc>=80?'var(--g)':sc>=60?'var(--acc)':sc>=40?'var(--am)':'var(--rd)';
+    var parts=t.parts.map(function(p){
+      return '<div style="flex:1;text-align:center;min-width:0">'
+        +'<div style="font-size:9.5px;color:var(--t3);margin-bottom:2px">'+p.k+'</div>'
+        +'<div style="font-size:12.5px;font-weight:700;color:var(--te)">'+p.v+'<span style="font-size:9px;color:var(--t3)">'+p.unit+'</span></div></div>';
+    }).join('');
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 14px;margin-bottom:8px;cursor:pointer" onclick="showTDetail('+t.idx+')">'
+      +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">'
+        +'<div class="rank-num" style="background:'+(rank===0?'var(--aml)':'var(--s2)')+';color:'+(rank===0?'var(--am)':'var(--t2)')+'">'+(rank<3?medals[rank]:(rank+1)+'위')+'</div>'
+        +'<div style="flex:1;font-size:14px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(t.name)+'</div>'
+        +'<div style="font-size:22px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+sc+'<span style="font-size:11px;color:var(--t3);font-weight:600">점</span></div>'
+      +'</div>'
+      +'<div style="height:6px;background:var(--s3);border-radius:3px;overflow:hidden;margin-bottom:9px"><div style="height:6px;width:'+Math.max(2,sc)+'%;background:'+col+';border-radius:3px"></div></div>'
+      +'<div style="display:flex;gap:2px">'+parts+'</div>'
+    +'</div>';
+  });
+  return h;
+}
 function setRankTab(tab) {
   rankTab = tab;
   if(tab==='homework'&&!hwData){toast('과제 데이터 불러오는 중...');loadHwData(function(){renderAdminHome();});}
@@ -4694,6 +4749,11 @@ function renderAdminHome() {
        + '</div>'
        + '</div>';
   }
+
+  // ── 강사 종합 평가 (강사평가 + 순위 지표 종합)
+  h += '<div class="sl2"><div class="d8" style="background:var(--g)"></div>강사 종합 평가 🏅</div>';
+  h += '<div style="font-size:11px;color:var(--t3);margin:-4px 0 10px">진도율·상담·과제·강사평가·퇴원안정을 평균한 종합 점수입니다. (강사 카드를 누르면 상세)</div>';
+  h += teacherOverallHTML();
 
   // ── 강사 순위
   h += '<div class="sl2"><div class="d8" style="background:var(--pu)"></div>강사 순위 🏆</div>';
