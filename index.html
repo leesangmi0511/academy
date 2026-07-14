@@ -5159,6 +5159,20 @@ function renderTeacherHome() {
 // ═══════════════════════════════════════
 // 렌더: 진도
 // ═══════════════════════════════════════
+// 반 정렬: E → M → H, 그 안에서 숫자 오름차순
+function _emhKey(name){
+  var s=(name||'').toUpperCase();
+  var order={E:0,M:1,H:2};
+  var m=s.match(/[EMH]/);
+  var p=(m&&order[m[0]]!==undefined)?order[m[0]]:9;
+  var num=s.match(/\d+/);
+  var n=num?parseInt(num[0],10):0;
+  return {p:p,n:n};
+}
+function _emhSort(a,b){
+  var ka=_emhKey(a.name), kb=_emhKey(b.name);
+  return ka.p-kb.p || ka.n-kb.n || (a.name||'').localeCompare(b.name||'');
+}
 function renderProgress() {
   if (!ME) return;
   // 과제앱 진도 자동 동기화 (데이터 로드 후 1회 재렌더)
@@ -5173,6 +5187,7 @@ function renderProgress() {
     h += teacherFilterChips();
     mySu = teacherFilter ? mySu.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; }) : mySu;
   }
+  mySu = mySu.slice().sort(_emhSort); // 반 순서 E→M→H, 숫자 오름차순
   if (!mySu.length) {
     h += '<div class="empty">'+(ME.role==='admin'?'과목을 추가하세요.':'담당 과목이 없습니다.')+'</div>';
   } else {
