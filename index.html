@@ -5676,14 +5676,14 @@ function doSaveConsult() {
 function openAddEvent(){
   if(!isAdminLevel()){ toast('관리자만 일정을 추가할 수 있어요','var(--rd)'); return; }
   var def=calSel||today();
-  var h='<div class="ov" id="ov-addevent" onclick="ovClose(event,this)" style="display:flex"><div class="modal"><div class="mh"></div>'
+  var h='<div class="ov" id="ov-addevent" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">📅 일정 추가</div>'
     +'<label class="fl">날짜</label><input class="fi" id="ae-date" type="date" value="'+def+'">'
     +'<label class="fl">제목</label><input class="fi" id="ae-title" type="text" placeholder="예: 3월 모의고사, 강사 회의, 특강">'
     +'<label class="fl">메모 (선택)</label><textarea class="fi" id="ae-memo" rows="2" placeholder="자세한 내용"></textarea>'
     +'<label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px;cursor:pointer;font-size:13px"><input type="checkbox" id="ae-notify" checked style="width:17px;height:17px;accent-color:var(--acc)">강사에게 알림 보내기</label>'
     +'<button class="btn" onclick="saveEvent()">추가</button>'
-    +'<button class="btn ghost" onclick="closeModal(\'ov-addevent\')">닫기</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-addevent\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
 }
