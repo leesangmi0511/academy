@@ -1184,9 +1184,14 @@ function stBg(l) { return l==='urgent' ? 'var(--rdl)' : l==='upcoming' ? 'var(--
 function stI(l)  { return l==='urgent' ? '⚠' : l==='upcoming' ? '◷' : '✓'; }
 function mySubj() { return isAdminLevel() ? DB.subj : DB.subj.filter(function(s){return s.teacher===ME.name;}); }
 function myStu()  { return isAdminLevel() ? DB.stu  : DB.stu.filter(function(s){return s.teacher===ME.name;}); }
-// 반(class) → 이름 순 정렬. 반 미지정은 맨 뒤로.
+// 반(class) → E→M→H·숫자 오름차순 정렬. 반 미지정은 맨 뒤로.
 function sortStuByClass(a,b){
-  var ca=a.class||'\uD7A3', cb=b.class||'\uD7A3';
+  var ca=a.class||'', cb=b.class||'';
+  var ea=ca?0:1, eb=cb?0:1;
+  if(ea!==eb) return ea-eb;                 // 미지정은 맨 뒤
+  var ka=_emhKey(ca), kb=_emhKey(cb);
+  if(ka.p!==kb.p) return ka.p-kb.p;          // E→M→H
+  if(ka.n!==kb.n) return ka.n-kb.n;          // 숫자 오름차순
   if(ca!==cb) return ca.localeCompare(cb,'ko');
   return (a.name||'').localeCompare(b.name||'','ko');
 }
