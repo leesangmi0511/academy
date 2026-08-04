@@ -4653,15 +4653,46 @@ function teacherComposite(t){
   var sum=0,wsum=0; parts.forEach(function(p){ p.w=partWeight(p.k); if(p.on){ sum+=p.v*p.w; wsum+=p.w; } }); // 가중 평균
   return {score:(wsum?Math.round(sum/wsum):0), parts:parts};
 }
-// 반 조절계수: 인원 많은 반·성적부진 반 등 난이도를 종합 점수에 보정
+// 학생 최신 시험 평균 등급(1~9, 낮을수록 우수). 없으면 null
+function _stuLatestGrade(sid, scores){
+  var sc = scores && scores[sid];
+  if(!sc || !sc.exams || !sc.exams.length) return null;
+  var exs = sc.exams.slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  var subs = exs[0].subjects || {}; var gs=[];
+  Object.keys(subs).forEach(function(k){ var g=Number((subs[k]||{}).grade); if(g>=1&&g<=9) gs.push(g); });
+  return gs.length ? gs.reduce(function(a,b){return a+b;},0)/gs.length : null;
+}
+var _cgiCache=null, _cgiFor=null;
+function classGradeInfo(){ // 반별 평균 등급 + 학원 평균 (과제앱 성적 기반)
+  if(_cgiCache && _cgiFor===hwData) return _cgiCache;
+  var res={classAvg:{}, academyAvg:null};
+  if(hwData&&hwData.fields){
+    var users=hwData.fields.users?(_FS._fromFS(hwData.fields.users)||[]):[];
+    var scores=hwData.fields.scores?(_FS._fromFS(hwData.fields.scores)||{}):{};
+    var byClass={}, all=[];
+    users.forEach(function(u){ if(!u||!u.id) return; var g=_stuLatestGrade(u.id, scores); if(g==null) return; var cid=u.classId||''; (byClass[cid]=byClass[cid]||[]).push(g); all.push(g); });
+    Object.keys(byClass).forEach(function(cid){ var a=byClass[cid]; res.classAvg[cid]=a.reduce(function(x,y){return x+y;},0)/a.length; });
+    res.academyAvg = all.length? all.reduce(function(x,y){return x+y;},0)/all.length : null;
+  }
+  _cgiFor=hwData; _cgiCache=res; return res;
+}
+// 반 조절계수(객관): 인원(기준 초과 명당) + 성적(학원 평균 대비 등급 격차 자동)
 function classAdjBonus(cn){
   var r=(DB.cfg&&DB.cfg.adjRules)||{};
-  var bigTh=(r.bigThreshold!=null?r.bigThreshold:8), bigB=(r.bigBonus!=null?r.bigBonus:5), lowB=(r.lowBonus!=null?r.lowBonus:10);
+  var base=(r.sizeBaseline!=null?r.sizeBaseline:7), per=(r.sizePerStudent!=null?r.sizePerStudent:2), sizeCap=(r.sizeCap!=null?r.sizeCap:10);
+  var gPer=(r.gradePerLevel!=null?r.gradePerLevel:8), gCap=(r.gradeCap!=null?r.gradeCap:15);
   var cnt=DB.stu.filter(function(s){return s.class===cn;}).length;
   var bonus=0, reasons=[];
-  if(cnt>=bigTh && bigB>0){ bonus+=bigB; reasons.push('대형 '+cnt+'명 (+'+bigB+'%)'); }
-  if(r.lowClasses && r.lowClasses[cn] && lowB>0){ bonus+=lowB; reasons.push('성적부진 (+'+lowB+'%)'); }
-  return {bonus:bonus, reasons:reasons, count:cnt};
+  var over=Math.max(0, cnt-base);
+  if(over>0 && per>0){ var sb=Math.min(sizeCap, over*per); sb=Math.round(sb*10)/10; if(sb>0){ bonus+=sb; reasons.push('인원 '+cnt+'명 (기준 '+base+' 초과 '+over+'명) → +'+sb+'%'); } }
+  var gi=classGradeInfo();
+  if(gi.academyAvg!=null && gi.classAvg[cn]!=null){
+    var gap=gi.classAvg[cn]-gi.academyAvg; // 양수 = 학원 평균보다 등급 나쁨
+    if(gap>0 && gPer>0){ var gb=Math.min(gCap, gap*gPer); gb=Math.round(gb*10)/10; if(gb>0){ bonus+=gb; reasons.push('평균 '+gi.classAvg[cn].toFixed(1)+'등급 (학원 '+gi.academyAvg.toFixed(1)+'등급보다 낮음) → +'+gb+'%'); } }
+  } else if(r.lowClasses && r.lowClasses[cn] && (r.lowBonus||0)>0){
+    bonus+=r.lowBonus; reasons.push('성적부진(수동 지정) +'+r.lowBonus+'%');
+  }
+  return {bonus:Math.round(bonus*10)/10, reasons:reasons, count:cnt};
 }
 function teacherAdjCoeff(tn){
   var classes=DB.subj.filter(function(s){return s.teacher===tn;}).map(function(s){return s.name;});
@@ -4703,22 +4734,37 @@ function teacherOverallHTML(){
 function openAdjRules(){
   if(!(ME&&ME.role==='owner')){ toast('원장만 설정할 수 있어요','var(--rd)'); return; }
   var r=(DB.cfg&&DB.cfg.adjRules)||{};
-  var bigTh=(r.bigThreshold!=null?r.bigThreshold:8), bigB=(r.bigBonus!=null?r.bigBonus:5), lowB=(r.lowBonus!=null?r.lowBonus:10);
-  var low=(r.lowClasses)||{};
+  var base=(r.sizeBaseline!=null?r.sizeBaseline:7), per=(r.sizePerStudent!=null?r.sizePerStudent:2), sizeCap=(r.sizeCap!=null?r.sizeCap:10);
+  var gPer=(r.gradePerLevel!=null?r.gradePerLevel:8), gCap=(r.gradeCap!=null?r.gradeCap:15);
+  var lowB=(r.lowBonus!=null?r.lowBonus:0), low=(r.lowClasses)||{};
+  var gi=classGradeInfo();
+  var acadTxt = gi.academyAvg!=null ? ('학원 평균 '+gi.academyAvg.toFixed(1)+'등급 · 성적 데이터로 자동 계산') : '성적 데이터 없음 · 아래 수동 지정 사용';
   var classes=DB.subj.map(function(s){return s.name;}).filter(function(v,i,a){return a.indexOf(v)===i;});
   var clsRows=classes.map(function(cn,ci){
-    var cnt=DB.stu.filter(function(s){return s.class===cn;}).length;
-    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--s2)">'
-      +'<span style="flex:1;font-size:12.5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(cn)+' <span style="font-size:10.5px;color:'+(cnt>=bigTh?'var(--am)':'var(--t3)')+'">'+cnt+'명</span></span>'
-      +'<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--t2);cursor:pointer;flex-shrink:0"><input type="checkbox" id="adjlow-'+ci+'" '+(low[cn]?'checked':'')+' style="width:16px;height:16px;accent-color:var(--am)">성적부진</label></div>';
+    var b=classAdjBonus(cn);
+    var hasGrade=(gi.classAvg[cn]!=null);
+    var ga=hasGrade?gi.classAvg[cn].toFixed(1)+'등급':'-';
+    return '<div style="display:flex;align-items:center;gap:6px;padding:7px 0;border-bottom:1px solid var(--s2)">'
+      +'<span style="flex:1;font-size:12px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(cn)+'</span>'
+      +'<span style="font-size:10.5px;color:var(--t3);width:40px;text-align:right">'+b.count+'명</span>'
+      +'<span style="font-size:10.5px;color:var(--t3);width:48px;text-align:right">'+ga+'</span>'
+      +'<span style="font-size:11px;color:'+(b.bonus>0?'var(--am)':'var(--t3)')+';font-weight:700;width:44px;text-align:right">'+(b.bonus>0?'+'+b.bonus+'%':'-')+'</span>'
+      +(hasGrade?'<span style="width:22px"></span>':'<label style="width:22px;display:flex;justify-content:center;cursor:pointer" title="성적 데이터 없음 → 수동 지정"><input type="checkbox" id="adjlow-'+ci+'" '+(low[cn]?'checked':'')+' style="width:15px;height:15px;accent-color:var(--am)"></label>')
+      +'</div>';
   }).join('');
   var h='<div class="ov" id="ov-adjrules" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
-    +'<div class="mt2">🎚️ 반 조절계수</div>'
-    +'<div style="font-size:12px;color:var(--t2);margin-bottom:12px">반의 성격(인원·성적)에 따라 강사 종합 점수를 보정합니다. 담당 반들의 평균 보정치가 적용돼요.</div>'
-    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:13px;font-weight:600">대형 반 기준 <input type="number" min="1" value="'+bigTh+'" id="adj-bigth" style="width:52px;padding:6px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">명 이상 → +<input type="number" min="0" value="'+bigB+'" id="adj-bigb" style="width:50px;padding:6px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
-    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;font-size:13px;font-weight:600">성적부진 반 → +<input type="number" min="0" value="'+lowB+'" id="adj-lowb" style="width:50px;padding:6px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
-    +'<div style="font-size:11.5px;color:var(--t2);font-weight:700;margin-bottom:4px">반별 성적부진 지정</div>'
-    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px;max-height:220px;overflow:auto">'+(clsRows||'<div style="padding:10px;text-align:center;color:var(--t3);font-size:12px">반이 없어요</div>')+'</div>'
+    +'<div class="mt2">🎚️ 반 조절계수 (객관 계산)</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:6px">반의 인원·성적을 실제 데이터로 계산해 종합 점수를 보정합니다. 담당 반들의 평균 보정치가 적용돼요.</div>'
+    +'<div style="font-size:11px;color:var(--acc);margin-bottom:12px;font-weight:600">📊 '+acadTxt+'</div>'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:6px">① 인원 보정</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:12.5px">기준 <input type="number" min="1" value="'+base+'" id="adj-base" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">명 초과, 1명당 +<input type="number" min="0" step="0.5" value="'+per+'" id="adj-per" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:12px;font-size:12.5px">상한 <input type="number" min="0" value="'+sizeCap+'" id="adj-sizecap" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:6px">② 성적 보정 (자동)</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:12.5px">학원 평균보다 나쁜 등급 격차 1당 +<input type="number" min="0" step="0.5" value="'+gPer+'" id="adj-gper" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:12.5px">상한 <input type="number" min="0" value="'+gCap+'" id="adj-gcap" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:12px;font-size:12px;color:var(--t2)">성적 데이터 없는 반 수동 지정 시 +<input type="number" min="0" value="'+lowB+'" id="adj-lowb" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="display:flex;font-size:10.5px;color:var(--t3);font-weight:700;padding:0 0 3px"><span style="flex:1">반</span><span style="width:40px;text-align:right">인원</span><span style="width:48px;text-align:right">평균등급</span><span style="width:44px;text-align:right">보정</span><span style="width:22px;text-align:center">수동</span></div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px;max-height:200px;overflow:auto">'+(clsRows||'<div style="padding:10px;text-align:center;color:var(--t3);font-size:12px">반이 없어요</div>')+'</div>'
     +'<button class="btn" onclick="saveAdjRules()">저장</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-adjrules\').remove()">닫기</button>'
     +'</div></div>';
@@ -4728,9 +4774,13 @@ function saveAdjRules(){
   if(!(ME&&ME.role==='owner')) return;
   if(!DB.cfg) DB.cfg={}; if(!DB.cfg.adjRules) DB.cfg.adjRules={};
   var r=DB.cfg.adjRules;
-  r.bigThreshold=Math.max(1, parseInt(document.getElementById('adj-bigth').value)||8);
-  r.bigBonus=Math.max(0, parseFloat(document.getElementById('adj-bigb').value)||0);
-  r.lowBonus=Math.max(0, parseFloat(document.getElementById('adj-lowb').value)||0);
+  var gv=function(id,d){ var el=document.getElementById(id); var v=el?parseFloat(el.value):NaN; return isNaN(v)?d:Math.max(0,v); };
+  r.sizeBaseline=Math.max(1, Math.round(gv('adj-base',7)));
+  r.sizePerStudent=gv('adj-per',2);
+  r.sizeCap=gv('adj-sizecap',10);
+  r.gradePerLevel=gv('adj-gper',8);
+  r.gradeCap=gv('adj-gcap',15);
+  r.lowBonus=gv('adj-lowb',0);
   r.lowClasses={};
   var classes=DB.subj.map(function(s){return s.name;}).filter(function(v,i,a){return a.indexOf(v)===i;});
   classes.forEach(function(cn,ci){ var el=document.getElementById('adjlow-'+ci); if(el&&el.checked) r.lowClasses[cn]=1; });
