@@ -4636,7 +4636,7 @@ function computeAllTeacherMetrics(){
     var wDenom=tSt.length+wAll; var wdRate=wDenom?Math.round(wAll/wDenom*100):0;
     var oh=calcOhdapRate(tSt); // 오답데이 완료율 (없으면 null)
     var vr=calcVideoRate(t.name); // 수업영상 업로드율 (없으면 null)
-    return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate, ohdapScore:(oh?oh.score:null), ohdapR1:(oh?oh.rate1:null), ohdapR2:(oh?oh.rate2:null), videoScore:(vr!=null?vr:null)};
+    return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, consultDone:consultDone, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate, wdCount:wAll, ohdapScore:(oh?oh.score:null), ohdapR1:(oh?oh.rate1:null), ohdapR2:(oh?oh.rate2:null), videoScore:(vr!=null?vr:null)};
   });
 }
 function teacherComposite(t){
@@ -4676,9 +4676,45 @@ function teacherOverallHTML(){
       +'</div>'
       +'<div style="height:6px;background:var(--s3);border-radius:3px;overflow:hidden;margin-bottom:9px"><div style="height:6px;width:'+Math.max(2,sc)+'%;background:'+col+';border-radius:3px"></div></div>'
       +'<div style="display:flex;gap:2px">'+parts+'</div>'
+      +'<div style="text-align:right;margin-top:7px"><button onclick="event.stopPropagation();showCompositeDetail('+t.idx+')" style="font-size:10.5px;color:var(--acc);background:none;border:none;cursor:pointer;font-weight:700">🧮 계산 상세 ▸</button></div>'
     +'</div>';
   });
   return h;
+}
+function showCompositeDetail(idx){
+  var data=computeAllTeacherMetrics(), t=null;
+  for(var i=0;i<data.length;i++){ if(data[i].idx===idx){ t=data[i]; break; } }
+  if(!t){ toast('강사 정보를 찾을 수 없어요','var(--rd)'); return; }
+  var c=teacherComposite(t);
+  var defs={
+    '진도율':'담당 반 진도의 평균 (진행 ÷ 목표)',
+    '상담':'담당 학생 상담 완료 비율 ('+(t.consultDone||0)+'/'+(t.studentCount||0)+'명 완료)',
+    '과제':'과제 앱 과제 완료율',
+    '평가':'강사 평가 항목 평균 (상 100 · 중 60 · 하 30점)',
+    '퇴원안정':'100 − 퇴원율 (퇴원 '+(t.wdCount||0)+'명 · '+(t.wdRate||0)+'%)',
+    '오답데이':'오답데이 완료율'+(t.ohdapScore!=null?(' (1차 '+(t.ohdapR1||0)+'% · 2차 '+(t.ohdapR2||0)+'%)'):''),
+    '영상':'진도 지난 차시 대비 수업영상 업로드율'
+  };
+  var rows='';
+  c.parts.forEach(function(p){
+    var val = p.on ? ('<b style="color:var(--te)">'+p.v+p.unit+'</b>') : '<span style="color:var(--t3);font-size:11px">데이터 없음 · 제외</span>';
+    rows+='<div style="padding:9px 2px;border-bottom:1px solid var(--s2)">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:700'+(p.on?'':';color:var(--t3)')+'">'+p.k+'</span><span>'+val+'</span></div>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(defs[p.k]||'')+'</div></div>';
+  });
+  var incl=c.parts.filter(function(p){return p.on;});
+  var sumStr=incl.map(function(p){return p.v;}).join(' + ');
+  var col=c.score>=80?'var(--g)':c.score>=60?'var(--acc)':c.score>=40?'var(--am)':'var(--rd)';
+  var h='<div class="ov" id="ov-compdetail" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🧮 '+dEsc(t.name)+' · 종합 점수 계산</div>'
+    +'<div style="text-align:center;margin:4px 0 12px"><span style="font-size:34px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+c.score+'</span><span style="font-size:14px;color:var(--t3)">점</span></div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px">'+rows+'</div>'
+    +'<div style="background:var(--acc-l);border-radius:var(--r);padding:11px 13px;font-size:12px;color:var(--te);margin-bottom:12px">'
+      +'<b>계산식</b><br>('+sumStr+') ÷ '+incl.length+'개 = <b style="color:'+col+'">'+c.score+'점</b>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">※ 데이터가 없는 지표는 평균에서 제외됩니다. 각 지표는 동일 비중(같은 가중치)입니다.</div></div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-compdetail\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
 }
 function setRankTab(tab) {
   rankTab = tab;
