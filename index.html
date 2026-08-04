@@ -6169,59 +6169,59 @@ function selRole(r) {
 function refreshTSel() {
   // 강사 직접 입력 방식으로 변경 - 사용 안 함
 }
-function doLogin() {
+function _doLoginCore() {
   var err=document.getElementById('li-err');
   if(loginRole==='owner'){
     // 원장 로그인
     var ownerPw=DB.cfg.ownerPw||'7193455';
-    if(document.getElementById('li-opw').value!==ownerPw){err.textContent='비밀번호가 틀렸습니다.';return;}
+    if(document.getElementById('li-opw').value!==ownerPw){err.textContent='비밀번호가 틀렸습니다.';return false;}
     ME={role:'owner',name:'원장'};
   } else if(loginRole==='staff'){
     // 행정팀 로그인
     var sid = document.getElementById('li-sid').value.trim();
     var spw = document.getElementById('li-spw').value;
-    if(!sid){err.textContent='아이디를 입력하세요.';return;}
-    if(!spw){err.textContent='비밀번호를 입력하세요.';return;}
+    if(!sid){err.textContent='아이디를 입력하세요.';return false;}
+    if(!spw){err.textContent='비밀번호를 입력하세요.';return false;}
     var staffList = DB.cfg.staff||[];
     var foundStaff = staffList.find(function(s){return s.name===sid;});
-    if(!foundStaff){err.textContent='존재하지 않는 아이디입니다.';return;}
-    if(foundStaff.pw!==spw){err.textContent='비밀번호가 틀렸습니다.';return;}
+    if(!foundStaff){err.textContent='존재하지 않는 아이디입니다.';return false;}
+    if(foundStaff.pw!==spw){err.textContent='비밀번호가 틀렸습니다.';return false;}
     ME={role:'staff',name:foundStaff.name};
   } else if(loginRole==='admin'){
     var aid = document.getElementById('li-aid').value.trim();
     var apw = document.getElementById('li-apw').value;
-    if(!aid){err.textContent='아이디를 입력하세요.';return;}
-    if(!apw){err.textContent='비밀번호를 입력하세요.';return;}
+    if(!aid){err.textContent='아이디를 입력하세요.';return false;}
+    if(!apw){err.textContent='비밀번호를 입력하세요.';return false;}
     // 관리자 명단에서 찾기
     var admins = DB.cfg.admins||[];
     var foundAdmin = admins.find(function(a){return a.name===aid;});
     if(foundAdmin){
-      if(foundAdmin.pw!==apw){err.textContent='비밀번호가 틀렸습니다.';return;}
+      if(foundAdmin.pw!==apw){err.textContent='비밀번호가 틀렸습니다.';return false;}
       ME={role:'admin',name:foundAdmin.name};
     } else {
       // 기존 단일 관리자 계정 (하위 호환)
-      if(!DB.cfg.adminPw){err.textContent='먼저 초기 설정을 완료하세요.';return;}
-      if(aid!=='관리자'&&admins.length>0){err.textContent='존재하지 않는 아이디입니다.';return;}
-      if(apw!==DB.cfg.adminPw){err.textContent='비밀번호가 틀렸습니다.';return;}
+      if(!DB.cfg.adminPw){err.textContent='먼저 초기 설정을 완료하세요.';return false;}
+      if(aid!=='관리자'&&admins.length>0){err.textContent='존재하지 않는 아이디입니다.';return false;}
+      if(apw!==DB.cfg.adminPw){err.textContent='비밀번호가 틀렸습니다.';return false;}
       ME={role:'admin',name:'관리자'};
     }
   } else {
     var name=document.getElementById('li-tid').value.trim();
     var pw=document.getElementById('li-tpw').value;
-    if(!name){err.textContent='아이디를 입력하세요.';return;}
-    if(!pw){err.textContent='비밀번호를 입력하세요.';return;}
+    if(!name){err.textContent='아이디를 입력하세요.';return false;}
+    if(!pw){err.textContent='비밀번호를 입력하세요.';return false;}
     var t=DB.cfg.teachers.find(function(t){return t.name===name;});
-    if(!t){err.textContent='존재하지 않는 아이디입니다.';return;}
+    if(!t){err.textContent='존재하지 않는 아이디입니다.';return false;}
     // 초기 비밀번호 7193455 또는 설정된 비밀번호
     var tPw=t.pw||'7193455';
-    if(tPw!==pw){err.textContent='비밀번호가 틀렸습니다.';return;}
+    if(tPw!==pw){err.textContent='비밀번호가 틀렸습니다.';return false;}
     ME={role:'teacher',name:name};
   }
   err.textContent='';
   // 자동 로그인 정보 저장
   var autoChk = document.getElementById('li-autologin');
   if(autoChk && autoChk.checked){
-    var cred = {role:ME.role, name:ME.name};
+    var cred = {role:ME.role, name:ME.name, ts:Date.now()};
     if(loginRole==='owner') cred.pw = document.getElementById('li-opw').value;
     else if(loginRole==='admin') cred.pw = document.getElementById('li-apw').value;
     else cred.pw = document.getElementById('li-tpw').value;
@@ -6234,7 +6234,21 @@ function doLogin() {
   updateTabVisibility();
   recordAccess();
   goTab('home');
+  _resetIdle();
   setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} try{ checkNewEvents(); }catch(e){} }, 800);
+  return true;
+}
+// 로그인 잠금(무차별 대입 방지) 래퍼
+function _loginLock(){ try{ var L=JSON.parse(localStorage.getItem('ac_lock')||'null'); if(L&&L.until>Date.now()) return Math.ceil((L.until-Date.now())/1000); }catch(e){} return 0; }
+function doLogin(){
+  var errEl=document.getElementById('li-err');
+  var lock=_loginLock();
+  if(lock>0){ errEl.textContent='로그인 시도가 많아 잠겼어요. 약 '+Math.max(1,Math.ceil(lock/60))+'분 후 다시 시도하세요.'; return; }
+  var ok=_doLoginCore();
+  if(ok){ try{ localStorage.removeItem('ac_fail'); localStorage.removeItem('ac_lock'); }catch(e){} return; }
+  var n=0; try{ n=(parseInt(localStorage.getItem('ac_fail')||'0',10)||0)+1; }catch(e){}
+  if(n>=5){ try{ localStorage.setItem('ac_lock', JSON.stringify({until:Date.now()+5*60000})); localStorage.setItem('ac_fail','0'); }catch(e){} errEl.textContent='비밀번호 5회 오류 · 5분간 로그인이 잠깁니다.'; }
+  else { try{ localStorage.setItem('ac_fail', String(n)); }catch(e){} if(errEl.textContent) errEl.textContent += '  ('+(5-n)+'회 남음)'; }
 }
 
 // 저장된 자동 로그인 정보로 자동 로그인 시도
@@ -6244,6 +6258,7 @@ function tryAutoLogin() {
   var cred;
   try { cred = JSON.parse(saved); } catch(e){ return false; }
   if(!cred || !cred.role) return false;
+  if(cred.ts && (Date.now()-cred.ts) > 30*24*60*60000){ localStorage.removeItem('ac_autologin'); return false; } // 30일 만료
 
   if(cred.role==='owner'){
     var ownerPw = DB.cfg.ownerPw||'7193455';
@@ -6279,9 +6294,19 @@ function tryAutoLogin() {
   updateTabVisibility();
   recordAccess();
   goTab('home');
+  _resetIdle();
   setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} try{ checkNewEvents(); }catch(e){} }, 800);
   return true;
 }
+// 미사용 시 자동 로그아웃 (공용 기기 보호)
+var _idleTimer=null;
+function _resetIdle(){
+  if(!ME) return;
+  if(_idleTimer) clearTimeout(_idleTimer);
+  var mins=(DB.cfg&&DB.cfg.idleMin)||30;
+  _idleTimer=setTimeout(function(){ if(ME){ try{ toast('활동이 없어 자동 로그아웃됐어요','var(--am)'); }catch(e){} logout(); } }, mins*60000);
+}
+['click','keydown','touchstart','scroll'].forEach(function(ev){ try{ document.addEventListener(ev, _resetIdle, {passive:true}); }catch(e){} });
 function logout() {
   ME=null;
   localStorage.removeItem('ac_autologin');  // 자동 로그인 해제
