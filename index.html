@@ -4702,10 +4702,40 @@ function teacherAdjCoeff(tn){
   var avg=tot/classes.length; // 담당 반들의 평균 보정치
   return {coeff:1+avg/100, avgBonus:Math.round(avg*10)/10, perClass:per};
 }
+function _dateNDaysAgo(n){ var d=new Date(); d.setDate(d.getDate()-n); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
+// 성적 하락 알림이 갔으나 상담이 누락(status needed)된 건수 — 강사 감점용
+function teacherMissedCounsels(tn){
+  if(!hwData||!hwData.fields) return {count:0, list:[]};
+  var cs = hwData.fields.counsels ? (_FS._fromFS(hwData.fields.counsels)||[]) : [];
+  var r=(DB.cfg&&DB.cfg.adjRules)||{};
+  var grace=(r.missGraceDays!=null?r.missGraceDays:3);
+  var cutoff=_dateNDaysAgo(grace);
+  var list=cs.filter(function(c){
+    if(!c || c.status!=='needed') return false;
+    var reason=(c.reason||'');
+    if(!(reason.indexOf('하락')>=0 || reason.indexOf('70점')>=0)) return false; // 성적 하락/저조 사유만
+    if(c.teacherName){ if(c.teacherName!==tn) return false; }
+    else { if(!DB.subj.some(function(s){return s.name===c.classId && s.teacher===tn;})) return false; }
+    if(c.date && c.date>cutoff) return false; // 유예기간 지난 것만(알림 후 미상담)
+    return true;
+  });
+  return {count:list.length, list:list};
+}
+// 일 기한 초과: 진도 마감 + 오답데이 1차(15일) + 수업영상(차시 지남) 미완료 → 감점
+function teacherDeadlineMiss(tn){
+  var td=today(); var list=[]; var now=new Date();
+  DB.subj.filter(function(s){return s.teacher===tn;}).forEach(function(s){
+    if(s.endDate && s.endDate < td){ var rate=calcRate(s); if(rate<100){ list.push({kind:'진도', label:dEsc(s.name)+' (마감 '+s.endDate+' · '+rate+'%)'}); } }
+  });
+  var tSt=DB.stu.filter(function(s){return s.teacher===tn;});
+  if(now.getDate()>15){ var oh=calcOhdapRate(tSt); if(oh && oh.rate1!=null && oh.rate1<100){ list.push({kind:'오답데이', label:'1차 오답데이 미완료 ('+oh.rate1+'%)'}); } }
+  var vr=calcVideoRate(tn); if(vr!=null && vr<100){ list.push({kind:'영상', label:'지난 차시 영상 미업로드 ('+vr+'%)'}); }
+  return {count:list.length, list:list};
+}
 function teacherOverallHTML(){
   var data=computeAllTeacherMetrics();
   if(!data.length) return '<div class="empty">강사가 없어요. 계정 관리에서 추가하세요.</div>';
-  data.forEach(function(t){ var c=teacherComposite(t); t.base=c.score; t.parts=c.parts; var adj=teacherAdjCoeff(t.name); t.coeff=adj.coeff; t.adjBonus=adj.avgBonus; t.composite=Math.min(100, Math.round(c.score*adj.coeff)); });
+  data.forEach(function(t){ var c=teacherComposite(t); t.base=c.score; t.parts=c.parts; var adj=teacherAdjCoeff(t.name); t.coeff=adj.coeff; t.adjBonus=adj.avgBonus; var boosted=Math.min(100, Math.round(c.score*adj.coeff)); var mc=teacherMissedCounsels(t.name); var pp=((DB.cfg&&DB.cfg.adjRules&&DB.cfg.adjRules.missPenalty!=null)?DB.cfg.adjRules.missPenalty:3); t.missed=mc.count; t.penalty=mc.count*pp; var dm=teacherDeadlineMiss(t.name); var dp=((DB.cfg&&DB.cfg.adjRules&&DB.cfg.adjRules.deadPenalty!=null)?DB.cfg.adjRules.deadPenalty:3); t.deadCount=dm.count; t.deadPenalty=dm.count*dp; t.composite=Math.max(0, boosted-t.penalty-t.deadPenalty); });
   data.sort(function(a,b){ return b.composite-a.composite; });
   var medals=['🥇','🥈','🥉'];
   var h='';
@@ -4721,7 +4751,7 @@ function teacherOverallHTML(){
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 14px;margin-bottom:8px;cursor:pointer" onclick="showTDetail('+t.idx+')">'
       +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">'
         +'<div class="rank-num" style="background:'+(rank===0?'var(--aml)':'var(--s2)')+';color:'+(rank===0?'var(--am)':'var(--t2)')+'">'+(rank<3?medals[rank]:(rank+1)+'위')+'</div>'
-        +'<div style="flex:1;font-size:14px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(t.name)+(t.adjBonus>0?' <span style="font-size:9px;color:var(--am);font-weight:700;background:var(--aml);border-radius:5px;padding:1px 5px">보정+'+t.adjBonus+'%</span>':'')+'</div>'
+        +'<div style="flex:1;font-size:14px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(t.name)+(t.adjBonus>0?' <span style="font-size:9px;color:var(--am);font-weight:700;background:var(--aml);border-radius:5px;padding:1px 5px">보정+'+t.adjBonus+'%</span>':'')+(t.penalty>0?' <span style="font-size:9px;color:var(--rd);font-weight:700;background:var(--rdl);border-radius:5px;padding:1px 5px">상담누락 -'+t.penalty+'</span>':'')+(t.deadPenalty>0?' <span style="font-size:9px;color:var(--rd);font-weight:700;background:var(--rdl);border-radius:5px;padding:1px 5px">기한초과 -'+t.deadPenalty+'</span>':'')+'</div>'
         +'<div style="font-size:22px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+sc+'<span style="font-size:11px;color:var(--t3);font-weight:600">점</span></div>'
       +'</div>'
       +'<div style="height:6px;background:var(--s3);border-radius:3px;overflow:hidden;margin-bottom:9px"><div style="height:6px;width:'+Math.max(2,sc)+'%;background:'+col+';border-radius:3px"></div></div>'
@@ -4763,6 +4793,12 @@ function openAdjRules(){
     +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:12.5px">학원 평균보다 나쁜 등급 격차 1당 +<input type="number" min="0" step="0.5" value="'+gPer+'" id="adj-gper" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
     +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:12.5px">상한 <input type="number" min="0" value="'+gCap+'" id="adj-gcap" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
     +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:12px;font-size:12px;color:var(--t2)">성적 데이터 없는 반 수동 지정 시 +<input type="number" min="0" value="'+lowB+'" id="adj-lowb" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--rd)">③ 상담 누락 감점</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:4px;font-size:12.5px">성적 하락 알림 후 미상담 1건당 −<input type="number" min="0" step="0.5" value="'+(r.missPenalty!=null?r.missPenalty:3)+'" id="adj-misspen" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">점</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:12px;font-size:12.5px">유예기간 <input type="number" min="0" value="'+(r.missGraceDays!=null?r.missGraceDays:3)+'" id="adj-grace" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">일 지난 미상담만</div>'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:6px;color:var(--rd)">④ 기한 초과 감점</div>'
+    +'<div style="font-size:11px;color:var(--t3);margin-bottom:5px">진도 마감 · 오답데이 1차(15일) · 수업영상 미업로드</div>'
+    +'<div style="display:flex;align-items:center;gap:5px;margin-bottom:12px;font-size:12.5px">기한 초과 1건당 −<input type="number" min="0" step="0.5" value="'+(r.deadPenalty!=null?r.deadPenalty:3)+'" id="adj-deadpen" style="width:46px;padding:5px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">점</div>'
     +'<div style="display:flex;font-size:10.5px;color:var(--t3);font-weight:700;padding:0 0 3px"><span style="flex:1">반</span><span style="width:40px;text-align:right">인원</span><span style="width:48px;text-align:right">평균등급</span><span style="width:44px;text-align:right">보정</span><span style="width:22px;text-align:center">수동</span></div>'
     +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px;max-height:200px;overflow:auto">'+(clsRows||'<div style="padding:10px;text-align:center;color:var(--t3);font-size:12px">반이 없어요</div>')+'</div>'
     +'<button class="btn" onclick="saveAdjRules()">저장</button>'
@@ -4781,6 +4817,9 @@ function saveAdjRules(){
   r.gradePerLevel=gv('adj-gper',8);
   r.gradeCap=gv('adj-gcap',15);
   r.lowBonus=gv('adj-lowb',0);
+  r.missPenalty=gv('adj-misspen',3);
+  r.missGraceDays=Math.round(gv('adj-grace',3));
+  r.deadPenalty=gv('adj-deadpen',3);
   r.lowClasses={};
   var classes=DB.subj.map(function(s){return s.name;}).filter(function(v,i,a){return a.indexOf(v)===i;});
   classes.forEach(function(cn,ci){ var el=document.getElementById('adjlow-'+ci); if(el&&el.checked) r.lowClasses[cn]=1; });
@@ -4848,23 +4887,44 @@ function showCompositeDetail(idx){
   var sumStr=incl.map(function(p){return p.v+'×'+p.w;}).join(' + ');
   var wsum=incl.reduce(function(a,p){return a+p.w;},0);
   var adj=teacherAdjCoeff(t.name);
-  var adjScore=Math.min(100, Math.round(c.score*adj.coeff));
+  var boosted=Math.min(100, Math.round(c.score*adj.coeff));
+  var mc=teacherMissedCounsels(t.name);
+  var pp=((DB.cfg&&DB.cfg.adjRules&&DB.cfg.adjRules.missPenalty!=null)?DB.cfg.adjRules.missPenalty:3);
+  var penalty=mc.count*pp;
+  var dm=teacherDeadlineMiss(t.name);
+  var dp=((DB.cfg&&DB.cfg.adjRules&&DB.cfg.adjRules.deadPenalty!=null)?DB.cfg.adjRules.deadPenalty:3);
+  var deadPenalty=dm.count*dp;
+  var adjScore=Math.max(0, boosted-penalty-deadPenalty);
   var col=adjScore>=80?'var(--g)':adjScore>=60?'var(--acc)':adjScore>=40?'var(--am)':'var(--rd)';
   var adjBlock='';
   if(adj.avgBonus>0){
     var reasonRows=adj.perClass.filter(function(pc){return pc.bonus>0;}).map(function(pc){ return '· '+dEsc(pc.cn)+': '+pc.reasons.join(', '); }).join('<br>');
     adjBlock='<div style="background:var(--aml);border-radius:var(--r);padding:11px 13px;font-size:12px;color:var(--te);margin-bottom:12px">'
-      +'<b>반 조절계수</b><br>기본 '+c.score+'점 × '+(Math.round(adj.coeff*1000)/1000)+' (담당 반 평균 +'+adj.avgBonus+'%) = <b style="color:'+col+'">'+adjScore+'점</b>'
+      +'<b>반 조절계수</b><br>기본 '+c.score+'점 × '+(Math.round(adj.coeff*1000)/1000)+' (담당 반 평균 +'+adj.avgBonus+'%) = <b>'+boosted+'점</b>'
       +(reasonRows?('<div style="font-size:10.5px;color:var(--t3);margin-top:5px">'+reasonRows+'</div>'):'')+'</div>';
+  }
+  var penBlock='';
+  if(penalty>0){
+    penBlock='<div style="background:var(--rdl);border-radius:var(--r);padding:11px 13px;font-size:12px;color:var(--te);margin-bottom:12px">'
+      +'<b style="color:var(--rd)">상담 누락 감점</b><br>성적 하락 알림 후 미상담 '+mc.count+'건 × '+pp+'점 = <b style="color:var(--rd)">−'+penalty+'점</b>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">'+mc.list.slice(0,6).map(function(cc){return '· '+dEsc(cc.studentName||'학생')+' ('+dEsc(cc.reason||'')+')';}).join('<br>')+(mc.list.length>6?'<br>…':'')+'</div></div>';
+  }
+  var deadBlock='';
+  if(deadPenalty>0){
+    deadBlock='<div style="background:var(--rdl);border-radius:var(--r);padding:11px 13px;font-size:12px;color:var(--te);margin-bottom:12px">'
+      +'<b style="color:var(--rd)">기한 초과 감점</b><br>일 기한 초과 '+dm.count+'건 × '+dp+'점 = <b style="color:var(--rd)">−'+deadPenalty+'점</b>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">'+dm.list.slice(0,8).map(function(dd){return '· ['+dd.kind+'] '+dd.label;}).join('<br>')+(dm.list.length>8?'<br>…':'')+'</div></div>';
   }
   var h='<div class="ov" id="ov-compdetail" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">🧮 '+dEsc(t.name)+' · 종합 점수 계산</div>'
-    +'<div style="text-align:center;margin:4px 0 12px"><span style="font-size:34px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+adjScore+'</span><span style="font-size:14px;color:var(--t3)">점</span>'+(adj.avgBonus>0?'<div style="font-size:10.5px;color:var(--am);font-weight:700;margin-top:3px">기본 '+c.score+'점 · 보정 +'+adj.avgBonus+'%</div>':'')+'</div>'
+    +'<div style="text-align:center;margin:4px 0 12px"><span style="font-size:34px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+adjScore+'</span><span style="font-size:14px;color:var(--t3)">점</span>'+((adj.avgBonus>0||penalty>0||deadPenalty>0)?'<div style="font-size:10.5px;color:var(--t3);font-weight:700;margin-top:3px">기본 '+c.score+'점'+(adj.avgBonus>0?' · 보정 +'+adj.avgBonus+'%':'')+(penalty>0?' · 상담누락 −'+penalty:'')+(deadPenalty>0?' · 기한초과 −'+deadPenalty:'')+'</div>':'')+'</div>'
     +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px">'+rows+'</div>'
     +'<div style="background:var(--acc-l);border-radius:var(--r);padding:11px 13px;font-size:12px;color:var(--te);margin-bottom:12px">'
       +'<b>계산식 (가중 평균)</b><br>('+sumStr+') ÷ '+wsum+' = <b>'+c.score+'점</b>'
       +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">※ 값 × 비중을 모두 더한 뒤, 비중 합으로 나눕니다. 데이터 없는 지표는 제외돼요.'+((ME&&ME.role==='owner')?' 비중은 「⚖️ 비중 조절」에서 바꿀 수 있어요.':'')+'</div></div>'
     +adjBlock
+    +penBlock
+    +deadBlock
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-compdetail\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
