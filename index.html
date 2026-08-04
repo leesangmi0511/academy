@@ -58,22 +58,50 @@ var _FB = {
 window._db = null;
 window._fsUnsubscribe = null;
 
+// ═══ Firebase 익명 인증 (데이터 접근 보호) ═══
+// 토큰 획득 실패 시 null 반환 → 요청은 그대로 진행(fail-open)되어 앱이 깨지지 않음.
+// 콘솔에서 익명 인증을 켜고 규칙을 'if request.auth != null'로 바꾸면 실제 보호가 적용됨.
+var _auth = {
+  _tok:null, _exp:0, _refresh:null, _p:null, enabled:true,
+  token: function(){
+    if(!_auth.enabled) return Promise.resolve(null);
+    if(_auth._tok && Date.now() < _auth._exp-60000) return Promise.resolve(_auth._tok);
+    if(_auth._p) return _auth._p;
+    var url, body, ct;
+    if(_auth._refresh){ url='https://securetoken.googleapis.com/v1/token?key='+_FB.apiKey; ct='application/x-www-form-urlencoded'; body='grant_type=refresh_token&refresh_token='+encodeURIComponent(_auth._refresh); }
+    else { url='https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+_FB.apiKey; ct='application/json'; body=JSON.stringify({returnSecureToken:true}); }
+    _auth._p = fetch(url,{method:'POST',headers:{'Content-Type':ct},body:body}).then(function(r){return r.json();}).then(function(j){
+      var tok=j.idToken||j.id_token, rt=j.refreshToken||j.refresh_token, exp=j.expiresIn||j.expires_in||3600;
+      if(!tok) throw new Error('no token');
+      _auth._tok=tok; _auth._refresh=rt||_auth._refresh; _auth._exp=Date.now()+parseInt(exp,10)*1000; _auth._p=null; return tok;
+    }).catch(function(){ _auth._p=null; _auth._refresh=null; return null; });
+    return _auth._p;
+  }
+};
+
 // Firestore REST 래퍼
 var _FS = {
   // 문서 읽기
   get: function(path) {
-    return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey)
-      .then(function(r){ return r.json(); });
+    return _auth.token().then(function(tok){
+      var h = tok ? {Authorization:'Bearer '+tok} : {};
+      return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey, {headers:h})
+        .then(function(r){ return r.json(); });
+    });
   },
   // 문서 쓰기 (전체 덮어쓰기)
   set: function(path, data) {
     var fsObj = _FS._toFS(data);
     var body = fsObj.mapValue ? {fields: fsObj.mapValue.fields} : fsObj;
-    return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey, {
-      method: 'PATCH',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(body)
-    }).then(function(r){ return r.json().then(function(j){ if(!r.ok){ var er=new Error((j&&j.error&&j.error.message)||('HTTP '+r.status)); er.status=r.status; throw er; } return j; }); });
+    return _auth.token().then(function(tok){
+      var h = {'Content-Type':'application/json'};
+      if(tok) h.Authorization = 'Bearer '+tok;
+      return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey, {
+        method: 'PATCH',
+        headers: h,
+        body: JSON.stringify(body)
+      }).then(function(r){ return r.json().then(function(j){ if(!r.ok){ var er=new Error((j&&j.error&&j.error.message)||('HTTP '+r.status)); er.status=r.status; throw er; } return j; }); });
+    });
   },
   // 실시간 리스닝 (롱폴링 방식 - 30초마다 갱신)
   onSnapshot: function(path, cb) {
@@ -1913,6 +1941,7 @@ function permGridHTML(){
 function togglePerm(tab, role, on){
   if(!DB.cfg) DB.cfg={}; if(!DB.cfg.perms) DB.cfg.perms={}; if(!DB.cfg.perms[tab]) DB.cfg.perms[tab]={};
   DB.cfg.perms[tab][role]=on?1:0;
+  logChange('권한 변경', tab+' · '+(_ROLE_KR[role]||role)+' '+(on?'허용':'차단'));
   saveAll(); updateTabVisibility();
   toast('권한 저장됨','var(--g)');
 }
@@ -1929,6 +1958,34 @@ function recordAccess(){
   saveAll();
   // IP는 비동기로 채움(조회 실패해도 접속 기록은 남음)
   try{ fetch('https://api.ipify.org?format=json',{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){ if(d&&d.ip){ entry.ip=d.ip; saveAll(); } }).catch(function(){}); }catch(e){}
+}
+function logChange(action, detail){
+  if(!ME) return;
+  if(!DB.cfg) DB.cfg={}; if(!Array.isArray(DB.cfg.changeLog)) DB.cfg.changeLog=[];
+  DB.cfg.changeLog.unshift({ name:ME.name, role:ME.role, action:action, detail:(detail||''), ts:Date.now() });
+  DB.cfg.changeLog = DB.cfg.changeLog.slice(0,200);
+}
+var _ROLE_KR={owner:'원장',staff:'행정팀',admin:'관리자',teacher:'강사'};
+function openChangeLog(){
+  if(!(ME && ME.role==='owner')){ toast('원장만 볼 수 있어요','var(--rd)'); return; }
+  var logs=(DB.cfg&&DB.cfg.changeLog)||[];
+  var rows = logs.length ? logs.map(function(e){
+    var d=new Date(e.ts||0);
+    var ds=(d.getMonth()+1)+'/'+d.getDate()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+    return '<div style="display:flex;gap:8px;padding:9px 2px;border-bottom:1px solid var(--s2)">'
+      +'<span style="width:78px;flex-shrink:0;font-size:10.5px;color:var(--t3)">'+ds+'</span>'
+      +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:12.5px;font-weight:700;color:var(--te)">'+dEsc(e.action||'')+(e.detail?' <span style="font-weight:500;color:var(--t2)">'+dEsc(e.detail)+'</span>':'')+'</div>'
+        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(e.name||'')+' ('+(_ROLE_KR[e.role]||e.role||'')+')</div>'
+      +'</div></div>';
+  }).join('') : '<div style="padding:16px;text-align:center;color:var(--t3);font-size:12.5px">기록된 변경 이력이 없어요</div>';
+  var h='<div class="ov" id="ov-changelog" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">📜 변경 이력'+(logs.length?' <span style="font-size:12px;color:var(--t3);font-weight:500">최근 '+logs.length+'건</span>':'')+'</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">누가·언제·무엇을 바꿨는지 최근 200건까지 기록됩니다.</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px;max-height:340px;overflow:auto">'+rows+'</div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-changelog\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
 }
 function openAccessLog(){
   if(!(ME && ME.role==='owner')){ toast('원장만 볼 수 있어요','var(--rd)'); return; }
@@ -3169,7 +3226,7 @@ function applyBulkByGrade(grade) {
       cnt++;
     }
   });
-  saveAll();
+  logChange('수강료 일괄 변경', grade+' '+amount.toLocaleString()+'원 · '+cnt+'명'); saveAll();
   toast('✓ '+grade+' '+cnt+'명에게 '+amount.toLocaleString()+'원 적용');
   document.getElementById('ov-bulk-tuition').remove();
   renderTuition();
@@ -4810,7 +4867,7 @@ function applyPromote(){
   });
   if(typeof ensureSubjectsFromClasses==='function') ensureSubjectsFromClasses();
   DB.cfg=DB.cfg||{}; DB.cfg._promoteBackup={ts:Date.now(), stu:backup};
-  saveAll();
+  logChange('학년 일괄 승급', moves+'명 이동'); saveAll();
   var m=document.getElementById('ov-promote'); if(m) m.remove();
   renderHome(); if(typeof renderProgress==='function') renderProgress();
   toast('학년 승급 완료 · '+moves+'명 이동','var(--g)');
@@ -4822,7 +4879,7 @@ function undoPromote(){
   var byName={}; b.stu.forEach(function(o){ byName[o.name]=o; });
   DB.stu.forEach(function(s){ var o=byName[s.name]; if(o){ s.class=o.class; s.teacher=o.teacher; } });
   delete DB.cfg._promoteBackup;
-  saveAll();
+  logChange('학년 승급 되돌리기',''); saveAll();
   var m=document.getElementById('ov-promote'); if(m) m.remove();
   renderHome(); if(typeof renderProgress==='function') renderProgress();
   toast('직전 승급을 되돌렸어요','var(--g)');
@@ -4889,7 +4946,7 @@ function saveAdjRules(){
   r.lowClasses={};
   var classes=DB.subj.map(function(s){return s.name;}).filter(function(v,i,a){return a.indexOf(v)===i;});
   classes.forEach(function(cn,ci){ var el=document.getElementById('adjlow-'+ci); if(el&&el.checked) r.lowClasses[cn]=1; });
-  saveAll(); var m=document.getElementById('ov-adjrules'); if(m) m.remove(); renderAdminHome(); toast('반 조절계수가 저장됐어요 ✓','var(--g)');
+  logChange('반 조절계수 변경',''); saveAll(); var m=document.getElementById('ov-adjrules'); if(m) m.remove(); renderAdminHome(); toast('반 조절계수가 저장됐어요 ✓','var(--g)');
 }
 function openCompWeights(){
   if(!(ME&&ME.role==='owner')){ toast('원장만 비중을 조절할 수 있어요','var(--rd)'); return; }
@@ -4923,7 +4980,7 @@ function saveCompWeights(){
   var tot=0;
   keys.forEach(function(k){ var el=document.getElementById('cw-'+k); var v=el?Math.max(0,parseFloat(el.value)||0):0; DB.cfg.compWeights[k]=v; tot+=v; });
   if(tot<=0){ toast('비중 합이 0이에요. 하나 이상 값을 넣어주세요','var(--rd)'); return; }
-  saveAll(); var m=document.getElementById('ov-compweights'); if(m) m.remove(); renderAdminHome(); toast('비중이 저장됐어요 ✓','var(--g)');
+  logChange('강사평가 비중 변경',''); saveAll(); var m=document.getElementById('ov-compweights'); if(m) m.remove(); renderAdminHome(); toast('비중이 저장됐어요 ✓','var(--g)');
 }
 function resetCompWeights(){
   if(DB.cfg) DB.cfg.compWeights={}; saveAll(); var m=document.getElementById('ov-compweights'); if(m) m.remove(); renderAdminHome(); toast('비중을 균등으로 초기화했어요');
@@ -5233,7 +5290,7 @@ function renderAdminHome() {
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div>':'')
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>'
@@ -5999,7 +6056,7 @@ function doAddStu() {
   saveAll();closeModal('ov-addstu');toast(name+' 추가됐어요 ✓');renderConsult();
 }
 function doDelStu(idx) {
-  DB.stu.splice(idx,1);saveAll();toast('삭제됐어요','var(--rd)');goBack();
+  var _nm=(DB.stu[idx]||{}).name||''; DB.stu.splice(idx,1); logChange('학생 삭제', _nm); saveAll();toast('삭제됐어요','var(--rd)');goBack();
 }
 
 // ═══════════════════════════════════════
