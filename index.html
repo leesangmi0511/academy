@@ -1132,91 +1132,6 @@ function _idbOpen(cb){
 }
 function _idbSet(key,val){ _idbOpen(function(db){ if(!db) return; try{ db.transaction('kv','readwrite').objectStore('kv').put(val,key); }catch(e){} }); }
 function _idbGet(key,cb){ _idbOpen(function(db){ if(!db){ cb(null); return; } try{ var r=db.transaction('kv','readonly').objectStore('kv').get(key); r.onsuccess=function(){ cb(r.result||null); }; r.onerror=function(){ cb(null); }; }catch(e){ cb(null); } }); }
-function _idbDel(key){ _idbOpen(function(db){ if(!db) return; try{ db.transaction('kv','readwrite').objectStore('kv').delete(key); }catch(e){} }); }
-
-// ═══ 자동 백업 (이 기기에 하루 1회 저장, 최근 30일 보관) ═══
-var AUTOBK_KEEP=30;
-function _autoBkSnap(){
-  return JSON.parse(JSON.stringify({cfg:DB.cfg, subj:DB.subj, stu:DB.stu, evalHistory:DB.evalHistory||{}, withdrawn:DB.withdrawn||[], typeBank:DB.typeBank||[]}));
-}
-function _autoBkSave(snap, cb){
-  _idbGet('autobk_idx', function(idx){
-    idx=Array.isArray(idx)?idx.slice():[];
-    _idbSet('autobk_'+snap.date, snap);
-    if(idx.indexOf(snap.date)<0) idx.push(snap.date);
-    idx.sort();
-    while(idx.length>AUTOBK_KEEP){ _idbDel('autobk_'+idx.shift()); }
-    _idbSet('autobk_idx', idx);
-    if(cb) cb();
-  });
-}
-function autoBackupTick(force){
-  try{
-    if(!DB || !DB.cfg || !Array.isArray(DB.stu) || !DB.stu.length) return; // 데이터 로드 전엔 백업 안 함
-    var d=today();
-    _idbGet('autobk_idx', function(idx){
-      idx=Array.isArray(idx)?idx:[];
-      if(!force && idx.indexOf(d)>=0) return; // 오늘 백업 이미 있음
-      _autoBkSave({date:d, ts:Date.now(), stuCnt:DB.stu.length, data:_autoBkSnap()}, force?function(){ toast('🗄 오늘 데이터가 백업됐어요 ✓','var(--g)'); }:null);
-    });
-  }catch(e){}
-}
-function openAutoBackup(){
-  if(document.getElementById('abk-wrap')){ return; }
-  _idbGet('autobk_idx', function(idx){
-    idx=Array.isArray(idx)?idx.slice().sort().reverse():[];
-    var rows=idx.length?idx.map(function(d){
-      return '<div style="display:flex;align-items:center;gap:8px;padding:9px 2px;border-bottom:1px solid var(--s2)">'
-        +'<div style="flex:1;font-size:13px;font-weight:600">'+d+'</div>'
-        +'<button onclick="autoBackupDownload(\''+d+'\')" style="font-size:11px;background:var(--gl);color:var(--g);border:none;border-radius:8px;padding:6px 11px;cursor:pointer;font-weight:700">파일로 받기</button>'
-        +'<button onclick="autoBackupRestore(\''+d+'\')" style="font-size:11px;background:var(--acc-l);color:var(--acc);border:none;border-radius:8px;padding:6px 11px;cursor:pointer;font-weight:700">복원</button>'
-        +'</div>';
-    }).join(''):'<div style="text-align:center;color:var(--t3);font-size:13px;padding:16px 0">아직 백업이 없어요.<br>앱을 열어두면 하루 한 번 자동으로 저장돼요.</div>';
-    var h='<div id="abk-wrap" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)autoBackupClose()">'
-      +'<div style="background:var(--s1);border-radius:16px;max-width:420px;width:100%;max-height:88vh;overflow:auto;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><div style="font-size:16px;font-weight:800">🗄 자동 백업</div>'
-      +'<button onclick="autoBackupNow()" style="font-size:11px;background:var(--g);color:#fff;border:none;border-radius:8px;padding:6px 11px;cursor:pointer;font-weight:700">지금 백업</button></div>'
-      +'<div style="font-size:12px;color:var(--t2);line-height:1.55;margin-bottom:10px">앱을 여는 날마다 자동으로 이 기기에 저장됩니다 (최근 '+AUTOBK_KEEP+'일 보관). 실수로 지웠을 때 날짜를 골라 복원하세요. 파일로 받아두면 다른 기기에서도 안전해요.</div>'
-      +rows
-      +'<button onclick="autoBackupClose()" style="width:100%;margin-top:12px;font-size:12px;background:var(--s2);color:var(--t2);border:1px solid var(--s3);border-radius:10px;padding:9px;cursor:pointer;font-weight:600">닫기</button>'
-      +'</div></div>';
-    var el=document.createElement('div'); el.innerHTML=h; document.body.appendChild(el.firstChild);
-  });
-}
-function autoBackupClose(){ var w=document.getElementById('abk-wrap'); if(w) w.parentNode.removeChild(w); }
-function autoBackupNow(){
-  autoBackupTick(true);
-  setTimeout(function(){ autoBackupClose(); openAutoBackup(); }, 350);
-}
-function autoBackupDownload(d){
-  _idbGet('autobk_'+d, function(snap){
-    if(!snap||!snap.data){ toast('백업을 찾을 수 없어요','var(--rd)'); return; }
-    var blob=new Blob([JSON.stringify(snap)],{type:'application/json'});
-    var url=URL.createObjectURL(blob);
-    var a=document.createElement('a'); a.href=url; a.download='routetop-백업-'+d+'.json';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    setTimeout(function(){ URL.revokeObjectURL(url); },2000);
-    toast('📥 '+d+' 백업 파일 저장됨','var(--g)');
-  });
-}
-function autoBackupRestore(d){
-  _idbGet('autobk_'+d, function(snap){
-    if(!snap||!snap.data){ toast('백업을 찾을 수 없어요','var(--rd)'); return; }
-    var s=snap.data;
-    if(!confirm(d+' 백업으로 되돌릴까요?\n\n현재: 학생 '+((DB.stu||[]).length)+'명 → 백업: 학생 '+((s.stu||[]).length)+'명\n\n되돌리기 전 지금 상태도 오늘 날짜 백업으로 남겨둡니다.')) return;
-    var cur={date:today(), ts:Date.now(), stuCnt:(DB.stu||[]).length, data:_autoBkSnap()};
-    _autoBkSave(cur); // 복원 전 현재 상태 보관(안전망)
-    DB.cfg=s.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[];
-    DB.subj=s.subj||[]; DB.stu=s.stu||[]; DB.evalHistory=s.evalHistory||{}; DB.withdrawn=s.withdrawn||[];
-    if(s.typeBank && s.typeBank.length){ DB.typeBank=s.typeBank; _tbChunkHash={}; }
-    logChange('백업 복원', d+' 시점으로 복원');
-    saveAll();
-    autoBackupClose();
-    try{ renderHome(); }catch(_e){}
-    try{ renderProgress(); }catch(_e){}
-    toast('✓ '+d+' 백업으로 복원됐어요','var(--g)');
-  });
-}
 var _tbChunkHash={};
 function _rawChunkHash(items, start, end){ var h=0; for(var i=start;i<end;i++){ var o=items[i]||{}; var s=(o.id||'')+'\u0001'+(o.type||'')+'\u0001'+(o.level||'')+'\u0001'+(o.subject||''); for(var k=0;k<s.length;k++){ h=((h<<5)-h+s.charCodeAt(k))|0; } } return (end-start)+':'+h; }
 function _tbHashSync(){ _tbChunkHash={}; var items=DB.typeBank||[], CH=700, n=Math.max(1,Math.ceil(items.length/CH)); for(var idx=0;idx<n;idx++){ _tbChunkHash[idx]=_rawChunkHash(items, idx*CH, Math.min(items.length, idx*CH+CH)); } }
@@ -1752,7 +1667,6 @@ function assignClass(idx, i){
   s.class=r.name; s.teacher=r.teacher;
   if(!s.consultHistory) s.consultHistory=[];
   s.consultHistory.push({date:today(), nbTag:'placement', counselor:(ME?ME.name:''), method:'기타', mood:'', risk:'일상 체크', rstat:'', note:'[배정] 배정시험 '+p.score+'점('+p.level+') → '+r.name+' 반 배정'});
-  logChange('학생 수정', s.name+' 반 배정 → '+r.name);
   saveAll(); closeModal('ov-placement'); toast('✓ '+r.name+' 반으로 배정됐어요'); showStuDetail(idx);
 }
 function savePlacementOnly(){
@@ -1762,7 +1676,6 @@ function savePlacementOnly(){
   if(!p.level){toast('점수를 먼저 입력해주세요','var(--rd)');return;}
   if(s.placement&&s.placement.assigned){ p.assigned=s.placement.assigned; p.assignedTeacher=s.placement.assignedTeacher; }
   s.placement=p;
-  logChange('학생 수정', s.name+' 배정시험 결과 저장');
   saveAll(); closeModal('ov-placement'); toast('배정시험 결과가 저장됐어요 ✓'); showStuDetail(idx);
 }
 
@@ -1858,7 +1771,6 @@ function restoreWd(gi){
   if(!confirm(r.name+' 학생을 재원으로 복원할까요?')) return;
   DB.stu.push({name:r.name, teacher:r.teacher||'', class:r.class||'', consultHistory:[], textbookStatus:{}});
   wdList().splice(gi,1);
-  logChange('학생 복원', r.name);
   saveAll(); renderWithdraw(); toast('복원됐어요 ✓');
 }
 // 과제앱 동기화: 명단에서 사라진 학생 = 퇴원 후보
@@ -2054,6 +1966,101 @@ function logChange(action, detail){
   DB.cfg.changeLog = DB.cfg.changeLog.slice(0,200);
 }
 var _ROLE_KR={owner:'원장',staff:'행정팀',admin:'관리자',teacher:'강사'};
+// ── 관리자 회의록: 업로드(붙여넣기) + AI 요약/편집 ──
+var _meetings=null;
+function openMeetings(){
+  if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
+  _renderMeetList(true);
+  _FS.get('academy/meetings').then(function(doc){
+    var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list){ arr=_FS._fromFS(doc.fields.list)||[]; } }catch(e){}
+    _meetings=arr; _renderMeetList(false);
+  }).catch(function(){ _meetings=_meetings||[]; _renderMeetList(false); });
+}
+function _renderMeetList(loading){
+  var ex=document.getElementById('ov-meetings'); if(ex) ex.remove();
+  var body;
+  if(loading){ body='<div style="padding:20px;text-align:center;color:var(--t3);font-size:12.5px">불러오는 중…</div>'; }
+  else {
+    var arr=(_meetings||[]).slice().sort(function(a,b){ return (b.date||'')<(a.date||'')?-1:1; });
+    body = arr.length ? arr.map(function(m){
+      return '<div onclick="mtOpen(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
+        +'<div style="font-size:12.5px;font-weight:700;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(m.title||'(제목 없음)')+'</div>'
+        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(m.summary?' · 요약 있음':'')+' · '+dEsc(m.by||'')+'</div></div>';
+    }).join('') : '<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">저장된 회의록이 없어요</div>';
+  }
+  var h='<div class="ov" id="ov-meetings" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">📝 관리자 회의록</div>'
+    +'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 새 회의록 작성</button>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);margin-bottom:12px;max-height:320px;overflow:auto">'+body+'</div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-meetings\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function mtOpen(id){
+  var m = id ? ((_meetings||[]).find(function(x){return x.id===id;})||{}) : {};
+  var ex=document.getElementById('ov-mtedit'); if(ex) ex.remove();
+  var h='<div class="ov" id="ov-mtedit" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">'+(id?'✏️ 회의록 편집':'➕ 새 회의록')+'</div>'
+    +'<input type="hidden" id="mt-id" value="'+(id||'')+'">'
+    +'<label class="fl">날짜</label><input class="fi" id="mt-date" type="date" value="'+(m.date||today())+'">'
+    +'<label class="fl">제목</label><input class="fi" id="mt-title" type="text" value="'+dEsc(m.title||'')+'" placeholder="예: 3월 4주차 관리자 회의">'
+    +'<label class="fl">회의 내용 (한글에서 복사해 붙여넣기)</label>'
+    +'<textarea class="fi" id="mt-raw" rows="6" placeholder="한글(HWP) 등에서 회의 내용을 긁어서 여기에 붙여넣으세요">'+dEsc(m.raw||'')+'</textarea>'
+    +'<button class="btn" id="mt-ai-btn" style="margin:4px 0 10px;background:var(--pu)" onclick="aiSummarizeMeeting()">🤖 AI 요약·편집</button>'
+    +'<label class="fl">요약·편집본 (AI 결과 · 직접 수정 가능)</label>'
+    +'<textarea class="fi" id="mt-summary" rows="7" placeholder="AI 요약·편집 버튼을 누르면 여기에 정리된 회의록이 들어옵니다">'+dEsc(m.summary||'')+'</textarea>'
+    +'<button class="btn" onclick="mtSave()">저장</button>'
+    +(id?'<button class="btn ghost" style="color:var(--rd)" onclick="mtDelete(\''+id+'\')">삭제</button>':'')
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-mtedit\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function mtSave(){
+  var id=document.getElementById('mt-id').value||('m'+Date.now());
+  var date=document.getElementById('mt-date').value||today();
+  var title=(document.getElementById('mt-title').value||'').trim();
+  var raw=(document.getElementById('mt-raw').value||'').trim();
+  var summary=(document.getElementById('mt-summary').value||'').trim();
+  if(!title && !raw){ toast('제목이나 내용을 입력하세요','var(--rd)'); return; }
+  if(!Array.isArray(_meetings)) _meetings=[];
+  var i=_meetings.findIndex(function(x){return x.id===id;});
+  var obj={id:id, date:date, title:title, raw:raw, summary:summary, by:(ME?ME.name:''), ts:Date.now()};
+  if(i>=0) _meetings[i]=obj; else _meetings.push(obj);
+  _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('회의록 저장됨 ✓','var(--g)'); }).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
+  try{ logChange('회의록 저장', title||date); }catch(e){}
+  var m=document.getElementById('ov-mtedit'); if(m) m.remove();
+  _renderMeetList(false);
+}
+function mtDelete(id){
+  if(!confirm('이 회의록을 삭제할까요?')) return;
+  _meetings=(_meetings||[]).filter(function(x){return x.id!==id;});
+  _FS.set('academy/meetings', {list:_meetings});
+  try{ logChange('회의록 삭제', id); }catch(e){}
+  var m=document.getElementById('ov-mtedit'); if(m) m.remove();
+  _renderMeetList(false);
+}
+function aiSummarizeMeeting(){
+  var key=localStorage.getItem('ac_aikey')||'';
+  if(!key){ var k=prompt('Anthropic API 키를 입력하세요.\n(이 기기에만 저장되며 다른 사람에게 공유되지 않습니다)'); if(!k) return; key=k.trim(); localStorage.setItem('ac_aikey', key); }
+  var raw=(document.getElementById('mt-raw').value||'').trim();
+  if(!raw){ toast('회의 내용을 먼저 붙여넣으세요','var(--rd)'); return; }
+  var model=localStorage.getItem('ac_aimodel')||'claude-sonnet-5';
+  var btn=document.getElementById('mt-ai-btn'); if(btn){ btn.textContent='AI 요약 중…'; btn.disabled=true; }
+  var prompt2='다음은 학원 관리자 회의 내용입니다. 아래 형식으로 깔끔하게 정리·편집해 주세요. 한국어 회의록 형식으로, 군더더기 없이.\n\n[형식]\n■ 핵심 안건\n■ 결정 사항\n■ 할 일(담당자별 액션 아이템)\n■ 다음 회의/후속 조치\n\n[회의 내용]\n'+raw;
+  fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    body:JSON.stringify({model:model, max_tokens:1800, messages:[{role:'user', content:prompt2}]})
+  }).then(function(r){return r.json();}).then(function(j){
+    if(btn){ btn.textContent='🤖 AI 요약·편집'; btn.disabled=false; }
+    if(j && j.error){ toast('요약 실패: '+(j.error.message||j.error.type||''),'var(--rd)'); return; }
+    var txt=(j&&j.content)?j.content.filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('\n'):'';
+    if(!txt){ toast('요약 결과가 비어 있어요','var(--rd)'); return; }
+    document.getElementById('mt-summary').value=txt;
+    toast('AI 요약·편집 완료 ✓','var(--g)');
+  }).catch(function(e){ if(btn){ btn.textContent='🤖 AI 요약·편집'; btn.disabled=false; } toast('요약 오류: '+((e&&e.message)||e),'var(--rd)'); });
+}
+
 function openChangeLog(){
   if(!(ME && ME.role==='owner')){ toast('원장만 볼 수 있어요','var(--rd)'); return; }
   var logs=(DB.cfg&&DB.cfg.changeLog)||[];
@@ -2126,7 +2133,6 @@ function accessLogDownload(){
   toast('엑셀 파일 다운로드됨 · '+list.length+'건','var(--g)');
 }
 function accessLogClose(){ var w=document.getElementById('alog-wrap'); if(w) w.parentNode.removeChild(w); }
-
 function accessLogClear(){ if(!confirm('접속 기록을 모두 삭제할까요?')) return; if(DB.cfg) DB.cfg.accessLog=[]; saveAll(); accessLogClose(); toast('접속 기록 삭제됨'); }
 function goBack() { goTab(prevTab); }
 
@@ -3567,7 +3573,6 @@ function saveTuitionSet() {
   s.tuition.phone = phone;
   if (!s.tuition.paidMonths) s.tuition.paidMonths = {};
 
-  logChange('수강료 개별 변경', s.name+' '+amount.toLocaleString()+'원'+(dueDay?' · 납부 '+dueDay+'일':''));
   saveAll();
   closeModal('ov-tuition-set');
   toast('✓ ' + s.name + ' 수강료 설정 저장됨');
@@ -4124,7 +4129,6 @@ function importFromHwApp() {
     // 불러온 학생들의 반을 과목으로 자동 생성
     var createdSubj = ensureSubjectsFromClasses();
 
-    if (addedTeachers>0 || addedStudents>0 || updatedStudents>0) logChange('과제앱 불러오기', '강사 '+addedTeachers+'명 · 학생 '+addedStudents+'명 추가 · '+updatedStudents+'명 반 변경');
     saveAll();
     renderHome();
     renderProgress();
@@ -4223,7 +4227,6 @@ function doCsvImport() {
   });
 
   if (added > 0) {
-    logChange('학생 추가(CSV)', added+'명');
     saveAll();
     renderHome();
     renderProgress();
@@ -4323,7 +4326,6 @@ function addAdminToList() {
     toast('이미 등록된 이름이에요','var(--rd)'); return;
   }
   DB.cfg.admins.push({name:name, pw:'7193455', date:today()});
-  logChange('관리자 추가', name);
   saveAll();
   renderAdminListBody();
   toast('관리자 '+name+' 추가됐어요 ✓');
@@ -4334,7 +4336,6 @@ function deleteAdmin(idx) {
   if(!a) return;
   if(!confirm(a.name+' 관리자를 삭제할까요?')) return;
   DB.cfg.admins.splice(idx, 1);
-  logChange('관리자 삭제', a.name);
   saveAll();
   renderAdminListBody();
   toast('관리자 삭제됐어요');
@@ -4346,7 +4347,6 @@ function changeAdminPw(idx) {
   var pw = document.getElementById('admin-pw-'+idx).value;
   if(!pw) {toast('새 비밀번호를 입력하세요','var(--rd)'); return;}
   DB.cfg.admins[idx].pw = pw;
-  logChange('관리자 수정', a.name+' 비밀번호 변경');
   saveAll();
   document.getElementById('admin-pw-'+idx).value='';
   toast(a.name+' 비밀번호 변경됐어요 ✓');
@@ -4393,7 +4393,6 @@ function addStaffToList() {
     toast('이미 등록된 이름이에요','var(--rd)'); return;
   }
   DB.cfg.staff.push({name:name, pw:'7193455', date:today()});
-  logChange('행정팀 추가', name);
   saveAll();
   renderStaffListBody();
   toast('행정팀 '+name+' 추가됐어요 ✓ (초기 비번 7193455)');
@@ -4404,7 +4403,6 @@ function deleteStaff(idx) {
   if(!a) return;
   if(!confirm(a.name+' 행정팀을 삭제할까요?')) return;
   DB.cfg.staff.splice(idx, 1);
-  logChange('행정팀 삭제', a.name);
   saveAll();
   renderStaffListBody();
   toast('행정팀 삭제됐어요');
@@ -4416,7 +4414,6 @@ function changeStaffPw(idx) {
   var pw = document.getElementById('staff-pw-'+idx).value;
   if(!pw) {toast('새 비밀번호를 입력하세요','var(--rd)'); return;}
   DB.cfg.staff[idx].pw = pw;
-  logChange('행정팀 수정', a.name+' 비밀번호 변경');
   saveAll();
   document.getElementById('staff-pw-'+idx).value='';
   toast(a.name+' 비밀번호 변경됐어요 ✓');
@@ -5388,7 +5385,7 @@ function renderAdminHome() {
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div>':'')
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>'
@@ -6150,9 +6147,7 @@ function openAddStu() {
 function doAddStu() {
   var name=document.getElementById('ns-name').value.trim();
   if(!name){toast('이름을 입력해주세요','var(--rd)');return;}
-  var _cls=document.getElementById('ns-class').value;
-  DB.stu.push({name:name,class:_cls,teacher:document.getElementById('ns-teacher').value,consultHistory:[],nextConsultDate:null});
-  logChange('학생 추가', name+(_cls?' · '+_cls:''));
+  DB.stu.push({name:name,class:document.getElementById('ns-class').value,teacher:document.getElementById('ns-teacher').value,consultHistory:[],nextConsultDate:null});
   saveAll();closeModal('ov-addstu');toast(name+' 추가됐어요 ✓');renderConsult();
 }
 function doDelStu(idx) {
@@ -6640,7 +6635,7 @@ function saveMgrPhone() {
   var ph=document.getElementById('mgr-phone').value.trim();
   var st=document.getElementById('mgr-phone-st');
   if(!ph||ph.length<9){st.textContent='올바른 번호를 입력해 주세요.';st.style.color='var(--rd)';return;}
-  DB.cfg.adminPhone=ph;logChange('관리자 수정', '관리자 전화번호 변경');saveAll();
+  DB.cfg.adminPhone=ph;saveAll();
   st.textContent='저장됐어요 ✓ ('+ph.slice(0,-4).replace(/./g,'*')+ph.slice(-4)+')';st.style.color='var(--g)';toast('전화번호 저장됐어요 ✓');
 }
 function saveMgrPw() {
@@ -6648,7 +6643,7 @@ function saveMgrPw() {
   var st=document.getElementById('mgr-pw-st');
   if(!pw||pw.length<4){st.textContent='4자리 이상으로 입력하세요.';st.style.color='var(--rd)';return;}
   if(pw!==pw2){st.textContent='비밀번호가 일치하지 않아요.';st.style.color='var(--rd)';return;}
-  DB.cfg.adminPw=pw;logChange('관리자 수정', '관리자 비밀번호 변경');saveAll();
+  DB.cfg.adminPw=pw;saveAll();
   document.getElementById('mgr-pw1').value='';document.getElementById('mgr-pw2').value='';
   st.textContent='변경됐어요 ✓';st.style.color='var(--g)';toast('비밀번호 변경됐어요 ✓');
 }
@@ -6663,7 +6658,7 @@ function doAddTeacher() {
   if(pw!==pw2){e.textContent='비밀번호가 일치하지 않아요.';return;}
   if(DB.cfg.teachers.find(function(t){return t.name===name;})){e.textContent='이미 있는 강사 이름이에요.';return;}
   e.textContent='';
-  DB.cfg.teachers.push({name:name,phone:phone,pw:pw});logChange('강사 추가', name);saveAll();
+  DB.cfg.teachers.push({name:name,phone:phone,pw:pw});saveAll();
   document.getElementById('nt-name').value='';document.getElementById('nt-phone').value='';
   document.getElementById('nt-pw').value='';document.getElementById('nt-pw2').value='';
   toast(name+' 추가됐어요 ✓');renderAccTList();refreshTSel();
@@ -6714,9 +6709,6 @@ function doEditTeacher() {
     toast('저장됐어요 ✓');
   }
 
-  var _d=(oldName!==newName)?(oldName+' → '+newName):newName;
-  if(pw) _d+=' · 비밀번호 변경';
-  logChange('강사 수정', _d);
   saveAll();
   closeModal('ov-editteacher');
   renderAccTList();
@@ -6733,7 +6725,6 @@ function doDelTeacher(i) {
   DB.stu.forEach(function(s){ if (s.teacher === t.name) s.teacher = ''; });
   DB.subj.forEach(function(s){ if (s.teacher === t.name) s.teacher = ''; });
   DB.cfg.teachers.splice(i, 1);
-  logChange('강사 삭제', t.name);
   saveAll();
   renderAccTList();
   renderHome();
@@ -6762,7 +6753,7 @@ function saveMyPhone() {
   if(!ph||ph.length<9){st.textContent='올바른 번호를 입력해 주세요.';st.style.color='var(--rd)';return;}
   var tIdx=DB.cfg.teachers.findIndex(function(t){return t.name===ME.name;});
   if(tIdx<0) return;
-  DB.cfg.teachers[tIdx].phone=ph;logChange('강사 수정', ME.name+' 전화번호 변경');saveAll();
+  DB.cfg.teachers[tIdx].phone=ph;saveAll();
   st.textContent='저장됐어요 ✓ ('+ph.slice(0,-4).replace(/./g,'*')+ph.slice(-4)+')';st.style.color='var(--g)';toast('전화번호 저장됐어요 ✓');
 }
 function saveMyPw() {
@@ -6776,7 +6767,7 @@ function saveMyPw() {
   if(DB.cfg.teachers[tIdx].pw!==cur){st.textContent='현재 비밀번호가 틀렸어요.';st.style.color='var(--rd)';return;}
   if(!pw||pw.length<4){st.textContent='4자리 이상으로 입력하세요.';st.style.color='var(--rd)';return;}
   if(pw!==pw2){st.textContent='비밀번호가 일치하지 않아요.';st.style.color='var(--rd)';return;}
-  DB.cfg.teachers[tIdx].pw=pw;logChange('강사 수정', ME.name+' 비밀번호 변경');saveAll();
+  DB.cfg.teachers[tIdx].pw=pw;saveAll();
   document.getElementById('my-cur').value='';document.getElementById('my-pw1').value='';document.getElementById('my-pw2').value='';
   st.textContent='변경됐어요 ✓';st.style.color='var(--g)';toast('비밀번호 변경됐어요 ✓');
 }
@@ -7069,9 +7060,6 @@ _loadFirebase().then(function() {
       }).catch(function(){});
     // 데이터 로드 후 자동 로그인 시도
     tryAutoLogin();
-    // 자동 백업: 로드 15초 후(유형은행 로드 대기) 1회 + 1시간마다 확인(하루 1회만 저장됨)
-    setTimeout(function(){ autoBackupTick(); }, 15000);
-    if(!window._autoBkTimer) window._autoBkTimer = setInterval(function(){ autoBackupTick(); }, 3600000);
     // 학부모·강사 메시지 → 문자상담 자동 동기화
     importMsgConsult();
     // 60초마다 주기적으로 다시 당겨오기 (캐시 무효화 후 새로 fetch)
@@ -7097,8 +7085,6 @@ _loadFirebase().then(function() {
     console.warn('FB load failed:', e);
     applyDB(null);
     tryAutoLogin();  // 오프라인에서도 자동 로그인
-    setTimeout(function(){ autoBackupTick(); }, 15000);
-    if(!window._autoBkTimer) window._autoBkTimer = setInterval(function(){ autoBackupTick(); }, 3600000);
   });
   // 10초 타임아웃
   setTimeout(function(){
