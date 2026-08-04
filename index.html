@@ -4761,6 +4761,72 @@ function teacherOverallHTML(){
   });
   return h;
 }
+// ── 학년 일괄 승급: 반 번호 +1 (편집 가능), 빈칸=유지, 되돌리기 지원
+function _nextClass(cn){
+  var m=String(cn||'').match(/^(.*?)(\d+)(\D*)$/);
+  if(!m) return cn;
+  return m[1]+(parseInt(m[2],10)+1)+m[3];
+}
+function openPromote(){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 가능해요','var(--rd)'); return; }
+  var counts={}; DB.stu.forEach(function(s){ var c=s.class||'(반 미지정)'; counts[c]=(counts[c]||0)+1; });
+  var classes=Object.keys(counts).sort(function(a,b){return _emhSort({name:a},{name:b});});
+  if(!classes.length){ toast('학생이 없어요','var(--rd)'); return; }
+  var rows=classes.map(function(cn,ci){
+    var nxt=(cn==='(반 미지정)')?'':_nextClass(cn);
+    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--s2)">'
+      +'<span style="width:72px;font-size:12.5px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(cn)+'</span>'
+      +'<span style="font-size:10.5px;color:var(--t3);width:34px;text-align:right">'+counts[cn]+'명</span>'
+      +'<span style="color:var(--t3);font-size:13px">→</span>'
+      +'<input type="text" id="pm-'+ci+'" value="'+dEsc(nxt)+'" placeholder="비우면 유지" style="flex:1;min-width:0;padding:6px;border:1px solid var(--s3);border-radius:8px;font-size:12.5px;background:var(--s1);color:var(--te)"></div>';
+  }).join('');
+  var h='<div class="ov" id="ov-promote" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🎓 학년 일괄 승급</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:10px">각 반 학생을 <b>승급 후 반</b>으로 한 번에 옮깁니다. 번호는 자동으로 +1 되어 있어요. 필요하면 수정하세요. <b>비우면 그 반은 그대로 유지</b>됩니다. (졸업생은 승급 후 「퇴원 관리」에서 처리)</div>'
+    +'<div style="display:flex;font-size:10.5px;color:var(--t3);font-weight:700;padding:0 0 3px"><span style="width:72px">현재 반</span><span style="width:34px;text-align:right">인원</span><span style="width:20px"></span><span style="flex:1">승급 후 반</span></div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:10px;max-height:280px;overflow:auto">'+rows+'</div>'
+    +'<label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;cursor:pointer;font-size:12px"><input type="checkbox" id="pm-reassign" style="width:16px;height:16px;accent-color:var(--acc)">담당 강사도 새 반 기준으로 자동 재지정</label>'
+    +'<button class="btn" onclick="applyPromote()">승급 적용</button>'
+    +((DB.cfg&&DB.cfg._promoteBackup)?'<button class="btn ghost" onclick="undoPromote()">↩️ 직전 승급 되돌리기</button>':'')
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-promote\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function applyPromote(){
+  if(!(ME&&ME.role==='owner')) return;
+  var counts={}; DB.stu.forEach(function(s){ var c=s.class||'(반 미지정)'; counts[c]=(counts[c]||0)+1; });
+  var classes=Object.keys(counts).sort(function(a,b){return _emhSort({name:a},{name:b});});
+  var map={};
+  classes.forEach(function(cn,ci){ var el=document.getElementById('pm-'+ci); map[cn]=el?el.value.trim():''; });
+  var reassign=document.getElementById('pm-reassign').checked;
+  var moves=0;
+  DB.stu.forEach(function(s){ var c=s.class||'(반 미지정)'; var to=map[c]; if(to && to!==c) moves++; });
+  if(!moves){ toast('바뀌는 학생이 없어요 (승급 후 반을 입력하세요)','var(--rd)'); return; }
+  if(!confirm('학년 승급을 적용할까요?\n\n· 반 이동: '+moves+'명\n\n(직전 상태는 되돌리기로 복구할 수 있어요)')) return;
+  var backup=DB.stu.map(function(s){ return {name:s.name, class:s.class||'', teacher:s.teacher||''}; });
+  DB.stu.forEach(function(s){
+    var c=s.class||'(반 미지정)'; var to=map[c];
+    if(to && to!==c){ s.class=to; if(reassign){ var nt=matchTeacherByClassId(to); if(nt) s.teacher=nt; } }
+  });
+  if(typeof ensureSubjectsFromClasses==='function') ensureSubjectsFromClasses();
+  DB.cfg=DB.cfg||{}; DB.cfg._promoteBackup={ts:Date.now(), stu:backup};
+  saveAll();
+  var m=document.getElementById('ov-promote'); if(m) m.remove();
+  renderHome(); if(typeof renderProgress==='function') renderProgress();
+  toast('학년 승급 완료 · '+moves+'명 이동','var(--g)');
+}
+function undoPromote(){
+  if(!(ME&&ME.role==='owner')) return;
+  var b=DB.cfg&&DB.cfg._promoteBackup; if(!b||!b.stu){ toast('되돌릴 내역이 없어요','var(--rd)'); return; }
+  if(!confirm('직전 학년 승급을 되돌릴까요?')) return;
+  var byName={}; b.stu.forEach(function(o){ byName[o.name]=o; });
+  DB.stu.forEach(function(s){ var o=byName[s.name]; if(o){ s.class=o.class; s.teacher=o.teacher; } });
+  delete DB.cfg._promoteBackup;
+  saveAll();
+  var m=document.getElementById('ov-promote'); if(m) m.remove();
+  renderHome(); if(typeof renderProgress==='function') renderProgress();
+  toast('직전 승급을 되돌렸어요','var(--g)');
+}
 function openAdjRules(){
   if(!(ME&&ME.role==='owner')){ toast('원장만 설정할 수 있어요','var(--rd)'); return; }
   var r=(DB.cfg&&DB.cfg.adjRules)||{};
@@ -5170,7 +5236,8 @@ function renderAdminHome() {
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div>':'')
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>';
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>'
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openPromote()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🎓 학년 일괄 승급</button></div>':'');
 
   // 알림 센터
   h += alertCenterHTML();
