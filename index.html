@@ -4639,6 +4639,7 @@ function computeAllTeacherMetrics(){
     return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, consultDone:consultDone, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate, wdCount:wAll, ohdapScore:(oh?oh.score:null), ohdapR1:(oh?oh.rate1:null), ohdapR2:(oh?oh.rate2:null), videoScore:(vr!=null?vr:null)};
   });
 }
+function partWeight(k){ var w=(DB.cfg&&DB.cfg.compWeights)||{}; return (w[k]!==undefined&&w[k]!==null&&w[k]!=='')?Math.max(0,Number(w[k])||0):20; }
 function teacherComposite(t){
   var parts=[
     {k:'진도율', v:t.progressAvg||0, unit:'%', on:true},
@@ -4649,13 +4650,31 @@ function teacherComposite(t){
     {k:'오답데이', v:(t.ohdapScore!=null?t.ohdapScore:0), unit:'%', on:(t.ohdapScore!=null)},
     {k:'영상', v:(t.videoScore!=null?t.videoScore:0), unit:'%', on:(t.videoScore!=null)}
   ];
-  var sum=0,cnt=0; parts.forEach(function(p){ if(p.on){ sum+=p.v; cnt++; } });
-  return {score:(cnt?Math.round(sum/cnt):0), parts:parts};
+  var sum=0,wsum=0; parts.forEach(function(p){ p.w=partWeight(p.k); if(p.on){ sum+=p.v*p.w; wsum+=p.w; } }); // 가중 평균
+  return {score:(wsum?Math.round(sum/wsum):0), parts:parts};
+}
+// 반 조절계수: 인원 많은 반·성적부진 반 등 난이도를 종합 점수에 보정
+function classAdjBonus(cn){
+  var r=(DB.cfg&&DB.cfg.adjRules)||{};
+  var bigTh=(r.bigThreshold!=null?r.bigThreshold:8), bigB=(r.bigBonus!=null?r.bigBonus:5), lowB=(r.lowBonus!=null?r.lowBonus:10);
+  var cnt=DB.stu.filter(function(s){return s.class===cn;}).length;
+  var bonus=0, reasons=[];
+  if(cnt>=bigTh && bigB>0){ bonus+=bigB; reasons.push('대형 '+cnt+'명 (+'+bigB+'%)'); }
+  if(r.lowClasses && r.lowClasses[cn] && lowB>0){ bonus+=lowB; reasons.push('성적부진 (+'+lowB+'%)'); }
+  return {bonus:bonus, reasons:reasons, count:cnt};
+}
+function teacherAdjCoeff(tn){
+  var classes=DB.subj.filter(function(s){return s.teacher===tn;}).map(function(s){return s.name;});
+  if(!classes.length) return {coeff:1, avgBonus:0, perClass:[]};
+  var tot=0, per=[];
+  classes.forEach(function(cn){ var b=classAdjBonus(cn); tot+=b.bonus; per.push({cn:cn, bonus:b.bonus, reasons:b.reasons, count:b.count}); });
+  var avg=tot/classes.length; // 담당 반들의 평균 보정치
+  return {coeff:1+avg/100, avgBonus:Math.round(avg*10)/10, perClass:per};
 }
 function teacherOverallHTML(){
   var data=computeAllTeacherMetrics();
   if(!data.length) return '<div class="empty">강사가 없어요. 계정 관리에서 추가하세요.</div>';
-  data.forEach(function(t){ var c=teacherComposite(t); t.composite=c.score; t.parts=c.parts; });
+  data.forEach(function(t){ var c=teacherComposite(t); t.base=c.score; t.parts=c.parts; var adj=teacherAdjCoeff(t.name); t.coeff=adj.coeff; t.adjBonus=adj.avgBonus; t.composite=Math.min(100, Math.round(c.score*adj.coeff)); });
   data.sort(function(a,b){ return b.composite-a.composite; });
   var medals=['🥇','🥈','🥉'];
   var h='';
@@ -4671,7 +4690,7 @@ function teacherOverallHTML(){
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 14px;margin-bottom:8px;cursor:pointer" onclick="showTDetail('+t.idx+')">'
       +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:9px">'
         +'<div class="rank-num" style="background:'+(rank===0?'var(--aml)':'var(--s2)')+';color:'+(rank===0?'var(--am)':'var(--t2)')+'">'+(rank<3?medals[rank]:(rank+1)+'위')+'</div>'
-        +'<div style="flex:1;font-size:14px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(t.name)+'</div>'
+        +'<div style="flex:1;font-size:14px;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(t.name)+(t.adjBonus>0?' <span style="font-size:9px;color:var(--am);font-weight:700;background:var(--aml);border-radius:5px;padding:1px 5px">보정+'+t.adjBonus+'%</span>':'')+'</div>'
         +'<div style="font-size:22px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+sc+'<span style="font-size:11px;color:var(--t3);font-weight:600">점</span></div>'
       +'</div>'
       +'<div style="height:6px;background:var(--s3);border-radius:3px;overflow:hidden;margin-bottom:9px"><div style="height:6px;width:'+Math.max(2,sc)+'%;background:'+col+';border-radius:3px"></div></div>'
@@ -4680,6 +4699,79 @@ function teacherOverallHTML(){
     +'</div>';
   });
   return h;
+}
+function openAdjRules(){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 설정할 수 있어요','var(--rd)'); return; }
+  var r=(DB.cfg&&DB.cfg.adjRules)||{};
+  var bigTh=(r.bigThreshold!=null?r.bigThreshold:8), bigB=(r.bigBonus!=null?r.bigBonus:5), lowB=(r.lowBonus!=null?r.lowBonus:10);
+  var low=(r.lowClasses)||{};
+  var classes=DB.subj.map(function(s){return s.name;}).filter(function(v,i,a){return a.indexOf(v)===i;});
+  var clsRows=classes.map(function(cn,ci){
+    var cnt=DB.stu.filter(function(s){return s.class===cn;}).length;
+    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--s2)">'
+      +'<span style="flex:1;font-size:12.5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(cn)+' <span style="font-size:10.5px;color:'+(cnt>=bigTh?'var(--am)':'var(--t3)')+'">'+cnt+'명</span></span>'
+      +'<label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--t2);cursor:pointer;flex-shrink:0"><input type="checkbox" id="adjlow-'+ci+'" '+(low[cn]?'checked':'')+' style="width:16px;height:16px;accent-color:var(--am)">성적부진</label></div>';
+  }).join('');
+  var h='<div class="ov" id="ov-adjrules" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🎚️ 반 조절계수</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:12px">반의 성격(인원·성적)에 따라 강사 종합 점수를 보정합니다. 담당 반들의 평균 보정치가 적용돼요.</div>'
+    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:13px;font-weight:600">대형 반 기준 <input type="number" min="1" value="'+bigTh+'" id="adj-bigth" style="width:52px;padding:6px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">명 이상 → +<input type="number" min="0" value="'+bigB+'" id="adj-bigb" style="width:50px;padding:6px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;font-size:13px;font-weight:600">성적부진 반 → +<input type="number" min="0" value="'+lowB+'" id="adj-lowb" style="width:50px;padding:6px;border:1px solid var(--s3);border-radius:8px;text-align:center;background:var(--s1);color:var(--te)">%</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);font-weight:700;margin-bottom:4px">반별 성적부진 지정</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px;max-height:220px;overflow:auto">'+(clsRows||'<div style="padding:10px;text-align:center;color:var(--t3);font-size:12px">반이 없어요</div>')+'</div>'
+    +'<button class="btn" onclick="saveAdjRules()">저장</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-adjrules\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function saveAdjRules(){
+  if(!(ME&&ME.role==='owner')) return;
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.adjRules) DB.cfg.adjRules={};
+  var r=DB.cfg.adjRules;
+  r.bigThreshold=Math.max(1, parseInt(document.getElementById('adj-bigth').value)||8);
+  r.bigBonus=Math.max(0, parseFloat(document.getElementById('adj-bigb').value)||0);
+  r.lowBonus=Math.max(0, parseFloat(document.getElementById('adj-lowb').value)||0);
+  r.lowClasses={};
+  var classes=DB.subj.map(function(s){return s.name;}).filter(function(v,i,a){return a.indexOf(v)===i;});
+  classes.forEach(function(cn,ci){ var el=document.getElementById('adjlow-'+ci); if(el&&el.checked) r.lowClasses[cn]=1; });
+  saveAll(); var m=document.getElementById('ov-adjrules'); if(m) m.remove(); renderAdminHome(); toast('반 조절계수가 저장됐어요 ✓','var(--g)');
+}
+function openCompWeights(){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 비중을 조절할 수 있어요','var(--rd)'); return; }
+  var keys=['진도율','상담','과제','평가','퇴원안정','오답데이','영상'];
+  var rows=keys.map(function(k){
+    return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--s2)">'
+      +'<span style="flex:1;font-size:13px;font-weight:600">'+k+'</span>'
+      +'<input type="number" min="0" max="100" value="'+partWeight(k)+'" id="cw-'+k+'" oninput="cwUpdatePct()" style="width:66px;padding:6px;border:1px solid var(--s3);border-radius:8px;text-align:center;font-size:13px;background:var(--s1);color:var(--te)">'
+      +'<span id="cwp-'+k+'" style="width:46px;text-align:right;font-size:11.5px;color:var(--acc);font-weight:700"></span></div>';
+  }).join('');
+  var h='<div class="ov" id="ov-compweights" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">⚖️ 종합 점수 비중 조절</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:10px">각 지표의 비중(가중치)입니다. 숫자가 클수록 점수에 더 반영돼요. 오른쪽은 전체 대비 비율입니다. 0을 넣으면 그 지표는 점수에서 빠집니다.</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 14px;margin-bottom:12px">'+rows+'</div>'
+    +'<button class="btn" onclick="saveCompWeights()">저장</button>'
+    +'<button class="btn ghost" onclick="resetCompWeights()">균등으로 초기화</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-compweights\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+  cwUpdatePct();
+}
+function cwUpdatePct(){
+  var keys=['진도율','상담','과제','평가','퇴원안정','오답데이','영상'];
+  var tot=0, vals={};
+  keys.forEach(function(k){ var el=document.getElementById('cw-'+k); var v=el?Math.max(0,parseFloat(el.value)||0):0; vals[k]=v; tot+=v; });
+  keys.forEach(function(k){ var pe=document.getElementById('cwp-'+k); if(pe) pe.textContent= tot? Math.round(vals[k]/tot*100)+'%' : '-'; });
+}
+function saveCompWeights(){
+  var keys=['진도율','상담','과제','평가','퇴원안정','오답데이','영상'];
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.compWeights) DB.cfg.compWeights={};
+  var tot=0;
+  keys.forEach(function(k){ var el=document.getElementById('cw-'+k); var v=el?Math.max(0,parseFloat(el.value)||0):0; DB.cfg.compWeights[k]=v; tot+=v; });
+  if(tot<=0){ toast('비중 합이 0이에요. 하나 이상 값을 넣어주세요','var(--rd)'); return; }
+  saveAll(); var m=document.getElementById('ov-compweights'); if(m) m.remove(); renderAdminHome(); toast('비중이 저장됐어요 ✓','var(--g)');
+}
+function resetCompWeights(){
+  if(DB.cfg) DB.cfg.compWeights={}; saveAll(); var m=document.getElementById('ov-compweights'); if(m) m.remove(); renderAdminHome(); toast('비중을 균등으로 초기화했어요');
 }
 function showCompositeDetail(idx){
   var data=computeAllTeacherMetrics(), t=null;
@@ -4699,19 +4791,30 @@ function showCompositeDetail(idx){
   c.parts.forEach(function(p){
     var val = p.on ? ('<b style="color:var(--te)">'+p.v+p.unit+'</b>') : '<span style="color:var(--t3);font-size:11px">데이터 없음 · 제외</span>';
     rows+='<div style="padding:9px 2px;border-bottom:1px solid var(--s2)">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:700'+(p.on?'':';color:var(--t3)')+'">'+p.k+'</span><span>'+val+'</span></div>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span style="font-size:12.5px;font-weight:700'+(p.on?'':';color:var(--t3)')+'">'+p.k+' <span style="font-size:10px;color:var(--acc);font-weight:600">비중 '+p.w+'</span></span><span>'+val+'</span></div>'
       +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(defs[p.k]||'')+'</div></div>';
   });
   var incl=c.parts.filter(function(p){return p.on;});
-  var sumStr=incl.map(function(p){return p.v;}).join(' + ');
-  var col=c.score>=80?'var(--g)':c.score>=60?'var(--acc)':c.score>=40?'var(--am)':'var(--rd)';
+  var sumStr=incl.map(function(p){return p.v+'×'+p.w;}).join(' + ');
+  var wsum=incl.reduce(function(a,p){return a+p.w;},0);
+  var adj=teacherAdjCoeff(t.name);
+  var adjScore=Math.min(100, Math.round(c.score*adj.coeff));
+  var col=adjScore>=80?'var(--g)':adjScore>=60?'var(--acc)':adjScore>=40?'var(--am)':'var(--rd)';
+  var adjBlock='';
+  if(adj.avgBonus>0){
+    var reasonRows=adj.perClass.filter(function(pc){return pc.bonus>0;}).map(function(pc){ return '· '+dEsc(pc.cn)+': '+pc.reasons.join(', '); }).join('<br>');
+    adjBlock='<div style="background:var(--aml);border-radius:var(--r);padding:11px 13px;font-size:12px;color:var(--te);margin-bottom:12px">'
+      +'<b>반 조절계수</b><br>기본 '+c.score+'점 × '+(Math.round(adj.coeff*1000)/1000)+' (담당 반 평균 +'+adj.avgBonus+'%) = <b style="color:'+col+'">'+adjScore+'점</b>'
+      +(reasonRows?('<div style="font-size:10.5px;color:var(--t3);margin-top:5px">'+reasonRows+'</div>'):'')+'</div>';
+  }
   var h='<div class="ov" id="ov-compdetail" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">🧮 '+dEsc(t.name)+' · 종합 점수 계산</div>'
-    +'<div style="text-align:center;margin:4px 0 12px"><span style="font-size:34px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+c.score+'</span><span style="font-size:14px;color:var(--t3)">점</span></div>'
+    +'<div style="text-align:center;margin:4px 0 12px"><span style="font-size:34px;font-weight:800;font-family:DM Mono,monospace;color:'+col+';line-height:1">'+adjScore+'</span><span style="font-size:14px;color:var(--t3)">점</span>'+(adj.avgBonus>0?'<div style="font-size:10.5px;color:var(--am);font-weight:700;margin-top:3px">기본 '+c.score+'점 · 보정 +'+adj.avgBonus+'%</div>':'')+'</div>'
     +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px">'+rows+'</div>'
     +'<div style="background:var(--acc-l);border-radius:var(--r);padding:11px 13px;font-size:12px;color:var(--te);margin-bottom:12px">'
-      +'<b>계산식</b><br>('+sumStr+') ÷ '+incl.length+'개 = <b style="color:'+col+'">'+c.score+'점</b>'
-      +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">※ 데이터가 없는 지표는 평균에서 제외됩니다. 각 지표는 동일 비중(같은 가중치)입니다.</div></div>'
+      +'<b>계산식 (가중 평균)</b><br>('+sumStr+') ÷ '+wsum+' = <b>'+c.score+'점</b>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">※ 값 × 비중을 모두 더한 뒤, 비중 합으로 나눕니다. 데이터 없는 지표는 제외돼요.'+((ME&&ME.role==='owner')?' 비중은 「⚖️ 비중 조절」에서 바꿀 수 있어요.':'')+'</div></div>'
+    +adjBlock
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-compdetail\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
@@ -5003,7 +5106,9 @@ function renderAdminHome() {
   }
 
   // ── 강사 종합 평가 (강사평가 + 순위 지표 종합)
-  h += '<div class="sl2"><div class="d8" style="background:var(--g)"></div>강사 종합 평가 🏅</div>';
+  h += '<div class="sl2"><div class="d8" style="background:var(--g)"></div>강사 종합 평가 🏅'
+     + ((ME&&ME.role==='owner')?'<span style="margin-left:auto;display:flex;gap:6px"><button onclick="openCompWeights()" style="font-size:10.5px;color:var(--acc);background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:4px 9px;cursor:pointer;font-weight:600">⚖️ 비중</button><button onclick="openAdjRules()" style="font-size:10.5px;color:var(--am);background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:4px 9px;cursor:pointer;font-weight:600">🎚️ 반 보정</button></span>':'')
+     + '</div>';
   h += '<div style="font-size:11px;color:var(--t3);margin:-4px 0 10px">진도율·상담·과제·강사평가·퇴원안정·오답데이·영상을 평균한 종합 점수입니다. 영상은 진도 나간 차시 대비 수업영상 업로드율. (강사 카드를 누르면 상세)</div>';
   h += teacherOverallHTML();
 
