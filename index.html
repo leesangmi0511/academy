@@ -5437,10 +5437,10 @@ function collectAlerts(){
     var eh=DB.evalHistory||{}, tm=eh[ym]||{};
     (DB.cfg.teachers||[]).forEach(function(t){
       if(!tm.teachers||tm.teachers[t.name]===undefined)
-        out.push({key:'eval_t_'+ym+'_'+t.name, cat:'eval', icon:'📋', color:'var(--acc)', title:'강사 평가 미완료', detail:t.name+' 강사', action:'openTeacherEvalMenu'});
+        out.push({key:'eval_t_'+ym+'_'+t.name, cat:'eval', icon:'📋', color:'var(--acc)', title:'강사 평가 미완료', detail:t.name+' 강사', action:'openTeacherEvalMenu()'});
     });
     if(ME&&ME.role==='owner' && tm.admin===undefined)
-      out.push({key:'eval_admin_'+ym, cat:'eval', icon:'👔', color:'var(--pu)', title:'관리자 평가 미완료', detail:'이번 달 관리자 평가', action:'openAdminEval'});
+      out.push({key:'eval_admin_'+ym, cat:'eval', icon:'👔', color:'var(--pu)', title:'관리자 평가 미완료', detail:'이번 달 관리자 평가', action:'openAdminEval()'});
   }
   // 2) 수강료 미납 (원장·행정팀)
   if(isOwnerLevel() && typeof getStuPayStatus==='function'){
@@ -5457,10 +5457,34 @@ function collectAlerts(){
     if(c.lv==='urgent')
       out.push({key:'risk_'+(s.id||s.name)+'_'+ym, cat:'risk', icon:'⚠', color:'var(--rd)', title:'상담 위험', detail:s.name+' · '+c.lb, action:null});
   });
+  // 4) 기한 일정: 임박(D-3)·오늘 / 기한 지남+체크 필요 / 이번 달 어김
+  ((DB.cfg&&DB.cfg.events)||[]).forEach(function(e){
+    var di=(typeof dlInfo==='function')?dlInfo(e):null;
+    if(!di || !e.date) return;
+    var dleft=daysUntil(e.date);
+    if(dleft===null) return;
+    var unchecked=di.teachers.filter(function(n){return !di.status[n];});
+    var missed=di.teachers.filter(function(n){return di.status[n]==='missed';});
+    var act="gotoEvDate('"+e.date+"','"+e.id+"')";
+    if(dleft>=0 && dleft<=3 && unchecked.length)
+      out.push({key:'dl_soon_'+e.id, cat:'deadline', icon:'⏱', color:'var(--am)', title:(dleft===0?'오늘이 기한이에요':'기한 D-'+dleft), detail:e.title+' · '+unchecked.join(', '), action:act});
+    if(dleft<0 && unchecked.length)
+      out.push({key:'dl_over_'+e.id, cat:'deadline', icon:'⏰', color:'var(--rd)', title:'기한 지남 · 체크 필요', detail:e.title+' ('+e.date+') · 미확인: '+unchecked.join(', '), action:act});
+    if(missed.length && (e.date||'').slice(0,7)===ym)
+      out.push({key:'dl_miss_'+e.id, cat:'deadline', icon:'✗', color:'var(--rd)', title:'기한 어김 (평가 감점)', detail:e.title+' · '+missed.join(', '), action:act});
+  });
   return out.map(function(a){ a.done=!!done[a.key]; return a; });
 }
 var _alertOpenCat = '';  // 펼쳐진 카테고리 (재렌더에도 유지)
-var ALERT_CATS = [ {k:'eval',icon:'📋',label:'평가',color:'var(--acc)'}, {k:'tuition',icon:'💳',label:'수강료',color:'var(--rd)'}, {k:'risk',icon:'⚠',label:'상담 위험',color:'var(--am)'} ];
+var ALERT_CATS = [ {k:'eval',icon:'📋',label:'평가',color:'var(--acc)'}, {k:'tuition',icon:'💳',label:'수강료',color:'var(--rd)'}, {k:'risk',icon:'⚠',label:'상담 위험',color:'var(--am)'}, {k:'deadline',icon:'⏱',label:'기한',color:'var(--pu)'} ];
+function gotoEvDate(d, id){
+  goTab('calendar');
+  try{
+    var p=(d||'').split('-');
+    if(p.length===3){ calY=parseInt(p[0],10); calM=parseInt(p[1],10)-1; calSel=d; renderCal(); renderCalEv(d); }
+    if(id) openEventCheck(id);
+  }catch(e){}
+}
 function dismissAllAlerts(){
   if(!(ME&&ME.role==='owner')) return;
   var active=collectAlerts().filter(function(a){return !a.done;});
@@ -5514,7 +5538,7 @@ function alertCenterHTML(){
         var k=(a.key||'').replace(/'/g,'');
         h+='<div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border-bottom:1px solid var(--s2)">'
           +'<span style="font-size:15px;flex-shrink:0">'+a.icon+'</span>'
-          +'<div style="flex:1;min-width:0'+(a.action?';cursor:pointer':'')+'"'+(a.action?(' onclick="'+a.action+'()"'):'')+'>'
+          +'<div style="flex:1;min-width:0'+(a.action?';cursor:pointer':'')+'"'+(a.action?(' onclick="'+a.action+'"'):'')+'>'
             +'<div style="font-size:12.5px;font-weight:700;color:'+a.color+'">'+a.title+'</div>'
             +'<div style="font-size:11.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(a.detail)+'</div>'
           +'</div>'
