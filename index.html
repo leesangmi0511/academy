@@ -229,6 +229,18 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
 .ov.open{display:flex}
 .modal{background:var(--s1);border-radius:22px 22px 0 0;padding:18px;width:100%;max-width:430px;max-height:88vh;overflow-y:auto;padding-bottom:calc(24px + env(safe-area-inset-bottom,12px))}
 .mh{width:34px;height:4px;background:var(--s3);border-radius:2px;margin:0 auto 14px}
+/* ── 노트북·PC 넓은 화면: 전체 페이지 레이아웃 ── */
+@media (min-width: 900px){
+  #app{max-width:1100px}
+  .screen{padding:22px 32px 100px}
+  #login{max-width:520px}
+  .ov{align-items:center;padding:24px}
+  .modal{max-width:600px;border-radius:22px;padding:22px 26px}
+  .sv{font-size:26px}
+  .cc{min-height:52px}
+  .tabbar{border-left:1px solid var(--s3);border-right:1px solid var(--s3)}
+  #app > .hdr{border-left:1px solid var(--s3);border-right:1px solid var(--s3)}
+}
 .mt2{font-size:16px;font-weight:700;margin-bottom:14px}
 .moodrow{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:12px}
 .mb{padding:8px 2px;border:1px solid var(--s3);border-radius:var(--rs);background:transparent;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px}
@@ -5061,7 +5073,8 @@ function teacherDeadlineMiss(tn){
   ((DB.cfg&&DB.cfg.events)||[]).forEach(function(e){
     var _di=dlInfo(e);
     if(_di && _di.teachers.indexOf(tn)>=0 && _di.status[tn]==='missed' && (e.date||'').slice(0,7)===_ym){
-      list.push({kind:'일정', label:dEsc(e.title)+' ('+e.date+' 기한 어김)'});
+      var _ld=(e.dl&&e.dl.late&&e.dl.late[tn])||0;
+      list.push({kind:'일정', label:dEsc(e.title)+' ('+e.date+' 기한 어김'+(_ld?' · '+_ld+'일 늦음':'')+')'});
     }
   });
   return {count:list.length, list:list};
@@ -5471,7 +5484,7 @@ function collectAlerts(){
     if(dleft<0 && unchecked.length)
       out.push({key:'dl_over_'+e.id, cat:'deadline', icon:'⏰', color:'var(--rd)', title:'기한 지남 · 체크 필요', detail:e.title+' ('+e.date+') · 미확인: '+unchecked.join(', '), action:act});
     if(missed.length && (e.date||'').slice(0,7)===ym)
-      out.push({key:'dl_miss_'+e.id, cat:'deadline', icon:'✗', color:'var(--rd)', title:'기한 어김 (평가 감점)', detail:e.title+' · '+missed.join(', '), action:act});
+      out.push({key:'dl_miss_'+e.id, cat:'deadline', icon:'✗', color:'var(--rd)', title:'기한 어김 (평가 감점)', detail:e.title+' · '+missed.map(function(n){var ld=(e.dl&&e.dl.late&&e.dl.late[n])||0;return n+(ld?'('+ld+'일 늦음)':'');}).join(', '), action:act});
   });
   return out.map(function(a){ a.done=!!done[a.key]; return a; });
 }
@@ -6491,9 +6504,10 @@ function openEventCheck(id){
     di.teachers.forEach(function(n){
       var s=di.status[n]||'';
       var esc=encodeURIComponent(n);
-      h+='<div style="display:flex;align-items:center;gap:8px;padding:9px 0;border-bottom:1px solid var(--s2)">'
+      var _ld=(e.dl&&e.dl.late&&e.dl.late[n]!=null)?e.dl.late[n]:'';
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:9px 0'+(s==='missed'?'':';border-bottom:1px solid var(--s2)')+'">'
         +'<div style="flex:1;min-width:0;font-size:13px;font-weight:700">'+dEsc(n)
-        +(s?' <span style="font-size:11px;font-weight:700;color:'+(s==='kept'?'var(--g)':'var(--rd)')+'">'+(s==='kept'?'지킴 ✓':'어김 ✗')+'</span>':' <span style="font-size:11px;font-weight:500;color:var(--t3)">미확인</span>')+'</div>';
+        +(s?' <span style="font-size:11px;font-weight:700;color:'+(s==='kept'?'var(--g)':'var(--rd)')+'">'+(s==='kept'?'지킴 ✓':'어김 ✗'+(_ld?' · '+_ld+'일 늦음':''))+'</span>':' <span style="font-size:11px;font-weight:500;color:var(--t3)">미확인</span>')+'</div>';
       if(canCheck){
         h+='<div style="display:flex;gap:4px;flex-shrink:0">'
           +'<button onclick="setEventDl(\''+e.id+'\',\''+esc+'\',\'kept\')" style="font-size:11.5px;font-weight:700;padding:6px 10px;border-radius:8px;border:1.5px solid var(--g);cursor:pointer;background:'+(s==='kept'?'var(--g)':'var(--s1)')+';color:'+(s==='kept'?'#fff':'var(--g)')+'">✓ 지킴</button>'
@@ -6502,6 +6516,12 @@ function openEventCheck(id){
           +'</div>';
       }
       h+='</div>';
+      if(s==='missed'){
+        h+='<div style="display:flex;align-items:center;gap:6px;padding:0 0 10px;border-bottom:1px solid var(--s2)">'
+          +'<span style="font-size:11.5px;color:var(--rd);font-weight:600">↳ 며칠 어겼나요?</span>'
+          +'<input type="number" min="1" max="365" inputmode="numeric" value="'+_ld+'" placeholder="일수"'+(canCheck?' onchange="setEventDlLate(\''+e.id+'\',\''+esc+'\',this.value)"':' disabled')+' style="width:64px;padding:5px 7px;border:1.5px solid var(--rd);border-radius:8px;font-size:12.5px;text-align:center;background:var(--s1);color:var(--te)">'
+          +'<span style="font-size:11.5px;color:var(--t3)">일 늦음</span></div>';
+      }
     });
     h+='</div>';
     if(e.dl&&e.dl.checkedBy) h+='<div style="font-size:11px;color:var(--t3);margin-bottom:10px">마지막 확인: '+dEsc(e.dl.checkedBy)+' ('+dEsc(e.dl.checkedDate||'')+')</div>';
@@ -6518,13 +6538,32 @@ function setEventDl(id, nameEnc, st){
   var name=nameEnc; try{ name=decodeURIComponent(nameEnc); }catch(_e){}
   var e=((DB.cfg&&DB.cfg.events)||[]).find(function(x){return x.id===id;}); if(!e) return;
   var di=dlInfo(e); if(!di || di.teachers.indexOf(name)<0) return;
-  e.dl={teachers:di.teachers, status:di.status, checkedBy:(ME?ME.name:''), checkedDate:today()}; // 구버전 형식도 새 형식으로 통일
+  var _late=(e.dl&&e.dl.late)||{};
+  e.dl={teachers:di.teachers, status:di.status, late:_late, checkedBy:(ME?ME.name:''), checkedDate:today()}; // 구버전 형식도 새 형식으로 통일
   if(st) e.dl.status[name]=st; else delete e.dl.status[name];
+  if(st!=='missed') delete e.dl.late[name]; // 어김이 아니면 지연 일수 제거
   try{ logChange('기한 체크', name+' · '+e.title+' → '+(st==='kept'?'지킴':st==='missed'?'어김':'미확인')); }catch(_e){}
   saveAll();
   openEventCheck(id); // 팝업을 닫지 않고 갱신 → 여러 강사 연속 체크
   try{ renderCal(); if(calSel) renderCalEv(calSel); }catch(_e){}
-  toast(st==='kept'?'✓ '+name+' 지킴으로 기록':st==='missed'?'✗ '+name+' 어김으로 기록 (평가 감점 반영)':name+' 미확인으로 되돌림', st==='missed'?'var(--rd)':'var(--g)');
+  toast(st==='kept'?'✓ '+name+' 지킴으로 기록':st==='missed'?'✗ '+name+' 어김으로 기록 · 아래에 며칠 늦었는지 입력하세요':name+' 미확인으로 되돌림', st==='missed'?'var(--rd)':'var(--g)');
+}
+function setEventDlLate(id, nameEnc, val){
+  if(!isAdminLevel()){ toast('관리자만 입력할 수 있어요','var(--rd)'); return; }
+  var name=nameEnc; try{ name=decodeURIComponent(nameEnc); }catch(_e){}
+  var e=((DB.cfg&&DB.cfg.events)||[]).find(function(x){return x.id===id;}); if(!e||!e.dl) return;
+  if(!e.dl.late) e.dl.late={};
+  var n=parseInt(val,10);
+  if(n>0){
+    e.dl.late[name]=n;
+    try{ logChange('기한 체크', name+' · '+e.title+' → 어김 '+n+'일 늦음'); }catch(_e){}
+    toast('✗ '+name+' · '+n+'일 늦음으로 기록됐어요','var(--rd)');
+  } else {
+    delete e.dl.late[name];
+  }
+  saveAll();
+  try{ renderCal(); if(calSel) renderCalEv(calSel); }catch(_e){}
+  openEventCheck(id); // 팝업 상태 갱신
 }
 // 강사 등 로그인 시: 새로 추가된(앞으로의) 일정 알림 팝업
 function checkNewEvents(){
@@ -6598,7 +6637,7 @@ function renderCalEv(ds) {
       var agg=allKept?'kept':anyMissed?'missed':'';
       dotCol=agg==='kept'?'var(--g)':agg==='missed'?'var(--rd)':'var(--am)';
       dlBadge=' <span style="font-size:10px;font-weight:700;border-radius:6px;padding:1px 6px;vertical-align:1px;'+(agg==='kept'?'background:var(--gl);color:var(--g)':agg==='missed'?'background:var(--rdl);color:var(--rd)':'background:var(--s2);color:var(--t3)')+'">'+(agg==='kept'?'✓ 기한 지킴':agg==='missed'?'✗ 기한 어김':'⏱ 기한 체크')+'</span>';
-      dlSub='<div style="font-size:11px;color:var(--t3);margin-top:1px">담당: '+di.teachers.map(function(n){var s=di.status[n]||'';return dEsc(n)+(s==='kept'?'<span style="color:var(--g)">✓</span>':s==='missed'?'<span style="color:var(--rd)">✗</span>':'');}).join(', ')+'</div>';
+      dlSub='<div style="font-size:11px;color:var(--t3);margin-top:1px">담당: '+di.teachers.map(function(n){var s=di.status[n]||'';var ld=(e.dl&&e.dl.late&&e.dl.late[n])||0;return dEsc(n)+(s==='kept'?'<span style="color:var(--g)">✓</span>':s==='missed'?'<span style="color:var(--rd)">✗'+(ld?'('+ld+'일)':'')+'</span>':'');}).join(', ')+'</div>';
     }
     h+='<div class="ic2" style="padding:10px 12px;cursor:pointer" onclick="openEventCheck(\''+e.id+'\')">'
       +'<div style="width:10px;height:10px;border-radius:50%;background:'+dotCol+';flex-shrink:0"></div>'
