@@ -5056,6 +5056,13 @@ function teacherDeadlineMiss(tn){
   var tSt=DB.stu.filter(function(s){return s.teacher===tn;});
   if(now.getDate()>15){ var oh=calcOhdapRate(tSt); if(oh && oh.rate1!=null && oh.rate1<100){ list.push({kind:'오답데이', label:'1차 오답데이 미완료 ('+oh.rate1+'%)'}); } }
   var vr=calcVideoRate(tn); if(vr!=null && vr<100){ list.push({kind:'영상', label:'지난 차시 영상 미업로드 ('+vr+'%)'}); }
+  // 일정 기한 체크: 이번 달 '어김' 처리된 기한 일정 (일정 탭에서 관리자가 체크)
+  var _ym=td.slice(0,7);
+  ((DB.cfg&&DB.cfg.events)||[]).forEach(function(e){
+    if(e.dl && e.dl.teacher===tn && e.dl.status==='missed' && (e.date||'').slice(0,7)===_ym){
+      list.push({kind:'일정', label:dEsc(e.title)+' ('+e.date+' 기한 어김)'});
+    }
+  });
   return {count:list.length, list:list};
 }
 function teacherOverallHTML(){
@@ -6296,7 +6303,10 @@ function syncSubjEndEvent(subjName, endDate){
   var before=DB.cfg.events.length;
   DB.cfg.events=DB.cfg.events.filter(function(e){ return !(e.auto==='subjEnd' && e.subj===subjName); });
   if(endDate){
-    DB.cfg.events.push({id:'e'+Date.now(), date:endDate, title:'📚 '+subjName+' 교재 완료 목표', memo:'진도배정 목표일 자동 등록', by:(ME?ME.name:''), ts:Date.now(), notify:false, auto:'subjEnd', subj:subjName});
+    var _sT=(DB.subj.find(function(s){return s.name===subjName;})||{}).teacher||'';
+    var _sEv={id:'e'+Date.now(), date:endDate, title:'📚 '+subjName+' 교재 완료 목표', memo:'진도배정 목표일 자동 등록', by:(ME?ME.name:''), ts:Date.now(), notify:false, auto:'subjEnd', subj:subjName};
+    if(_sT) _sEv.dl={teacher:_sT, status:''};
+    DB.cfg.events.push(_sEv);
     try{ logChange('일정 자동 등록', subjName+' 교재 완료 목표 '+endDate); }catch(e){}
   }
   return before;
@@ -6389,6 +6399,9 @@ function openAddEvent(){
     +'<label class="fl">날짜</label><input class="fi" id="ae-date" type="date" value="'+def+'">'
     +'<label class="fl">제목</label><input class="fi" id="ae-title" type="text" placeholder="예: 3월 모의고사, 강사 회의, 특강">'
     +'<label class="fl">메모 (선택)</label><textarea class="fi" id="ae-memo" rows="2" placeholder="자세한 내용"></textarea>'
+    +'<label class="fl">기한 담당 강사 (선택하면 기한 체크 일정이 됩니다)</label>'
+    +'<select class="fs" id="ae-teacher"><option value="">일반 일정 (기한 체크 없음)</option>'
+    +((DB.cfg&&DB.cfg.teachers)||[]).map(function(t){return '<option value="'+dEsc(t.name)+'">'+dEsc(t.name)+'</option>';}).join('')+'</select>'
     +'<label style="display:flex;align-items:center;gap:8px;margin:8px 0 12px;cursor:pointer;font-size:13px"><input type="checkbox" id="ae-notify" checked style="width:17px;height:17px;accent-color:var(--acc)">강사에게 알림 보내기</label>'
     +'<button class="btn" onclick="saveEvent()">추가</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-addevent\').remove()">닫기</button>'
@@ -6404,7 +6417,11 @@ function saveEvent(){
   if(!title){ toast('제목을 입력하세요','var(--rd)'); return; }
   if(!DB.cfg) DB.cfg={}; if(!Array.isArray(DB.cfg.events)) DB.cfg.events=[];
   var ts=Date.now();
-  DB.cfg.events.push({id:'e'+ts, date:date, title:title, memo:memo, by:(ME?ME.name:''), ts:ts, notify:notify});
+  var _tSel=document.getElementById('ae-teacher');
+  var _dlT=_tSel?_tSel.value:'';
+  var _ev={id:'e'+ts, date:date, title:title, memo:memo, by:(ME?ME.name:''), ts:ts, notify:notify};
+  if(_dlT) _ev.dl={teacher:_dlT, status:''};
+  DB.cfg.events.push(_ev);
   saveAll();
   try{ localStorage.setItem('ac_lastEventSeen', String(ts)); }catch(e){} // 추가한 본인은 알림 제외
   var m=document.getElementById('ov-addevent'); if(m) m.remove();
@@ -6417,6 +6434,49 @@ function delEvent(id){
   if(!confirm('이 일정을 삭제할까요?')) return;
   DB.cfg.events=((DB.cfg&&DB.cfg.events)||[]).filter(function(e){return e.id!==id;});
   saveAll(); renderCal(); toast('일정이 삭제됐어요');
+}
+// ═══ 일정 상세 · 기한 준수 체크 ═══
+function openEventCheck(id){
+  var e=((DB.cfg&&DB.cfg.events)||[]).find(function(x){return x.id===id;}); if(!e) return;
+  var ex=document.getElementById('ov-evcheck'); if(ex) ex.remove();
+  var st=(e.dl&&e.dl.status)||'';
+  var canCheck=isAdminLevel();
+  var h='<div class="ov" id="ov-evcheck" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">📌 '+dEsc(e.title)+'</div>'
+    +'<div style="font-size:12.5px;color:var(--t2);margin-bottom:4px">📅 '+dEsc(e.date)+(e.by?' · 등록: '+dEsc(e.by):'')+'</div>'
+    +(e.memo?'<div style="font-size:12.5px;color:var(--t2);background:var(--s2);border-radius:var(--rs);padding:9px 11px;margin-bottom:10px;line-height:1.55">'+dEsc(e.memo)+'</div>':'');
+  if(e.dl){
+    h+='<div style="background:var(--acc-l);border-radius:var(--rs);padding:11px 12px;margin-bottom:12px">'
+      +'<div style="font-size:12px;font-weight:700;margin-bottom:3px">⏱ 기한 담당: '+dEsc(e.dl.teacher||'')+'</div>'
+      +'<div style="font-size:12px;color:'+(st==='kept'?'var(--g)':st==='missed'?'var(--rd)':'var(--t3)')+';font-weight:700">'
+        +(st==='kept'?'✓ 기한을 지켰어요':st==='missed'?'✗ 기한을 어겼어요 (평가에 감점 반영)':'아직 확인 전이에요')
+      +(e.dl.checkedBy?' <span style="font-weight:500;color:var(--t3)">· '+dEsc(e.dl.checkedBy)+' ('+dEsc(e.dl.checkedDate||'')+')</span>':'')+'</div></div>';
+    if(canCheck){
+      h+='<div style="font-size:12px;font-weight:600;margin-bottom:7px">기한을 지켰는지 체크하세요</div>'
+        +'<div style="display:flex;gap:8px;margin-bottom:12px">'
+        +'<button onclick="setEventDl(\''+e.id+'\',\'kept\')" style="flex:1;font-size:13px;font-weight:700;padding:11px;border-radius:10px;border:1.5px solid var(--g);cursor:pointer;background:'+(st==='kept'?'var(--g)':'var(--s1)')+';color:'+(st==='kept'?'#fff':'var(--g)')+'">✓ 지킴</button>'
+        +'<button onclick="setEventDl(\''+e.id+'\',\'missed\')" style="flex:1;font-size:13px;font-weight:700;padding:11px;border-radius:10px;border:1.5px solid var(--rd);cursor:pointer;background:'+(st==='missed'?'var(--rd)':'var(--s1)')+';color:'+(st==='missed'?'#fff':'var(--rd)')+'">✗ 어김</button>'
+        +'<button onclick="setEventDl(\''+e.id+'\',\'\')" style="flex:1;font-size:13px;font-weight:600;padding:11px;border-radius:10px;border:1.5px solid var(--s3);cursor:pointer;background:'+(st===''?'var(--s3)':'var(--s1)')+';color:var(--t2)">미확인</button>'
+        +'</div>';
+    }
+  } else {
+    h+='<div style="font-size:12px;color:var(--t3);margin-bottom:12px">일반 일정입니다 (기한 담당 강사 없음)</div>';
+  }
+  h+='<button class="btn ghost" onclick="document.getElementById(\'ov-evcheck\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function setEventDl(id, st){
+  if(!isAdminLevel()){ toast('관리자만 체크할 수 있어요','var(--rd)'); return; }
+  var e=((DB.cfg&&DB.cfg.events)||[]).find(function(x){return x.id===id;}); if(!e||!e.dl) return;
+  e.dl.status=st;
+  e.dl.checkedBy=ME?ME.name:'';
+  e.dl.checkedDate=today();
+  try{ logChange('기한 체크', (e.dl.teacher||'')+' · '+e.title+' → '+(st==='kept'?'지킴':st==='missed'?'어김':'미확인')); }catch(_e){}
+  saveAll();
+  var m=document.getElementById('ov-evcheck'); if(m) m.remove();
+  try{ renderCal(); if(calSel) renderCalEv(calSel); }catch(_e){}
+  toast(st==='kept'?'✓ 기한 지킴으로 기록됐어요':st==='missed'?'✗ 기한 어김으로 기록됐어요 (평가 감점 반영)':'미확인으로 되돌렸어요', st==='missed'?'var(--rd)':'var(--g)');
 }
 // 강사 등 로그인 시: 새로 추가된(앞으로의) 일정 알림 팝업
 function checkNewEvents(){
@@ -6482,11 +6542,20 @@ function renderCalEv(ds) {
   var h='';
   var canEdit=isAdminLevel();
   events.forEach(function(e){
-    h+='<div class="ic2" style="padding:10px 12px">'
-      +'<div style="width:10px;height:10px;border-radius:50%;background:var(--am);flex-shrink:0"></div>'
-      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">📌 '+dEsc(e.title)+'</div>'
-      +(e.memo?'<div style="font-size:12px;color:var(--t2);margin-top:1px">'+dEsc(e.memo)+'</div>':'')+'</div>'
-      +(canEdit?'<button onclick="delEvent(\''+e.id+'\')" style="flex-shrink:0;background:none;border:none;color:var(--t3);font-size:15px;cursor:pointer">✕</button>':'')
+    var dlBadge='', dlSub='';
+    if(e.dl){
+      var st=e.dl.status||'';
+      var dotC = st==='kept'?'var(--g)':st==='missed'?'var(--rd)':'var(--am)';
+      dlBadge=' <span style="font-size:10px;font-weight:700;border-radius:6px;padding:1px 6px;vertical-align:1px;'+(st==='kept'?'background:var(--gl);color:var(--g)':st==='missed'?'background:var(--rdl);color:var(--rd)':'background:var(--s2);color:var(--t3)')+'">'+(st==='kept'?'✓ 기한 지킴':st==='missed'?'✗ 기한 어김':'⏱ 기한 미확인')+'</span>';
+      dlSub='<div style="font-size:11px;color:var(--t3);margin-top:1px">담당: '+dEsc(e.dl.teacher||'')+(e.dl.checkedBy?' · '+dEsc(e.dl.checkedBy)+' 확인':'')+'</div>';
+      var dot=dotC;
+    }
+    h+='<div class="ic2" style="padding:10px 12px;cursor:pointer" onclick="openEventCheck(\''+e.id+'\')">'
+      +'<div style="width:10px;height:10px;border-radius:50%;background:'+(e.dl?(e.dl.status==='kept'?'var(--g)':e.dl.status==='missed'?'var(--rd)':'var(--am)'):'var(--am)')+';flex-shrink:0"></div>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600">📌 '+dEsc(e.title)+dlBadge+'</div>'
+      +(e.memo?'<div style="font-size:12px;color:var(--t2);margin-top:1px">'+dEsc(e.memo)+'</div>':'')
+      +dlSub+'</div>'
+      +(canEdit?'<button onclick="event.stopPropagation();delEvent(\''+e.id+'\')" style="flex-shrink:0;background:none;border:none;color:var(--t3);font-size:15px;cursor:pointer">✕</button>':'')
       +'</div>';
   });
   items.forEach(function(it){
