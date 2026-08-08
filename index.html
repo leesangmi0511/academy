@@ -3789,6 +3789,31 @@ function syncHwProgressToSubj(){
   return updated;
 }
 function calcHwRate(teacherName,stuList){if(!hwData||!hwData.fields)return 0;var sp=hwData.fields.studentProgress;if(!sp||!sp.mapValue||!sp.mapValue.fields)return 0;var spFields=sp.mapValue.fields;if(!stuList||!stuList.length)return 0;var totalDone=0,totalAll=0;var hwUsers=hwData.fields.users?hwData.fields.users.arrayValue.values||[]:[];stuList.forEach(function(stu){var hwUser=hwUsers.find(function(u){var f=u.mapValue?u.mapValue.fields:null;return f&&(f.name?f.name.stringValue:'')===stu.name;});if(!hwUser)return;var hwId=(hwUser.mapValue.fields.id||{}).stringValue||'';if(!hwId||!spFields[hwId])return;var stuSp=spFields[hwId].mapValue?spFields[hwId].mapValue.fields:null;if(!stuSp)return;Object.keys(stuSp).forEach(function(key){var vals=stuSp[key].arrayValue?stuSp[key].arrayValue.values||[]:[];totalAll++;if(vals.filter(function(v){return v.stringValue&&v.stringValue!=='t0';}).length>0)totalDone++;});});return totalAll>0?Math.round(totalDone/totalAll*100):0;}
+// 과제앱 진단지 기한점수 (담당 학생 중 기한 내 발송률 %). 반환 0~100 또는 null
+function calcDiagRate(stuList){
+  if(!hwData||!hwData.fields||!stuList||!stuList.length) return null;
+  var diagnostics = hwData.fields.diagnostics ? (_FS._fromFS(hwData.fields.diagnostics)||{}) : {};
+  if(!diagnostics || !Object.keys(diagnostics).length) return null;
+  var hwUsersRaw = hwData.fields.users ? (hwData.fields.users.arrayValue.values||[]) : [];
+  var idByName = {};
+  hwUsersRaw.forEach(function(u){ var f=u.mapValue?u.mapValue.fields:{}; var nm=(f.name||{}).stringValue||''; var id=(f.id||{}).stringValue||''; if(nm&&id) idByName[nm]=id; });
+  var myIds=[]; stuList.forEach(function(s){ if(idByName[s.name]) myIds.push(idByName[s.name]); });
+  if(!myIds.length) return null;
+  var today=new Date().toISOString().slice(0,10);
+  var num=0, den=0;
+  Object.keys(diagnostics).forEach(function(did){
+    var dg=diagnostics[did]; if(!dg||!dg.students) return;
+    myIds.forEach(function(sid){
+      var st=dg.students[sid]||{};
+      if(st.held) return;
+      var due=st.redueDate||dg.dueDate||'';
+      if(st.sent){ den++; if(!due||(st.sentDate&&st.sentDate<=due)) num++; }
+      else if(due&&due<=today){ den++; }
+    });
+  });
+  if(den===0) return null;
+  return Math.round(num/den*100);
+}
 // 과제앱 교재 걷기 점수 (회수율% + 진도점수±). 반환 {rate,prog,score} 또는 null
 function calcBookScore(stuList){
   if(!hwData||!hwData.fields||!stuList||!stuList.length) return null;
@@ -5579,21 +5604,23 @@ function calcMyRank(myName) {
     var studentCount = tSt.length;
     var hwRate = (typeof calcHwRate==='function') ? calcHwRate(t.name, tSt) : 0;
     var bookSc = (typeof calcBookScore==='function') ? calcBookScore(tSt) : null;
+    var diagR = (typeof calcDiagRate==='function') ? calcDiagRate(tSt) : null;
     var evalSc = (typeof getEvalScore==='function') ? (getEvalScore(t.name)||0) : 0;
-    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate, bookScore:bookSc?bookSc.score:null, bookRate:bookSc?bookSc.rate:null, bookProg:bookSc?bookSc.prog:null, evalScore:evalSc};
+    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate, bookScore:bookSc?bookSc.score:null, bookRate:bookSc?bookSc.rate:null, bookProg:bookSc?bookSc.prog:null, diagRate:diagR, evalScore:evalSc};
   });
   var maxStu = Math.max.apply(null, scores.map(function(s){ return s.studentCount; }).concat([1]));
   scores.forEach(function(s) {
     var stuScore = s.studentCount / maxStu * 100;
     var hasBook = s.bookScore !== null && s.bookScore !== undefined;
-    var wsum = 4.5 + (hasBook ? 1.5 : 0);
-    var baseScore = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1 + (hasBook ? s.bookScore*1.5 : 0)) / wsum;
+    var hasDiag = s.diagRate !== null && s.diagRate !== undefined;
+    var wsum = 4.5 + (hasBook ? 1.5 : 0) + (hasDiag ? 1 : 0);
+    var baseScore = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1 + (hasBook ? s.bookScore*1.5 : 0) + (hasDiag ? s.diagRate*1 : 0)) / wsum;
     s.total = (baseScore*2 + (s.evalScore||0)*0.5) / 2.5;
   });
   scores.sort(function(a,b){ return b.total - a.total; });
   var myRank = scores.findIndex(function(s){ return s.name===myName; }) + 1;
   var myScore = scores.find(function(s){ return s.name===myName; });
-  return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0, bookRate:myScore?myScore.bookRate:null, bookProg:myScore?myScore.bookProg:null};
+  return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0, bookRate:myScore?myScore.bookRate:null, bookProg:myScore?myScore.bookProg:null, diagRate:myScore?myScore.diagRate:null};
 }
 
 function renderTeacherHome() {
@@ -5644,9 +5671,11 @@ function renderTeacherHome() {
        + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">👥 학생 ×1.5</span>'
        + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">📝 과제 ×1</span>'
        + (rankInfo.bookRate!=null ? '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">📦 교재 ×1.5</span>' : '')
+       + (rankInfo.diagRate!=null ? '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">🩺 진단지 ×1</span>' : '')
        + '</div>'
        + '<div style="font-size:10px;color:var(--t3);margin-top:6px;text-align:center">종합점수 ×2 + 관리자평가 ×0.5</div>'
        + (rankInfo.bookRate!=null ? '<div style="font-size:10px;margin-top:6px;text-align:center;color:var(--te)">📦 교재 회수 '+rankInfo.bookRate+'% · 진도점수 '+(rankInfo.bookProg>0?'+':'')+rankInfo.bookProg+'%</div>' : '')
+       + (rankInfo.diagRate!=null ? '<div style="font-size:10px;margin-top:4px;text-align:center;color:var(--te)">🩺 진단지 기한 내 발송 '+rankInfo.diagRate+'%</div>' : '')
        + '</div>';
   }
 
