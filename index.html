@@ -3895,6 +3895,8 @@ function renderHome() {
   else renderTeacherHome();
   // 25일 이후 평가 알림 체크
   injectRiskBanner();injectNewbieBanner();injectExtraBanner();setTimeout(checkEvalReminder, 2000);
+  // 약정 미확인이면 홈 진입 시마다 확인창 표시
+  try{ pledgeCheckDue(); }catch(e){}
 }
 
 // 강사 필터 칩 렌더 (관리자 전용)
@@ -5797,7 +5799,7 @@ function renderAdminHome() {
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button></div>':'')
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
-     + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
+     + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
@@ -6047,7 +6049,7 @@ function renderTeacherHome() {
 
 
   // 관리에 관한 약정 (접힘 · 펼치면 전문 · 관리자와 동일 내용)
-  h += '<div onclick="togglePledgeFull(\'plg-full-t\',\'plg-arrow-t\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:12px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내</span><span id="plg-arrow-t" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
+  h += '<div onclick="togglePledgeFull(\'plg-full-t\',\'plg-arrow-t\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:12px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-t" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-t" style="display:none">'+pledgeBoxHTML('teacher')+'</div>';
 
   // 통계
@@ -7051,6 +7053,20 @@ function pledgeClauses(role){
     '위의 사항을 위반할 경우 즉시, 관리자로서, 강사로서 자격이 박탈되는 사유가 될 수 있습니다.'
   ];
 }
+// 이번 달 약정 확인 상태 배지 (본인 기준)
+function pledgeStatusBadge(){
+  try{
+    if(!ME || ME.role==='owner') return '';
+    var acks=(DB.cfg&&DB.cfg.pledgeAcks)||[];
+    var last=0, lastD='';
+    acks.forEach(function(a){ if(a.name===ME.name&&a.role===ME.role&&a.ts>last){ last=a.ts; lastD=a.date||''; } });
+    var fwd=pledgeFirstWorkday();
+    var dueTs=new Date(fwd+'T15:00:00').getTime();
+    if(last>=dueTs) return ' <span style="font-size:10px;font-weight:700;color:var(--g);background:var(--s2);padding:3px 8px;border-radius:10px">✓ 이번 달 확인 완료'+(lastD?' '+lastD.slice(5).replace('-','/'):'')+'</span>';
+    if(Date.now()<dueTs) return ' <span style="font-size:10px;font-weight:600;color:var(--t3);background:var(--s2);padding:3px 8px;border-radius:10px">확인일 '+fwd.slice(5).replace('-','/')+' 15시</span>';
+    return ' <span style="font-size:10px;font-weight:700;color:#fff;background:var(--rd);padding:3px 8px;border-radius:10px">⚠ 이번 달 미확인</span>';
+  }catch(e){ return ''; }
+}
 function togglePledgeFull(boxId, arrowId){
   var b=document.getElementById(boxId), a=document.getElementById(arrowId);
   if(!b) return;
@@ -7145,6 +7161,7 @@ function ackPledge(){
   try{ logChange('약정 확인', (ME?ME.name:'')+' ('+(ME?ME.role:'')+') '+PLEDGE_VER); }catch(e){}
   var m=document.getElementById('ov-pledge'); if(m) m.remove();
   toast('약정 확인이 기록됐어요 ✓','var(--g)');
+  try{ if(curTab==='home') renderHome(); }catch(e){}  // 확인 완료 배지 즉시 갱신
 }
 // 원장: 약정 확인 기록 열람
 function openPledgeLog(){
