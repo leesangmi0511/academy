@@ -5808,6 +5808,7 @@ function renderAdminHome() {
        + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">5. 계약서 및 약정 내용에 대한 이견이나 문의는 재직 중 언제든지 원장 또는 행정팀에 제기할 수 있습니다.</div>'
        + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">6. 재직 중 이의를 제기하지 않고 정기 확인을 계속한 경우, 퇴직 후 "내용을 알지 못했다" 또는 "준수할 의무가 없다"는 주장은 인정되기 어려울 수 있습니다.</div>'
        + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">7. 위의 사항을 위반할 경우 즉시, 관리자로서, 강사로서 자격이 박탈되는 사유가 될 수 있습니다.</div>'
+       + '<div style="border-top:1px solid var(--s3);margin-top:10px;padding-top:8px;font-size:11px;color:var(--t2);line-height:1.6">📹 <b>CCTV 운영 안내</b> — 본 학원은 시설 안전, 화재 예방 및 도난 방지를 위해 일부 구역에 CCTV(영상정보처리기기)를 설치·운영하고 있습니다. 촬영된 영상은 관련 법령에 따라 관리되며, 설치 장소·촬영 범위·관리책임자 등 자세한 사항은 각 설치 구역의 안내판 또는 행정팀을 통해 확인하실 수 있습니다.</div>'
      + '</div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
@@ -6050,6 +6051,7 @@ function renderTeacherHome() {
      + '<div style="font-size:11.5px;color:var(--te);line-height:1.6;margin-top:4px">2. 학원의 수강생 명단, 통계, 교재 및 운영 자료는 학원의 영업비밀에 해당하며, 무단 유출·복제·개인적 이용을 금합니다.</div>'
      + '<div style="font-size:11.5px;color:var(--te);line-height:1.6;margin-top:4px">3. 본 앱의 내용·구성·기능 및 화면 등 일체는 학원의 자산으로, 무단 반출·복제·촬영·모방하여 외부에 제공하는 것을 금합니다.</div>'
      + '<div style="font-size:11.5px;color:var(--te);line-height:1.6;margin-top:4px">4. 위반 시 관련 법령(개인정보보호법, 부정경쟁방지법 등)에 따라 민·형사상 책임을 질 수 있으며, 계약 해지(자격 박탈)의 사유가 될 수 있습니다.</div>'
+     + '<div style="border-top:1px solid var(--s3);margin-top:10px;padding-top:8px;font-size:10.5px;color:var(--t2);line-height:1.6">📹 <b>CCTV 운영 안내</b> — 본 학원은 시설 안전, 화재 예방 및 도난 방지를 위해 일부 구역에 CCTV(영상정보처리기기)를 설치·운영하고 있습니다. 촬영된 영상은 관련 법령에 따라 관리되며, 설치 장소·촬영 범위·관리책임자 등 자세한 사항은 각 설치 구역의 안내판 또는 행정팀을 통해 확인하실 수 있습니다.</div>'
      + '</div>';
 
   // 통계
@@ -7086,7 +7088,7 @@ function showPledgeModal(){
     +(ME.role!=='teacher'?'<div style="font-size:11.5px;color:var(--te);background:var(--s2);border-radius:var(--rs);padding:9px 12px;margin-bottom:10px;line-height:1.6">계약서와 내규집의 내용은 본인이 확인할 의무가 있으며, 아래 확인 버튼을 누르기 전 그 내용을 다시 한 번 확인하시기 바랍니다.</div>':'')
     +'<label style="display:flex;align-items:center;gap:9px;margin:2px 0 12px;cursor:pointer;font-size:13px;font-weight:600"><input type="checkbox" id="plg-chk" style="width:18px;height:18px;accent-color:var(--acc)">위 약정 내용을 확인하였으며, 이를 준수하겠습니다.</label>'
     +'<button class="btn" onclick="ackPledge()">확인 (기록 저장)</button>'
-    +'<div style="font-size:10.5px;color:var(--t3);margin-top:8px;text-align:center;line-height:1.5">확인 시 이름·일시·약정 버전이 기록됩니다.</div>'
+    +'<div style="font-size:10.5px;color:var(--t3);margin-top:8px;text-align:center;line-height:1.5">확인 시 이름·일시·약정 버전·IP 주소가 확인 증빙 목적으로 기록됩니다.</div>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
 }
