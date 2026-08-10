@@ -5932,10 +5932,23 @@ function renderAdminHome() {
     });
   }
 
-  // 상담 필요 (필터 적용)
+  // 상담 필요 (필터 적용 · 강사별 그룹 → 펼치면 학생 2단)
   var filteredUrg = teacherFilter ? urgStu.filter(function(s){ return s.teacher && s.teacher.indexOf(teacherFilter)>=0; }) : urgStu;
   h += '<div class="sl2" style="margin-top:10px"><div class="d8" style="background:var(--rd)"></div>상담 필요 학생</div>';
-  if (filteredUrg.length) filteredUrg.forEach(function(s){ h += stuCard(s, gStI(s), true); });
+  if (filteredUrg.length) {
+    var urgByT = {};
+    filteredUrg.forEach(function(s){ var k = s.teacher || '담당 미지정'; (urgByT[k] = urgByT[k] || []).push(s); });
+    Object.keys(urgByT).sort().forEach(function(tn, ti){
+      var list = urgByT[tn];
+      var gid = 'urgt-' + ti;
+      h += '<div onclick="toggleUrgGrid(\''+gid+'\',\''+gid+'-ar\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:9px 13px;margin-bottom:6px;cursor:pointer">'
+         + '<span style="font-size:12.5px;font-weight:700;color:var(--te)">'+dEsc(tn)+' <span style="font-size:11px;color:var(--rd);font-weight:700">'+list.length+'명</span></span>'
+         + '<span id="'+gid+'-ar" style="font-size:11px;color:var(--t2);font-weight:600">▼ 펼치기</span></div>'
+         + '<div id="'+gid+'" style="display:none;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">'
+         + list.map(function(s){ return stuCardMini(s, gStI(s)); }).join('')
+         + '</div>';
+    });
+  }
   else h += '<div class="empty" style="padding:6px 0 10px;text-align:left;font-size:12px">없음</div>';
 
 
@@ -6214,6 +6227,26 @@ function renderConsultList() {
 // ═══════════════════════════════════════
 // 카드 헬퍼
 // ═══════════════════════════════════════
+function toggleUrgGrid(id, arId){
+  var b=document.getElementById(id), a=document.getElementById(arId);
+  if(!b) return;
+  var open=b.style.display!=='none';
+  b.style.display=open?'none':'grid';
+  if(a) a.textContent=open?'▼ 펼치기':'▲ 접기';
+}
+// 상담 필요 2단용 미니 카드 (성씨 아이콘 없음)
+function stuCardMini(s, idx){
+  var st=cSt(s);
+  var last=s.consultHistory&&s.consultHistory.length?s.consultHistory[s.consultHistory.length-1]:null;
+  var tags='<span class="tag" style="background:'+stBg(st.lv)+';color:'+stC(st.lv)+';font-size:9.5px;padding:2px 6px">'+stI(st.lv)+' '+st.lb+'</span>';
+  if(last) tags+='<span class="tag" style="background:var(--s2);color:var(--t2);font-size:9.5px;padding:2px 6px">'+(MOOD_E[last.mood]||'')+' '+last.date.slice(5).replace('-','/')+'</span>';
+  if(s.nextConsultDate) tags+='<span class="tag" style="background:var(--acc-l);color:var(--acc);font-size:9.5px;padding:2px 6px">다음 '+s.nextConsultDate.slice(5).replace('-','/')+'</span>';
+  return '<div onclick="showStuDetail('+idx+')" style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:8px 10px;cursor:pointer">'
+    +'<div style="font-size:12.5px;font-weight:700;color:var(--te)">'+dEsc(s.name)+'</div>'
+    +(s.class?'<div style="font-size:10px;color:var(--t2);line-height:1.4;margin-top:1px">'+dEsc(s.class)+'</div>':'')
+    +'<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px">'+tags+'</div>'
+    +'</div>';
+}
 function stuCard(s, idx, showT) {
   var st=cSt(s), c=COLORS[idx%COLORS.length], bg=AVBG[idx%AVBG.length];
   var last=s.consultHistory&&s.consultHistory.length?s.consultHistory[s.consultHistory.length-1]:null;
