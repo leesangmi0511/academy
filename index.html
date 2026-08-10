@@ -5797,19 +5797,7 @@ function renderAdminHome() {
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button></div>':'')
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
-     + '<div style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--r);padding:12px 16px;margin-bottom:12px">'
-       + '<div style="font-size:12px;font-weight:800;color:var(--am);margin-bottom:6px">📜 관리에 관한 약정</div>'
-       + '<div style="font-size:12px;color:var(--te);line-height:1.65">1. 학원의 자산, 통계를 외부에 유출하거나 개인적인 일에 이용하지 않습니다.</div>'
-       + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">2. 학원 앱의 내용·구성·기능 등 일체는 학원의 자산으로, 무단 반출·복제·모방하여 외부에 제공하지 않습니다.</div>'
-       + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">3. 학원 내규집의 내용을 숙지하였으며, 업무 수행 시 이를 준수하겠습니다.</div>'
-       + '<div style="font-size:10.5px;color:var(--t3);line-height:1.55;margin:2px 0 0 14px">＊ 내규집은 교무실 입구에 항상 비치되어 있으며, 찾기 어려울 경우 행정팀에 요청하시면 됩니다. 필요한 모든 양식도 행정팀에 요청하시면 제공합니다.</div>'
-       + '<div style="font-size:10.5px;color:var(--t3);line-height:1.55;margin:2px 0 0 14px">＊ 내용 중 궁금하거나 이해되지 않는 부분은 반드시 행정팀 또는 원장에게 문의해 주세요. 열람과 문의가 언제든 가능함에도 확인하지 않아 발생하는 불이익은 본인에게 책임이 있을 수 있습니다.</div>'
-       + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">4. 계약서 및 본 약정의 내용은 재직 중 효력을 가지며, 비밀유지 등 그 성질상 존속이 필요한 조항은 퇴직 후에도 효력이 유지됩니다.</div>'
-       + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">5. 계약서 및 약정 내용에 대한 이견이나 문의는 재직 중 언제든지 원장 또는 행정팀에 제기할 수 있습니다.</div>'
-       + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">6. 재직 중 이의를 제기하지 않고 정기 확인을 계속한 경우, 퇴직 후 "내용을 알지 못했다" 또는 "준수할 의무가 없다"는 주장은 인정되기 어려울 수 있습니다.</div>'
-       + '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:4px">7. 위의 사항을 위반할 경우 즉시, 관리자로서, 강사로서 자격이 박탈되는 사유가 될 수 있습니다.</div>'
-       + '<div style="border-top:1px solid var(--s3);margin-top:10px;padding-top:8px;font-size:11px;color:var(--t2);line-height:1.6">📹 <b>CCTV 운영 안내</b> — 본 학원은 시설 안전, 화재 예방 및 도난 방지를 위해 일부 구역에 CCTV(영상정보처리기기)를 설치·운영하고 있습니다. 촬영된 영상은 관련 법령에 따라 관리되며, 설치 장소·촬영 범위·관리책임자 등 자세한 사항은 각 설치 구역의 안내판 또는 행정팀을 통해 확인하실 수 있습니다.</div>'
-     + '</div>'
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="viewPledge(ME.role)" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 관리에 관한 약정 · CCTV 안내</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>'
@@ -6044,15 +6032,8 @@ function renderTeacherHome() {
 
 
 
-  // 정보 보호 안내
-  h += '<div style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--r);padding:12px 16px;margin-bottom:12px">'
-     + '<div style="font-size:12px;font-weight:800;color:var(--am);margin-bottom:6px">🔒 정보 보호 안내</div>'
-     + '<div style="font-size:11.5px;color:var(--te);line-height:1.6">1. 본 앱의 학생·학부모 정보(이름, 연락처, 상담·성적 기록 등)는 개인정보보호법의 보호를 받는 개인정보로, 업무 목적 외 이용 및 외부 제공을 금합니다.</div>'
-     + '<div style="font-size:11.5px;color:var(--te);line-height:1.6;margin-top:4px">2. 학원의 수강생 명단, 통계, 교재 및 운영 자료는 학원의 영업비밀에 해당하며, 무단 유출·복제·개인적 이용을 금합니다.</div>'
-     + '<div style="font-size:11.5px;color:var(--te);line-height:1.6;margin-top:4px">3. 본 앱의 내용·구성·기능 및 화면 등 일체는 학원의 자산으로, 무단 반출·복제·촬영·모방하여 외부에 제공하는 것을 금합니다.</div>'
-     + '<div style="font-size:11.5px;color:var(--te);line-height:1.6;margin-top:4px">4. 위반 시 관련 법령(개인정보보호법, 부정경쟁방지법 등)에 따라 민·형사상 책임을 질 수 있으며, 계약 해지(자격 박탈)의 사유가 될 수 있습니다.</div>'
-     + '<div style="border-top:1px solid var(--s3);margin-top:10px;padding-top:8px;font-size:10.5px;color:var(--t2);line-height:1.6">📹 <b>CCTV 운영 안내</b> — 본 학원은 시설 안전, 화재 예방 및 도난 방지를 위해 일부 구역에 CCTV(영상정보처리기기)를 설치·운영하고 있습니다. 촬영된 영상은 관련 법령에 따라 관리되며, 설치 장소·촬영 범위·관리책임자 등 자세한 사항은 각 설치 구역의 안내판 또는 행정팀을 통해 확인하실 수 있습니다.</div>'
-     + '</div>';
+  // 정보 보호 안내 (전문은 버튼으로 열람)
+  h += '<div style="display:flex;gap:8px;margin-bottom:12px"><button onclick="viewPledge(\'teacher\')" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔒 정보 보호 안내 · CCTV 안내</button></div>';
 
   // 통계
   h += '<div class="sg3">'
@@ -7040,6 +7021,27 @@ function pledgeClauses(role){
   ];
 }
 var WD_LB=['일','월','화','수','목','금','토'];
+var CCTV_NOTE='📹 <b>CCTV 운영 안내</b> — 본 학원은 시설 안전, 화재 예방 및 도난 방지를 위해 일부 구역에 CCTV(영상정보처리기기)를 설치·운영하고 있습니다. 촬영된 영상은 관련 법령에 따라 관리되며, 설치 장소·촬영 범위·관리책임자 등 자세한 사항은 각 설치 구역의 안내판 또는 행정팀을 통해 확인하실 수 있습니다.';
+// 약정 전문 박스 (열람 모달·확인 모달 공용)
+function pledgeBoxHTML(role){
+  var cls=pledgeClauses(role);
+  return '<div style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--r);padding:12px 16px;margin-bottom:12px">'
+    +cls.map(function(c,i){ return '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:'+(i?'4':'0')+'px">'+(i+1)+'. '+c+'</div>'; }).join('')
+    +'<div style="border-top:1px solid var(--s3);margin-top:10px;padding-top:8px;font-size:10.5px;color:var(--t2);line-height:1.6">'+CCTV_NOTE+'</div>'
+    +'</div>';
+}
+// 약정 전문 열람 (읽기 전용)
+function viewPledge(role){
+  var ex=document.getElementById('ov-plgview'); if(ex) ex.remove();
+  var title = role==='teacher' ? '🔒 정보 보호 안내' : '📜 관리에 관한 약정';
+  var h='<div class="ov" id="ov-plgview" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">'+title+'</div>'
+    +pledgeBoxHTML(role)
+    +'<div style="font-size:10.5px;color:var(--t3);margin:-4px 0 10px;text-align:center">매월 첫 근무일 오후 3시 이후 확인 버튼을 눌러야 앱을 계속 사용할 수 있습니다.</div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-plgview\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
 // 이번 달 첫 근무일 계산: 학원 휴무일(일정의 🏫 휴무일) 제외, 강사는 본인 출근 요일 반영 (미설정 시 일요일만 제외)
 function pledgeFirstWorkday(person){
   var p=person||ME;
@@ -7069,22 +7071,23 @@ function pledgeCheckDue(){
     var last=0;
     acks.forEach(function(a){ if(a.name===ME.name && a.role===ME.role && a.ts>last) last=a.ts; });
     var fwd=pledgeFirstWorkday();
-    if(today() < fwd) return;                                // 이번 달 첫 근무일 전이면 표시 안 함
-    var fwdTs=new Date(fwd+'T00:00:00').getTime();
-    if(last >= fwdTs) return;                                // 이번 달 첫 근무일 이후 이미 확인함
+    var dueTs=new Date(fwd+'T15:00:00').getTime();           // 첫 근무일 오후 3시부터 확인 대상
+    if(Date.now() < dueTs) return;
+    if(last >= dueTs) return;                                // 이미 확인함
+    if(document.getElementById('ov-pledge')) return;         // 이미 떠 있음
     showPledgeModal();
   }catch(e){}
 }
+// 사용 중에도 오후 3시가 되면 확인창이 뜨도록 1분마다 점검
+setInterval(function(){ try{ if(ME) pledgeCheckDue(); }catch(e){} }, 60000);
 function showPledgeModal(){
   var ex=document.getElementById('ov-pledge'); if(ex) ex.remove();
   var cls=pledgeClauses(ME.role);
   var title = ME.role==='teacher' ? '🔒 정보 보호 약정 확인' : '📜 관리 약정 확인';
   var h='<div class="ov" id="ov-pledge" style="display:flex;z-index:9999"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">'+title+'</div>'
-    +'<div style="font-size:12px;color:var(--t2);margin-bottom:10px;text-align:center">월 1회 · 매월 첫 근무일에 약정 내용을 확인해 주세요 ('+dEsc(ME.name)+')</div>'
-    +'<div style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--r);padding:12px 16px;margin-bottom:12px">'
-    +cls.map(function(c,i){ return '<div style="font-size:12px;color:var(--te);line-height:1.65;margin-top:'+(i?'4':'0')+'px">'+(i+1)+'. '+c+'</div>'; }).join('')
-    +'</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:10px;text-align:center">월 1회 · 매월 첫 근무일 오후 3시 이후, 확인해야 앱을 계속 사용할 수 있어요 ('+dEsc(ME.name)+')</div>'
+    +pledgeBoxHTML(ME.role)
     +(ME.role!=='teacher'?'<div style="font-size:11.5px;color:var(--te);background:var(--s2);border-radius:var(--rs);padding:9px 12px;margin-bottom:10px;line-height:1.6">계약서와 내규집의 내용은 본인이 확인할 의무가 있으며, 아래 확인 버튼을 누르기 전 그 내용을 다시 한 번 확인하시기 바랍니다.</div>':'')
     +'<label style="display:flex;align-items:center;gap:9px;margin:2px 0 12px;cursor:pointer;font-size:13px;font-weight:600"><input type="checkbox" id="plg-chk" style="width:18px;height:18px;accent-color:var(--acc)">위 약정 내용을 확인하였으며, 이를 준수하겠습니다.</label>'
     +'<button class="btn" onclick="ackPledge()">확인 (기록 저장)</button>'
@@ -7116,16 +7119,15 @@ function openPledgeLog(){
   ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ people.push({name:a.name, role:'admin', lb:'관리자'}); });
   ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(s){ people.push({name:s.name, role:'staff', lb:'행정팀'}); });
   ((DB.cfg&&DB.cfg.teachers)||[]).forEach(function(t){ people.push({name:t.name, role:'teacher', lb:'강사'}); });
-  var todayStr=today();
   var sumRows=people.map(function(p){
     var last=0; acks.forEach(function(a){ if(a.name===p.name&&a.role===p.role&&a.ts>last) last=a.ts; });
     var fwd=pledgeFirstWorkday(p);
-    var fwdTs=new Date(fwd+'T00:00:00').getTime();
+    var dueTs=new Date(fwd+'T15:00:00').getTime();
     var lastTxt = last ? new Date(last).toISOString().slice(0,10) : '기록 없음';
     var mark, col;
-    if(last>=fwdTs){ mark='✓ '+lastTxt; col='var(--g)'; }                       // 이번 달 확인 완료
-    else if(todayStr<fwd){ mark='예정 '+fwd.slice(5); col='var(--t3)'; }         // 아직 이번 달 확인일 전
-    else { mark='⚠ '+lastTxt; col='var(--rd)'; }                                 // 확인일 지났는데 미확인
+    if(last>=dueTs){ mark='✓ '+lastTxt; col='var(--g)'; }                            // 이번 달 확인 완료
+    else if(Date.now()<dueTs){ mark='예정 '+fwd.slice(5)+' 15시'; col='var(--t3)'; }  // 아직 이번 달 확인 시점 전
+    else { mark='⚠ '+lastTxt; col='var(--rd)'; }                                      // 확인 시점 지났는데 미확인
     return '<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:12px">'
       +'<span style="font-weight:700;color:var(--te)">'+dEsc(p.name)+' <span style="font-weight:500;color:var(--t3);font-size:10.5px">'+p.lb+'</span></span>'
       +'<span style="color:'+col+';font-weight:600">'+mark+'</span></div>';
@@ -7139,7 +7141,7 @@ function openPledgeLog(){
   }).join('');
   var h='<div class="ov" id="ov-pledgelog" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">📑 약정 확인 기록</div>'
-    +'<div style="font-size:12px;font-weight:700;margin:2px 0 4px">대상자별 확인 현황 (이번 달 첫 근무일 기준 ✓)</div>'
+    +'<div style="font-size:12px;font-weight:700;margin:2px 0 4px">대상자별 확인 현황 (매월 첫 근무일 오후 3시 기준 ✓)</div>'
     +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px">'+(sumRows||'<div style="padding:12px 0;text-align:center;color:var(--t3);font-size:12px">등록된 관리자·강사가 없어요</div>')+'</div>'
     +'<div style="font-size:12px;font-weight:700;margin:2px 0 4px">확인 이력 (최근 60건)</div>'
     +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px;max-height:240px;overflow:auto">'+(histRows||'<div style="padding:12px 0;text-align:center;color:var(--t3);font-size:12px">아직 확인 기록이 없어요</div>')+'</div>'
