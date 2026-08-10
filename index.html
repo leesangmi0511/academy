@@ -4026,6 +4026,67 @@ function calcVideoRate(teacherName){
   return Math.round(covered/past*100);
 }
 
+// 과제앱 진단지 기한점수 (담당 학생 중 기한 내 발송률 %). 반환 0~100 또는 null
+function calcDiagRate(stuList){
+  if(!hwData||!hwData.fields||!stuList||!stuList.length) return null;
+  var diagnostics = hwData.fields.diagnostics ? (_FS._fromFS(hwData.fields.diagnostics)||{}) : {};
+  if(!diagnostics || !Object.keys(diagnostics).length) return null;
+  var hwUsersRaw = hwData.fields.users ? (hwData.fields.users.arrayValue.values||[]) : [];
+  var idByName = {};
+  hwUsersRaw.forEach(function(u){ var f=u.mapValue?u.mapValue.fields:{}; var nm=(f.name||{}).stringValue||''; var id=(f.id||{}).stringValue||''; if(nm&&id) idByName[nm]=id; });
+  var myIds=[]; stuList.forEach(function(s){ if(idByName[s.name]) myIds.push(idByName[s.name]); });
+  if(!myIds.length) return null;
+  var today=new Date().toISOString().slice(0,10);
+  var num=0, den=0;
+  Object.keys(diagnostics).forEach(function(did){
+    var dg=diagnostics[did]; if(!dg||!dg.students) return;
+    myIds.forEach(function(sid){
+      var st=dg.students[sid]||{};
+      if(st.held) return;
+      var due=st.redueDate||dg.dueDate||'';
+      if(st.sent){ den++; if(!due||(st.sentDate&&st.sentDate<=due)) num++; }
+      else if(due&&due<=today){ den++; }
+    });
+  });
+  if(den===0) return null;
+  return Math.round(num/den*100);
+}
+// 과제앱 교재 걷기 점수 (회수율% + 진도점수±). 반환 {rate,prog,score} 또는 null
+function calcBookScore(stuList){
+  if(!hwData||!hwData.fields||!stuList||!stuList.length) return null;
+  var collections = hwData.fields.collections ? (_FS._fromFS(hwData.fields.collections)||{}) : {};
+  if(!collections || !Object.keys(collections).length) return null;
+  var curriculum = hwData.fields.curriculum ? (_FS._fromFS(hwData.fields.curriculum)||[]) : [];
+  var hwUsersRaw = hwData.fields.users ? (hwData.fields.users.arrayValue.values||[]) : [];
+  var hwUsers = hwUsersRaw.map(function(u){ var f=u.mapValue?u.mapValue.fields:{}; return {id:(f.id||{}).stringValue||'', name:(f.name||{}).stringValue||'', classId:(f.classId||{}).stringValue||'', role:(f.role||{}).stringValue||''}; });
+  var classSet={};
+  stuList.forEach(function(stu){ var u=hwUsers.find(function(x){return x.name===stu.name;}); if(u&&u.classId)classSet[u.classId]=1; });
+  var classes=Object.keys(classSet);
+  if(!classes.length) return null;
+  var hwStudents=hwUsers.filter(function(x){return x.role==='student';});
+  var today=new Date().toISOString().slice(0,10);
+  var totalStu=0, submitted=0, scores=[];
+  Object.keys(collections).forEach(function(k){
+    var classId=k.split('__')[1];
+    if(classes.indexOf(classId)<0) return;
+    var col=collections[k]; if(!col||!col.students) return;
+    var cst=hwStudents.filter(function(s){return s.classId===classId;});
+    if(!cst.length) return;
+    totalStu+=cst.length;
+    var allSub=true;
+    cst.forEach(function(s){ if(col.students[s.id]&&col.students[s.id].state==='submitted')submitted++; else allSub=false; });
+    var cur=curriculum.find(function(c){return c.key===k;});
+    var finishDate=''; if(cur&&cur.lessons)cur.lessons.forEach(function(l){ if(l.date&&l.date>finishDate)finishDate=l.date; });
+    if(finishDate){
+      if(allSub){ var cd=col.completedDate||today; var gap=Math.round((new Date(cd)-new Date(finishDate))/86400000); scores.push(gap<=0?10:gap<=3?5:gap<=7?0:-5); }
+      else { var since=Math.round((new Date(today)-new Date(finishDate))/86400000); if(since>30)scores.push(-10); }
+    }
+  });
+  if(totalStu===0) return null;
+  var rate=Math.round(submitted/totalStu*100);
+  var prog=scores.length?Math.round(scores.reduce(function(a,b){return a+b;},0)/scores.length):0;
+  return {rate:rate, prog:prog, score:Math.max(0,Math.min(100,rate+prog))};
+}
 // 과제앱 교재 진도율(강사별): 담당 반의 배정 차시 대비 완료 차시 비율의 평균
 function calcTextbookRate(teacherName){
   if(!hwData||!hwData.fields) return null;
@@ -5803,19 +5864,24 @@ function calcMyRank(myName) {
     var consultRate = tSt.length ? consultDone/tSt.length*100 : 0;
     var studentCount = tSt.length;
     var hwRate = (typeof calcHwRate==='function') ? calcHwRate(t.name, tSt) : 0;
+    var bookSc = (typeof calcBookScore==='function') ? calcBookScore(tSt) : null;
+    var diagR = (typeof calcDiagRate==='function') ? calcDiagRate(tSt) : null;
     var evalSc = (typeof getEvalScore==='function') ? (getEvalScore(t.name)||0) : 0;
-    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate, evalScore:evalSc};
+    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate, bookScore:bookSc?bookSc.score:null, bookRate:bookSc?bookSc.rate:null, bookProg:bookSc?bookSc.prog:null, diagRate:diagR, evalScore:evalSc};
   });
   var maxStu = Math.max.apply(null, scores.map(function(s){ return s.studentCount; }).concat([1]));
   scores.forEach(function(s) {
     var stuScore = s.studentCount / maxStu * 100;
-    var baseScore = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1) / 4.5;
+    var hasBook = s.bookScore !== null && s.bookScore !== undefined;
+    var hasDiag = s.diagRate !== null && s.diagRate !== undefined;
+    var wsum = 4.5 + (hasBook ? 1.5 : 0) + (hasDiag ? 1 : 0);
+    var baseScore = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1 + (hasBook ? s.bookScore*1.5 : 0) + (hasDiag ? s.diagRate*1 : 0)) / wsum;
     s.total = (baseScore*2 + (s.evalScore||0)*0.5) / 2.5;
   });
   scores.sort(function(a,b){ return b.total - a.total; });
   var myRank = scores.findIndex(function(s){ return s.name===myName; }) + 1;
   var myScore = scores.find(function(s){ return s.name===myName; });
-  return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0};
+  return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0, bookRate:myScore?myScore.bookRate:null, bookProg:myScore?myScore.bookProg:null, diagRate:myScore?myScore.diagRate:null};
 }
 
 function renderTeacherHome() {
@@ -5865,8 +5931,12 @@ function renderTeacherHome() {
        + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">💬 상담 ×1</span>'
        + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">👥 학생 ×1.5</span>'
        + '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">📝 과제 ×1</span>'
+       + (rankInfo.bookRate!=null ? '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">📦 교재 ×1.5</span>' : '')
+       + (rankInfo.diagRate!=null ? '<span style="font-size:10px;color:var(--t3);padding:2px 7px;background:var(--s2);border-radius:10px">🩺 진단지 ×1</span>' : '')
        + '</div>'
        + '<div style="font-size:10px;color:var(--t3);margin-top:6px;text-align:center">종합점수 ×2 + 관리자평가 ×0.5</div>'
+       + (rankInfo.bookRate!=null ? '<div style="font-size:10px;margin-top:6px;text-align:center;color:var(--te)">📦 교재 회수 '+rankInfo.bookRate+'% · 진도점수 '+(rankInfo.bookProg>0?'+':'')+rankInfo.bookProg+'%</div>' : '')
+       + (rankInfo.diagRate!=null ? '<div style="font-size:10px;margin-top:4px;text-align:center;color:var(--te)">🩺 진단지 기한 내 발송 '+rankInfo.diagRate+'%</div>' : '')
        + '</div>';
   }
 
@@ -6478,6 +6548,18 @@ function openAddEvent(){
     +'<label class="fl">날짜</label><input class="fi" id="ae-date" type="date" value="'+def+'">'
     +'<label class="fl">제목</label><input class="fi" id="ae-title" type="text" placeholder="예: 3월 모의고사, 강사 회의, 특강">'
     +'<label class="fl">메모 (선택)</label><textarea class="fi" id="ae-memo" rows="2" placeholder="자세한 내용"></textarea>'
+    +'<label style="display:flex;align-items:center;gap:8px;margin:10px 0 6px;cursor:pointer;font-size:13px"><input type="checkbox" id="ae-diag" onchange="toggleDiagFields()" style="width:17px;height:17px;accent-color:var(--acc)">🩺 진단지 일정 (과제앱에 자동 생성)</label>'
+    +'<label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;font-size:13px"><input type="checkbox" id="ae-holiday" style="width:17px;height:17px;accent-color:var(--acc)">🏫 학원 휴무일 (과제앱 출석/결석 계산 제외)</label>'
+    +'<div id="ae-diag-box" style="display:none;background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:10px;margin-bottom:10px">'
+      +'<select class="fi" id="ae-diag-type" onchange="toggleDiagFields()" style="margin-bottom:6px"><option value="월말평가">월말평가</option><option value="모의평가">시험대비 모의평가</option><option value="기타">기타 (제목을 진단지명으로)</option></select>'
+      +'<select class="fi" id="ae-diag-month" onchange="diagPreview()" style="margin-bottom:6px">'+[1,2,3,4,5,6,7,8,9,10,11,12].map(function(m){return '<option value="'+m+'">'+m+'월</option>';}).join('')+'</select>'
+      +'<div id="ae-diag-mock" style="display:none">'
+        +'<select class="fi" id="ae-diag-exam" onchange="diagPreview()" style="margin-bottom:6px"><option>1학기중간</option><option>1학기기말</option><option>2학기중간</option><option>2학기기말</option></select>'
+        +'<select class="fi" id="ae-diag-round" onchange="diagPreview()" style="margin-bottom:6px"><option>1차</option><option>2차</option><option>3차</option></select>'
+      +'</div>'
+      +'<div style="font-size:12px;color:var(--t2)">진단지명: <b id="ae-diag-name" style="color:var(--acc)">—</b></div>'
+      +'<div style="font-size:11px;color:var(--t3);margin-top:4px">＊ 일정 날짜가 발송 기한이 됩니다. 저장 시 과제앱 진단지 탭에 자동 생성돼요.</div>'
+    +'</div>'
     +'<label class="fl">기한 담당 강사 (여러 명 선택 가능 · 선택하면 기한 체크 일정이 됩니다)</label>'
     +'<div id="ae-teachers" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">'
     +((DB.cfg&&DB.cfg.teachers)||[]).map(function(t){return '<span class="ae-tchip" data-name="'+dEsc(t.name)+'" data-on="0" onclick="aeTglT(this)" style="padding:7px 13px;border-radius:16px;font-size:12.5px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">'+dEsc(t.name)+'</span>';}).join('')
@@ -6493,20 +6575,61 @@ function saveEvent(){
   var title=(document.getElementById('ae-title').value||'').trim();
   var memo=(document.getElementById('ae-memo').value||'').trim();
   var notify=document.getElementById('ae-notify').checked;
+  var isDiag=(document.getElementById('ae-diag')||{}).checked;
+  var isHoliday=(document.getElementById('ae-holiday')||{}).checked;
+  var diagName='';
+  if(isDiag){ diagName=diagCompose(); if(!diagName){ toast('진단지명을 선택/입력하세요','var(--rd)'); return; } if(!title) title=diagName; }
+  if(isHoliday && !title){ title='🏫 학원 휴무일'; }
   if(!date){ toast('날짜를 선택하세요','var(--rd)'); return; }
   if(!title){ toast('제목을 입력하세요','var(--rd)'); return; }
   if(!DB.cfg) DB.cfg={}; if(!Array.isArray(DB.cfg.events)) DB.cfg.events=[];
   var ts=Date.now();
   var _dlTs=Array.prototype.map.call(document.querySelectorAll('#ae-teachers .ae-tchip[data-on="1"]'),function(el){return el.getAttribute('data-name');});
-  var _ev={id:'e'+ts, date:date, title:title, memo:memo, by:(ME?ME.name:''), ts:ts, notify:notify};
+  var _ev={id:'e'+ts, date:date, title:title, memo:memo, by:(ME?ME.name:''), ts:ts, notify:notify, diag:isDiag?diagName:undefined, holiday:isHoliday||undefined};
   if(_dlTs.length) _ev.dl={teachers:_dlTs, status:{}};
   DB.cfg.events.push(_ev);
   saveAll();
+  if(isDiag){ createHwDiagnostic(diagName, date, function(ok){ toast(ok?('과제앱에 진단지 "'+diagName+'" 생성됨'):'과제앱 진단지 생성 실패 — 다시 시도하세요', ok?'var(--g)':'var(--rd)'); }); }
+  if(isHoliday){ createHwHoliday(date, true, function(ok){ toast(ok?('과제앱에 휴무일 등록됨 ('+date+') — 출석 계산 제외'):'과제앱 휴무일 등록 실패 — 다시 시도하세요', ok?'var(--g)':'var(--rd)'); }); }
   try{ localStorage.setItem('ac_lastEventSeen', String(ts)); }catch(e){} // 추가한 본인은 알림 제외
   var m=document.getElementById('ov-addevent'); if(m) m.remove();
   calSel=date; renderCal();
   if(notify && typeof showDirectNotif==='function' && typeof notifOn==='function' && notifOn('schedule')) showDirectNotif('📅 새 일정: '+title, date);
   toast('일정이 추가됐어요'+(notify?' · 강사 알림 예약됨':''),'var(--g)');
+}
+// ── 진단지 일정 → 과제앱 진단지 자동 생성 (안전: diagnostics.<id>만 추가) ──
+// ── 학원 휴무일 → 과제앱 holidays 기록 (안전: holidays.<date>만) ──
+function createHwHoliday(date, on, cb){
+  var body={fields:{holidays:{mapValue:{fields:{}}}}};
+  body.fields.holidays.mapValue.fields[date]= on ? {booleanValue:true} : {nullValue:null};
+  var fp='holidays.`'+date+'`';
+  fetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY+'&updateMask.fieldPaths='+encodeURIComponent(fp), {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  }).then(function(r){return r.json();}).then(function(d){ if(cb) cb(!!d.name, d); }).catch(function(e){ if(cb) cb(false, e); });
+}
+function createHwDiagnostic(name, dueDate, cb){
+  var did='diag_'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  var diagObj={id:did, name:name, type:'', dueDate:dueDate, createdAt:Date.now(), students:{}};
+  var body={fields:{diagnostics:{mapValue:{fields:{}}}}};
+  body.fields.diagnostics.mapValue.fields[did]=_FS._toFS(diagObj);
+  fetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY+'&updateMask.fieldPaths=diagnostics.'+did, {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  }).then(function(r){return r.json();}).then(function(d){ if(cb) cb(!!d.name, d); }).catch(function(e){ if(cb) cb(false, e); });
+}
+function diagCompose(){
+  var t=(document.getElementById('ae-diag-type')||{}).value||'월말평가';
+  if(t==='월말평가'){ var m=(document.getElementById('ae-diag-month')||{}).value||''; return m?(m+'월 월말평가'):''; }
+  if(t==='모의평가'){ var e=(document.getElementById('ae-diag-exam')||{}).value||''; var r=(document.getElementById('ae-diag-round')||{}).value||''; return (e&&r)?(e+' 대비 모의평가 '+r):''; }
+  return (document.getElementById('ae-title')||{}).value||'';
+}
+function diagPreview(){ var el=document.getElementById('ae-diag-name'); if(el) el.textContent=diagCompose()||'—'; }
+function toggleDiagFields(){
+  var on=(document.getElementById('ae-diag')||{}).checked;
+  var box=document.getElementById('ae-diag-box'); if(box) box.style.display=on?'block':'none';
+  var t=(document.getElementById('ae-diag-type')||{}).value||'월말평가';
+  var mon=document.getElementById('ae-diag-month'); if(mon) mon.style.display=(t==='월말평가')?'block':'none';
+  var mock=document.getElementById('ae-diag-mock'); if(mock) mock.style.display=(t==='모의평가')?'block':'none';
+  diagPreview();
 }
 function delEvent(id){
   if(!isAdminLevel()) return;
