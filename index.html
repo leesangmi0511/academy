@@ -2083,6 +2083,46 @@ function mtTypeLabel(m){
   return t;
 }
 function mtSetFilter(v){ _mtFilter=v; _renderMeetList(false); }
+// 회의록의 기한 목록 (저장된 dls 또는 본문에서 추출)
+function mtDlsOf(m){
+  if(Array.isArray(m.dls)) return m.dls;
+  return mtExtractDeadlines((m.raw||'')+'\n'+(m.summary||'')).map(function(f){ return {date:f.date, text:f.text, status:''}; });
+}
+// 관리자별 회의 기한 준수 통계 → 관리자 점수 보정
+function calcAdminMeetStats(name){
+  var ms=(_meetings||[]).filter(function(m){ return Array.isArray(m.who)&&m.who.indexOf(name)>=0; });
+  if(!ms.length) return null;
+  var total=0, checked=0, ok=0, noDl=0;
+  ms.forEach(function(m){
+    var dls=mtDlsOf(m);
+    if(!dls.length){ noDl++; return; }
+    total+=dls.length;
+    dls.forEach(function(d){ if(d.status==='ok'){checked++;ok++;} else if(d.status==='late'){checked++;} });
+  });
+  var rate = checked ? Math.round(ok/checked*100) : null;
+  var adj = 0;
+  if(rate!==null) adj += rate>=90?10 : rate>=70?5 : rate>=50?0 : rate>=30?-5 : -10;
+  adj -= Math.min(20, noDl*5); // 기한 없는 회의록당 -5점 (최대 -20)
+  return {meetCount:ms.length, dlTotal:total, checked:checked, ok:ok, rate:rate, noDl:noDl, adj:adj};
+}
+function mtDlRow(m, idx){
+  var d=(m.dls||[])[idx]; if(!d) return '';
+  var s=d.status||'';
+  function b(st,lab,col){ var on=s===st; return '<button onclick="mtDlSet(\''+m.id+'\','+idx+',\''+st+'\')" style="font-size:11px;padding:4px 10px;border-radius:12px;cursor:pointer;border:1px solid '+(on?col:'var(--s3)')+';background:'+(on?col:'var(--s1)')+';color:'+(on?'#fff':'var(--t2)')+';font-weight:'+(on?'700':'500')+'">'+lab+'</button>'; }
+  return '<div id="mtdl-'+idx+'" style="display:flex;align-items:center;gap:6px;padding:7px 0;border-bottom:1px solid var(--s2)">'
+    +'<div style="flex:1;min-width:0"><div style="font-size:11.5px;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(d.text)+'</div>'
+    +'<div style="font-size:10px;color:var(--t3)">'+dEsc(d.date)+'</div></div>'
+    +b('ok','지킴','var(--g)')+b('late','어김','var(--rd)')+'</div>';
+}
+function mtDlSet(mid, idx, st){
+  if(!isAdminLevel()) return;
+  var m=(_meetings||[]).find(function(x){return x.id===mid;}); if(!m) return;
+  if(!Array.isArray(m.dls)) m.dls=mtDlsOf(m);
+  if(!m.dls[idx]) return;
+  m.dls[idx].status = (m.dls[idx].status===st)?'':st;
+  _FS.set('academy/meetings',{list:_meetings}).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
+  var row=document.getElementById('mtdl-'+idx); if(row){ row.outerHTML=mtDlRow(m, idx); }
+}
 function mtTypeChg(){
   var t=(document.getElementById('mt-type')||{}).value||'';
   var d=document.getElementById('mt-levels');
@@ -2128,6 +2168,18 @@ function _renderMeetList(loading){
       +MT_TYPES.map(function(t){return '<option value="'+t+'"'+(_mtFilter===t?' selected':'')+'>'+t+(t==='교무회의록'?' (초·중·고 선택)':'')+'</option>';}).join('')
     +'</select>'
     +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);margin-bottom:12px;max-height:320px;overflow:auto">'+body+'</div>'
+    +(loading?'':(function(){
+        var admins=(DB.cfg&&DB.cfg.admins)||[];
+        var rows=admins.map(function(a){
+          var s=calcAdminMeetStats(a.name); if(!s) return '';
+          return '<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px solid var(--s2);font-size:11.5px;flex-wrap:wrap">'
+            +'<span style="font-weight:700;color:var(--te)">'+dEsc(a.name)+'</span>'
+            +'<span style="color:var(--t2)">'+(s.rate!==null?('준수율 '+s.rate+'% ('+s.ok+'/'+s.checked+')'):'기한 체크 전')+(s.noDl?' · 기한없는 회의 '+s.noDl+'건':'')+' · 보정 <b style="color:'+(s.adj>=0?'var(--g)':'var(--rd)')+'">'+(s.adj>0?'+':'')+s.adj+'점</b></span></div>';
+        }).join('');
+        return rows?('<div style="font-size:12px;font-weight:700;margin:2px 0 4px">📊 관리자 기한 준수율 (관리자 점수에 반영)</div>'
+          +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:12px">'+rows+'</div>'
+          +'<div style="font-size:10px;color:var(--t3);margin:-6px 0 10px;line-height:1.5">＊ 준수율 90%↑ +10 · 70%↑ +5 · 50%↓ -5 · 30%↓ -10 / 기한 없는 회의록 1건당 -5점 (최대 -20)</div>'):'';
+      })())
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-meetings\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
@@ -2161,6 +2213,13 @@ function mtOpen(id){
     +'<button class="btn" id="mt-ai-btn" style="margin:4px 0 10px;background:var(--pu)" onclick="aiSummarizeMeeting()">🤖 AI 요약·편집</button>'
     +'<label class="fl">요약·편집본 (AI 결과 · 직접 수정 가능)</label>'
     +'<textarea class="fi" id="mt-summary" rows="7" placeholder="AI 요약·편집 버튼을 누르면 여기에 정리된 회의록이 들어옵니다">'+dEsc(m.summary||'')+'</textarea>'
+    +(id?(function(){
+        if(!Array.isArray(m.dls)) m.dls=mtDlsOf(m);
+        var inner = m.dls.length ? m.dls.map(function(_,i){ return mtDlRow(m,i); }).join('')
+          : '<div style="font-size:11.5px;color:var(--rd);padding:8px 0">⚠ 이 회의록에서 추출된 기한이 없어요 — 참석 관리자 점수가 하향(-5점) 반영됩니다</div>';
+        return '<label class="fl">⏱ 기한 체크 (지킴/어김 → 관리자 점수 반영)</label>'
+          +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:10px">'+inner+'</div>';
+      })():'')
     +'<button class="btn" onclick="mtSave()">저장</button>'
     +(id?'<button class="btn ghost" style="color:var(--rd)" onclick="mtDelete(\''+id+'\')">삭제</button>':'')
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-mtedit\').remove()">닫기</button>'
@@ -2180,12 +2239,17 @@ function mtSave(){
   var who=Array.prototype.map.call(document.querySelectorAll('#mt-who .mt-whochip[data-on="1"]'),function(el){return el.getAttribute('data-nm');});
   if(!Array.isArray(_meetings)) _meetings=[];
   var i=_meetings.findIndex(function(x){return x.id===id;});
-  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, raw:raw, summary:summary, by:(ME?ME.name:''), ts:Date.now()};
+  // 기한 추출 + 기존 체크 상태 유지
+  var dlsNew=mtExtractDeadlines(raw+'\n'+summary).map(function(f){ return {date:f.date, text:f.text, status:''}; });
+  var dlsOld=(i>=0 && Array.isArray(_meetings[i].dls))?_meetings[i].dls:[];
+  dlsNew.forEach(function(d){ var o=dlsOld.find(function(x){return x.date===d.date&&x.text===d.text;}); if(o&&o.status) d.status=o.status; });
+  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, dls:dlsNew, raw:raw, summary:summary, by:(ME?ME.name:''), ts:Date.now()};
   if(i>=0) _meetings[i]=obj; else _meetings.push(obj);
   _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('회의록 저장됨 ✓','var(--g)'); }).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   try{ logChange('회의록 저장', (title||date)+(mtTypeLabel(obj)?' ['+mtTypeLabel(obj)+']':'')); }catch(e){}
   // 회의 내용 속 기한 날짜 자동 인식 → 일정 등록
   try{ mtAutoSchedule(raw+'\n'+summary, title||date); }catch(e){}
+  if(!dlsNew.length && who.length){ setTimeout(function(){ toast('⚠ 기한이 추출되지 않았어요 — 참석 관리자 점수에 하향 반영됩니다','var(--am)'); }, 900); }
   var m=document.getElementById('ov-mtedit'); if(m) m.remove();
   _renderMeetList(false);
 }
@@ -4984,13 +5048,24 @@ function openAdminEval() {
     toast('등록된 관리자가 없어요. 먼저 [관리자 명단]에서 추가하세요.', 'var(--rd)');
     return;
   }
+  // 회의록 데이터가 아직 없으면 불러와서 기한보정 반영
+  if(typeof _meetings==='undefined' || !_meetings || !_meetings.length){
+    _FS.get('academy/meetings').then(function(doc){
+      try{ if(doc&&doc.fields&&doc.fields.list){ var arr=_FS._fromFS(doc.fields.list)||[]; if(arr.length){ _meetings=arr; var ex=document.getElementById('ov-admineval-menu'); if(ex){ ex.remove(); openAdminEval(); } } } }catch(e){}
+    }).catch(function(){});
+  }
   // 관리자 선택 시트 생성
   var h = '<div class="ov" id="ov-admineval-menu" onclick="ovClose(event,this)" style="display:flex">'
         + '<div class="modal"><div class="mh"></div><div class="mt2">👔 관리자 평가 선택</div>'
         + '<div style="font-size:12px;color:var(--t2);margin-bottom:12px;text-align:center">평가할 관리자를 선택하세요</div>';
   admins.forEach(function(a){
-    var score = (a.adminEvalTotal !== undefined) ? ' · '+a.adminEvalTotal+'점' : '';
+    var score = (a.adminEvalTotal !== undefined) ? ' · 평가 '+a.adminEvalTotal+'점' : '';
     var date = a.adminEvalDate ? ' ('+a.adminEvalDate+')' : '';
+    var mst = (typeof calcAdminMeetStats==='function') ? calcAdminMeetStats(a.name) : null;
+    if(mst && mst.adj!==0){
+      score += ' · 회의기한 '+(mst.adj>0?'+':'')+mst.adj;
+      if(a.adminEvalTotal!==undefined) score += ' → 종합 '+Math.max(0,Math.min(100,a.adminEvalTotal+mst.adj))+'점';
+    }
     h += '<button onclick="document.getElementById(\'ov-admineval-menu\').remove();openAdminEvalFor(\''+a.name+'\')" '
        + 'style="width:100%;text-align:left;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
        + '<span style="font-size:14px;font-weight:600">'+a.name+'</span>'
