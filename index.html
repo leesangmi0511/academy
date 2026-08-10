@@ -6223,15 +6223,15 @@ function renderConsultList() {
 function stuCard(s, idx, showT) {
   var st=cSt(s), c=COLORS[idx%COLORS.length], bg=AVBG[idx%AVBG.length];
   var last=s.consultHistory&&s.consultHistory.length?s.consultHistory[s.consultHistory.length-1]:null;
-  var tags='<span class="tag" style="background:'+stBg(st.lv)+';color:'+stC(st.lv)+'">'+stI(st.lv)+' '+st.lb+'</span>';
-  if(last) tags+='<span class="tag" style="background:var(--s2);color:var(--t2)">'+(MOOD_E[last.mood]||'')+' '+last.date.slice(5).replace('-','/')+'</span>';
-  if(s.nextConsultDate) tags+='<span class="tag" style="background:var(--acc-l);color:var(--acc)">다음 '+s.nextConsultDate.slice(5).replace('-','/')+'</span>';
-  return '<div class="ic2" onclick="showStuDetail('+idx+')">'
-       + '<div class="av" style="width:44px;height:44px;background:'+bg+';color:'+c+';font-size:17px">'+s.name.slice(0,1)+'</div>'
-       + '<div class="ii"><div class="in">'+s.name+'</div>'
-       + '<div class="im">'+(s.class||'')+(showT&&s.teacher?' · '+s.teacher:'')+'</div>'
-       + '<div class="itags">'+tags+'</div></div>'
-       + '<div style="width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:'+stBg(st.lv)+';color:'+stC(st.lv)+';font-size:14px;flex-shrink:0">'+stI(st.lv)+'</div>'
+  var tags='<span class="tag" style="background:'+stBg(st.lv)+';color:'+stC(st.lv)+';font-size:10px;padding:2px 6px">'+stI(st.lv)+' '+st.lb+'</span>';
+  if(last) tags+='<span class="tag" style="background:var(--s2);color:var(--t2);font-size:10px;padding:2px 6px">'+(MOOD_E[last.mood]||'')+' '+last.date.slice(5).replace('-','/')+'</span>';
+  if(s.nextConsultDate) tags+='<span class="tag" style="background:var(--acc-l);color:var(--acc);font-size:10px;padding:2px 6px">다음 '+s.nextConsultDate.slice(5).replace('-','/')+'</span>';
+  return '<div class="ic2" onclick="showStuDetail('+idx+')" style="padding:9px 11px;gap:9px">'
+       + '<div class="av" style="width:34px;height:34px;background:'+bg+';color:'+c+';font-size:14px;border-radius:9px">'+s.name.slice(0,1)+'</div>'
+       + '<div class="ii"><div class="in" style="font-size:12.5px">'+s.name+'</div>'
+       + '<div class="im" style="font-size:11px;white-space:normal;overflow:visible;text-overflow:clip;line-height:1.4">'+(s.class||'')+(showT&&s.teacher?' · '+s.teacher:'')+'</div>'
+       + '<div class="itags" style="margin-top:4px;gap:4px">'+tags+'</div></div>'
+       + '<div style="width:26px;height:26px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:'+stBg(st.lv)+';color:'+stC(st.lv)+';font-size:12px;flex-shrink:0">'+stI(st.lv)+'</div>'
        + '</div>';
 }
 
