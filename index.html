@@ -2113,9 +2113,11 @@ function _renderMeetList(loading){
     if(_mtFilter) arr=arr.filter(function(m){ return (m.mtype||'')===_mtFilter; });
     body = arr.length ? arr.map(function(m){
       var tl=mtTypeLabel(m);
+      var whoTxt='';
+      if(Array.isArray(m.who)&&m.who.length){ whoTxt = m.who.length<=3 ? m.who.join('·') : (m.who.slice(0,2).join('·')+' 외 '+(m.who.length-2)+'명'); }
       return '<div onclick="mtOpen(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
         +'<div style="font-size:12.5px;font-weight:700;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(m.title||'(제목 없음)')+'</div>'
-        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(m.summary?' · 요약 있음':'')+' · '+dEsc(m.by||'')+'</div></div>';
+        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+' · '+dEsc(m.by||'')+'</div></div>';
     }).join('') : '<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">'+(_mtFilter?'이 종류의 회의록이 없어요':'저장된 회의록이 없어요')+'</div>';
   }
   var h='<div class="ov" id="ov-meetings" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
@@ -2146,6 +2148,14 @@ function mtOpen(id){
     +'<div id="mt-levels" style="display:'+((m.mtype||'')==='교무회의록'?'flex':'none')+';flex-wrap:wrap;gap:6px;margin:2px 0 12px">'
       +MT_LEVELS.map(function(lv){ var on=Array.isArray(m.levels)&&m.levels.indexOf(lv)>=0; return '<span class="mt-lvchip" data-lv="'+lv+'" data-on="'+(on?'1':'0')+'" onclick="mtLvTgl(this)" style="padding:7px 14px;border-radius:16px;font-size:12.5px;cursor:pointer;'+(on?'background:var(--pu);color:#fff;border:1px solid var(--pu);font-weight:700':'background:var(--s2);color:var(--t2);border:1px solid var(--s3)')+'">'+lv+'</span>'; }).join('')
     +'</div>'
+    +'<label class="fl">회의 주체 (참석 관리자 · 여러 명 선택)</label>'
+    +'<div id="mt-who" style="display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 12px">'
+      +(function(){
+        var admList=((DB.cfg&&DB.cfg.admins)?DB.cfg.admins:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+        if(!admList.length) return '<span style="font-size:11.5px;color:var(--t3)">등록된 관리자가 없어요 · 관리자 명단에서 먼저 등록하세요</span>';
+        return admList.map(function(nm){ var on=Array.isArray(m.who)&&m.who.indexOf(nm)>=0; return '<span class="mt-whochip" data-nm="'+dEsc(nm)+'" data-on="'+(on?'1':'0')+'" onclick="mtLvTgl(this)" style="padding:7px 14px;border-radius:16px;font-size:12.5px;cursor:pointer;'+(on?'background:var(--pu);color:#fff;border:1px solid var(--pu);font-weight:700':'background:var(--s2);color:var(--t2);border:1px solid var(--s3)')+'">'+dEsc(nm)+'</span>'; }).join('');
+      })()
+    +'</div>'
     +'<label class="fl">회의 내용 (한글에서 복사해 붙여넣기)</label>'
     +'<textarea class="fi" id="mt-raw" rows="6" placeholder="한글(HWP) 등에서 회의 내용을 긁어서 여기에 붙여넣으세요">'+dEsc(m.raw||'')+'</textarea>'
     +'<button class="btn" id="mt-ai-btn" style="margin:4px 0 10px;background:var(--pu)" onclick="aiSummarizeMeeting()">🤖 AI 요약·편집</button>'
@@ -2167,9 +2177,10 @@ function mtSave(){
   var mtype=(document.getElementById('mt-type')||{}).value||'';
   var levels=Array.prototype.map.call(document.querySelectorAll('#mt-levels .mt-lvchip[data-on="1"]'),function(el){return el.getAttribute('data-lv');});
   if(mtype==='교무회의록' && !levels.length){ toast('교무회의록은 초등·중등·고등 중 하나 이상 선택하세요','var(--rd)'); return; }
+  var who=Array.prototype.map.call(document.querySelectorAll('#mt-who .mt-whochip[data-on="1"]'),function(el){return el.getAttribute('data-nm');});
   if(!Array.isArray(_meetings)) _meetings=[];
   var i=_meetings.findIndex(function(x){return x.id===id;});
-  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), raw:raw, summary:summary, by:(ME?ME.name:''), ts:Date.now()};
+  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, raw:raw, summary:summary, by:(ME?ME.name:''), ts:Date.now()};
   if(i>=0) _meetings[i]=obj; else _meetings.push(obj);
   _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('회의록 저장됨 ✓','var(--g)'); }).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   try{ logChange('회의록 저장', (title||date)+(mtTypeLabel(obj)?' ['+mtTypeLabel(obj)+']':'')); }catch(e){}
