@@ -6033,8 +6033,8 @@ function renderTeacherHome() {
 
 
 
-  // 정보 보호 안내 (접힘 · 펼치면 전문)
-  h += '<div onclick="togglePledgeFull(\'plg-full-t\',\'plg-arrow-t\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:12px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">🔒 정보 보호 안내 · CCTV 안내</span><span id="plg-arrow-t" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
+  // 관리에 관한 약정 (접힘 · 펼치면 전문 · 관리자와 동일 내용)
+  h += '<div onclick="togglePledgeFull(\'plg-full-t\',\'plg-arrow-t\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:12px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내</span><span id="plg-arrow-t" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-t" style="display:none">'+pledgeBoxHTML('teacher')+'</div>';
 
   // 통계
@@ -7004,14 +7004,9 @@ function _doLoginCore() {
   return true;
 }
 // ═══ 약정 주기 확인 (주 1회 · 관리자/행정팀/강사) ═══
-var PLEDGE_VER='v5';
+var PLEDGE_VER='v6';
 function pledgeClauses(role){
-  if(role==='teacher') return [
-    '본 앱의 학생·학부모 정보(이름, 연락처, 상담·성적 기록 등)는 개인정보보호법의 보호를 받는 개인정보로, 업무 목적 외 이용 및 외부 제공을 금합니다.',
-    '학원의 수강생 명단, 통계, 교재 및 운영 자료는 학원의 영업비밀에 해당하며, 무단 유출·복제·개인적 이용을 금합니다.',
-    '본 앱의 내용·구성·기능 및 화면 등 일체는 학원의 자산으로, 무단 반출·복제·촬영·모방하여 외부에 제공하는 것을 금합니다.',
-    '위반 시 관련 법령(개인정보보호법, 부정경쟁방지법 등)에 따라 민·형사상 책임을 질 수 있으며, 계약 해지(자격 박탈)의 사유가 될 수 있습니다.'
-  ];
+  // 관리자·행정팀·강사 공통 약정 (동일 내용)
   return [
     '학원의 자산, 통계를 외부에 유출하거나 개인적인 일에 이용하지 않습니다.',
     '학원 앱의 내용·구성·기능 등 일체는 학원의 자산으로, 무단 반출·복제·모방하여 외부에 제공하지 않습니다.',
@@ -7043,7 +7038,7 @@ function pledgeBoxHTML(role){
 // 약정 전문 열람 (읽기 전용)
 function viewPledge(role){
   var ex=document.getElementById('ov-plgview'); if(ex) ex.remove();
-  var title = role==='teacher' ? '🔒 정보 보호 안내' : '📜 관리에 관한 약정';
+  var title = '📜 관리에 관한 약정';
   var h='<div class="ov" id="ov-plgview" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">'+title+'</div>'
     +pledgeBoxHTML(role)
@@ -7093,7 +7088,7 @@ setInterval(function(){ try{ if(ME) pledgeCheckDue(); }catch(e){} }, 60000);
 function showPledgeModal(){
   var ex=document.getElementById('ov-pledge'); if(ex) ex.remove();
   var cls=pledgeClauses(ME.role);
-  var title = ME.role==='teacher' ? '🔒 정보 보호 약정 확인' : '📜 관리 약정 확인';
+  var title = '📜 관리 약정 확인';
   var h='<div class="ov" id="ov-pledge" style="display:flex;z-index:9999"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">'+title+'</div>'
     +'<div style="font-size:12px;color:var(--t2);margin-bottom:10px;text-align:center">월 1회 · 매월 첫 근무일 오후 3시 이후, 확인해야 앱을 계속 사용할 수 있어요 ('+dEsc(ME.name)+')</div>'
