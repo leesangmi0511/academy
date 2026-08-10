@@ -6033,8 +6033,9 @@ function renderTeacherHome() {
 
 
 
-  // 정보 보호 안내 (전문은 버튼으로 열람)
-  h += '<div style="display:flex;gap:8px;margin-bottom:12px"><button onclick="viewPledge(\'teacher\')" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔒 정보 보호 안내 · CCTV 안내</button></div>';
+  // 정보 보호 안내 (전문 표시)
+  h += '<div style="font-size:12.5px;font-weight:800;color:var(--am);margin:4px 0 6px">🔒 정보 보호 안내</div>'
+     + pledgeBoxHTML('teacher');
 
   // 통계
   h += '<div class="sg3">'
