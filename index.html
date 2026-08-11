@@ -6301,22 +6301,31 @@ function renderProgress() {
         if (!subjStu.length) {
           h += '<div style="font-size:12px;color:var(--t2);text-align:center;padding:6px 0">학생이 없어요. 학생 등록 시 "반"을 과목명과 동일하게 입력해 주세요.</div>';
         } else {
-          h += '<div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:8px">📚 교재 제출 현황</div>';
+          // 교재 진도가 모두 끝났을 때만 제출 체크 활성화
+          var _sched = hwData ? hwLessonSchedule(s.name) : null;
+          var tbActive = (_sched && _sched.length) ? _sched.every(function(l){ return l.done; }) : (calcRate(s) >= 100);
+          h += '<div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:8px">📚 교재 제출 현황'
+             + (tbActive ? ' <span style="color:var(--g);font-weight:700">— 진도 완료 · 체크 가능</span>'
+                         : ' <span style="color:var(--am);font-weight:700">— 교재 진도가 끝나면 활성화됩니다</span>')
+             + '</div>';
           subjStu.forEach(function(st) {
             var si = gStI(st);
             var tbInfo = (st.textbookStatus && st.textbookStatus[gi]) ? st.textbookStatus[gi] : {};
             var submitted = tbInfo.submitted || false;
             var cond = tbInfo.condition || '';
+            var dis = tbActive ? '' : 'opacity:.35;pointer-events:auto;';
+            var ckCond = function(v){ return tbActive ? 'setTbCondition('+si+','+gi+',\''+v+'\')' : 'toast(\'교재 진도가 모두 끝나면 체크할 수 있어요\',\'var(--am)\')'; };
+            var ckSub = tbActive ? 'toggleTbSubmit('+si+','+gi+')' : 'toast(\'교재 진도가 모두 끝나면 체크할 수 있어요\',\'var(--am)\')';
             h += '<div class="stu-prog-row">'
                + '<div style="flex:1;min-width:0">'
                  + '<div style="font-size:13px;font-weight:600">'+st.name+'</div>'
                  + (submitted && tbInfo.submittedDate ? '<div style="font-size:10px;color:var(--t3)">제출일: '+tbInfo.submittedDate+'</div>' : '')
                + '</div>'
                + '<div style="display:flex;align-items:center;gap:5px;flex-shrink:0">'
-               + '<span class="tb-status '+(cond==='상'?'tb-high':'tb-none')+'" onclick="setTbCondition('+si+','+gi+',\'상\')">상</span>'
-               + '<span class="tb-status '+(cond==='중'?'tb-mid':'tb-none')+'" onclick="setTbCondition('+si+','+gi+',\'중\')">중</span>'
-               + '<span class="tb-status '+(cond==='하'?'tb-low':'tb-none')+'" onclick="setTbCondition('+si+','+gi+',\'하\')">하</span>'
-               + '<span class="tb-submit '+(submitted?'tb-done':'tb-notdone')+'" onclick="toggleTbSubmit('+si+','+gi+')">'+(submitted?'✓ 제출':'✗ 미제출')+'</span>'
+               + '<span class="tb-status '+(cond==='상'?'tb-high':'tb-none')+'" style="'+dis+'" onclick="'+ckCond('상')+'">상</span>'
+               + '<span class="tb-status '+(cond==='중'?'tb-mid':'tb-none')+'" style="'+dis+'" onclick="'+ckCond('중')+'">중</span>'
+               + '<span class="tb-status '+(cond==='하'?'tb-low':'tb-none')+'" style="'+dis+'" onclick="'+ckCond('하')+'">하</span>'
+               + '<span class="tb-submit '+(submitted?'tb-done':'tb-notdone')+'" style="'+dis+'" onclick="'+ckSub+'">'+(submitted?'✓ 제출':'✗ 미제출')+'</span>'
                + '</div>'
                + '</div>';
           });
