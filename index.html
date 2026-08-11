@@ -7030,6 +7030,7 @@ function _doLoginCore() {
     localStorage.removeItem('ac_autologin');
   }
   document.getElementById('login').style.display='none';
+  var _apX=document.getElementById('app'); if(_apX) _apX.style.display='';
   if(isAdminLevel()) document.getElementById('btn-reset').style.display='inline';
   updateTabVisibility();
   recordAccess();
@@ -7255,6 +7256,7 @@ function tryAutoLogin() {
   }
   // 로그인 성공
   document.getElementById('login').style.display='none';
+  var _apX=document.getElementById('app'); if(_apX) _apX.style.display='';
   if(isAdminLevel()) document.getElementById('btn-reset').style.display='inline';
   updateTabVisibility();
   recordAccess();
@@ -7275,6 +7277,7 @@ function _resetIdle(){
 function logout() {
   ME=null;
   localStorage.removeItem('ac_autologin');  // 자동 로그인 해제
+  var _ap=document.getElementById('app'); if(_ap) _ap.style.display='none';  // 넓은 화면에서 뒤 내용 숨김
   document.getElementById('login').style.display='flex';
   document.getElementById('li-opw').value='';
   document.getElementById('li-aid').value='';
@@ -7885,7 +7888,7 @@ _loadFirebase().then(function() {
         });
       }).catch(function(){});
     // 데이터 로드 후 자동 로그인 시도
-    tryAutoLogin();
+    if(!tryAutoLogin()){ var _ap0=document.getElementById('app'); if(_ap0) _ap0.style.display='none'; }
     // 자동 백업: 로드 15초 후(유형은행 로드 대기) 1회 + 1시간마다 확인(하루 1회만 저장됨)
     setTimeout(function(){ autoBackupTick(); }, 15000);
     if(!window._autoBkTimer) window._autoBkTimer = setInterval(function(){ autoBackupTick(); }, 3600000);
@@ -7913,7 +7916,7 @@ _loadFirebase().then(function() {
   }).catch(function(e) {
     console.warn('FB load failed:', e);
     applyDB(null);
-    tryAutoLogin();  // 오프라인에서도 자동 로그인
+    if(!tryAutoLogin()){ var _ap0=document.getElementById('app'); if(_ap0) _ap0.style.display='none'; }  // 오프라인에서도 자동 로그인
     setTimeout(function(){ autoBackupTick(); }, 15000);
     if(!window._autoBkTimer) window._autoBkTimer = setInterval(function(){ autoBackupTick(); }, 3600000);
   });
