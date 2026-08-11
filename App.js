@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { db } from "./firebase";
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, onSnapshot, arrayUnion } from "firebase/firestore";
 
 const cn = (...c) => c.filter(Boolean).join(" ");
 const td = () => new Date().toISOString().split("T")[0];
@@ -77,9 +77,463 @@ function buildAssignments(textbooks, curriculum) {
 }
 
 function getPct(prog, sid, aid, items) {
-  var d = (prog[sid] && prog[sid][aid]) ? prog[sid][aid] : [];
-  return items.length === 0 ? 0 : Math.round((d.length / items.length) * 100);
+  var d = (prog[sid] && Array.isArray(prog[sid][aid])) ? prog[sid][aid] : [];
+  if (!items || items.length === 0) return d.indexOf("__done__") >= 0 ? 100 : 0;
+  var ids = {};
+  items.forEach(function(x) { ids[x.id] = 1; });
+  var cnt = 0;
+  d.forEach(function(id) { if (ids[id]) cnt++; });
+  if (cnt > items.length) cnt = items.length;
+  return Math.round((cnt / items.length) * 100);
 }
+
+// 반명 정렬: E → M → H 순, 같은 그룹 내 숫자 오름차순
+function classCmp(a, b) {
+  var order = { E: 0, M: 1, H: 2 };
+  var pa = String(a), pb = String(b);
+  var fa = (pa.match(/[A-Za-z]/) || [""])[0].toUpperCase();
+  var fb = (pb.match(/[A-Za-z]/) || [""])[0].toUpperCase();
+  var oa = order[fa] === undefined ? 99 : order[fa];
+  var ob = order[fb] === undefined ? 99 : order[fb];
+  if (oa !== ob) return oa - ob;
+  var na = parseInt((pa.match(/\d+/) || ["-1"])[0], 10);
+  var nb = parseInt((pb.match(/\d+/) || ["-1"])[0], 10);
+  if (na !== nb) return na - nb;
+  return pa.localeCompare(pb);
+}
+function sortClasses(arr) { return arr.slice().sort(classCmp); }
+
+// ── 출석 주의 알림: 연속 지각 3회 또는 당월 결석 2회 이상 ──
+var _DOWMAP = { "일": 0, "월": 1, "화": 2, "수": 3, "목": 4, "금": 5, "토": 6 };
+function classScheduleDows(classId) {
+  var m = String(classId || "").match(/\(([월화수목금토일]+)\)/);
+  if (!m) return null;
+  var days = [];
+  m[1].split("").forEach(function(c) { if (_DOWMAP[c] !== undefined && days.indexOf(_DOWMAP[c]) < 0) days.push(_DOWMAP[c]); });
+  return days.length ? days : null;
+}
+function _readLateSettings() {
+  try { var s = localStorage.getItem("rt_lateSettings"); return s ? JSON.parse(s) : { classes: {}, students: {} }; } catch (e) { return { classes: {}, students: {} }; }
+}
+function _lateTimeFor(ls, student, dow) {
+  var stu = ls.students && ls.students[student.id];
+  if (stu) {
+    if (stu.days && stu.days[dow]) return stu.days[dow];
+    if (stu.slots && stu.slots.length) { var t = stu.slots.map(function(x) { return x.time; }).filter(Boolean).sort(); if (t.length) return t[0]; }
+    if (stu.time) return stu.time;
+  }
+  var cls = ls.classes && ls.classes[student.classId];
+  if (cls) { if (cls.days && cls.days[dow]) return cls.days[dow]; if (cls.time) return cls.time; }
+  return "";
+}
+function _pad2(n) { return n < 10 ? "0" + n : "" + n; }
+function _dateKey(d) { return d.getFullYear() + "-" + _pad2(d.getMonth() + 1) + "-" + _pad2(d.getDate()); }
+
+// 자가출석: 오늘 교시(출석 시간) 시작 시각 목록 — rt_lateSettings 기반 (이 기기 로컬)
+function _todayPeriodTimes() {
+  try {
+    var ls = _readLateSettings();
+    var lt = localStorage.getItem("rt_lateTime") || "";
+    var dow = new Date().getDay();
+    var times = {};
+    if (lt) times[lt] = 1;
+    var collect = function(obj) { Object.keys(obj || {}).forEach(function(k) { var e = obj[k] || {}; if (e.days && e.days[dow]) times[e.days[dow]] = 1; else if (e.time) times[e.time] = 1; if (e.slots) e.slots.forEach(function(sl) { if (sl && sl.time) times[sl.time] = 1; }); }); };
+    collect(ls.classes); collect(ls.students);
+    return Object.keys(times).filter(function(t) { return /^\d{1,2}:\d{2}$/.test(t); }).sort();
+  } catch (e) { return []; }
+}
+// 자가출석: 현재 활성 교시 코드 (교시 시각 키 중 now 이하 최신). 레거시 문자열이면 그대로 반환.
+function _activeSelfCode(selfCodes, dateKey) {
+  var day = selfCodes && selfCodes[dateKey];
+  if (!day) return { code: "", time: "" };
+  if (typeof day === "string") return { code: day, time: "" };
+  var now = new Date().toTimeString().slice(0, 5);
+  var keys = Object.keys(day).filter(function(k) { return /^\d{1,2}:\d{2}$/.test(k); }).sort();
+  var active = ""; keys.forEach(function(k) { if (k <= now) active = k; });
+  return { code: active ? day[active] : "", time: active };
+}
+
+function computeAttnAlerts(students, attendance, makeups, holidays) {
+  var ls = _readLateSettings();
+  var now = new Date(); now.setHours(0, 0, 0, 0);
+  var monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  var out = [];
+  (students || []).forEach(function(s) {
+    var reasons = [];
+    // 연속 지각
+    var recs = [];
+    Object.keys(attendance || {}).forEach(function(k) {
+      var r = attendance[k] && attendance[k][s.id];
+      if (r) { var d = new Date(k); var lt = _lateTimeFor(ls, s, d.getDay()); var late = lt ? (r.replace("(자가)", "") > lt) : false; recs.push({ key: k, late: late }); }
+    });
+    recs.sort(function(a, b) { return a.key < b.key ? -1 : 1; });
+    var run = 0;
+    for (var i = recs.length - 1; i >= 0; i--) { if (recs[i].late) run++; else break; }
+    if (run >= 3) reasons.push({ type: "late", text: "연속 지각 " + run + "회" });
+    // 당월 결석 (휴무일 제외)
+    var sched = classScheduleDows(s.classId);
+    if (sched) {
+      var absent = 0;
+      for (var d2 = new Date(monthStart); d2 <= now; d2.setDate(d2.getDate() + 1)) {
+        if (sched.indexOf(d2.getDay()) >= 0) { var key = _dateKey(d2); if (holidays && holidays[key]) continue; if (!(attendance[key] && attendance[key][s.id])) absent++; }
+      }
+      if (absent >= 2) reasons.push({ type: "absent", text: "당월 결석 " + absent + "회" });
+    }
+    // 미보충: 7일 경과 결석 중 보충 미완료 & 사유 미기록 (예정일 지나면 재알림)
+    var overdue = computeAbsences([s], attendance, makeups, 90, holidays).filter(function(a) {
+      if (a.makeup && a.makeup.type) return false;
+      if (a.daysAgo < 7) return false;
+      var mk = a.makeup;
+      if (!mk || !mk.reason) return true;
+      if (mk.reason === "예정") return mk.expectDate ? (mk.expectDate < _dateKey(new Date())) : true;
+      return false;
+    }).length;
+    if (overdue > 0) reasons.push({ type: "makeup", text: "미보충 " + overdue + "건 (7일 경과)" });
+    if (reasons.length) out.push({ student: s, reasons: reasons });
+  });
+  return out;
+}
+
+// 결석 목록 계산 (반 요일 스케줄 기준, 최근 windowDays 이내, 휴무일 제외)
+function computeAbsences(students, attendance, makeups, windowDays, holidays) {
+  var today = new Date(); today.setHours(0, 0, 0, 0);
+  var start = new Date(today); start.setDate(start.getDate() - (windowDays || 30));
+  var out = [];
+  (students || []).forEach(function(s) {
+    var sched = classScheduleDows(s.classId);
+    if (!sched) return;
+    for (var d = new Date(start); d <= today; d.setDate(d.getDate() + 1)) {
+      if (sched.indexOf(d.getDay()) >= 0) {
+        var key = _dateKey(d);
+        if (holidays && holidays[key]) continue;
+        if (!(attendance[key] && attendance[key][s.id])) {
+          var raw = (makeups && makeups[s.id] && makeups[s.id][key]) || null;
+          var mk = raw ? (typeof raw === "string" ? { type: raw } : raw) : null;
+          out.push({ student: s, dateKey: key, daysAgo: Math.floor((today - d) / 86400000), makeup: mk });
+        }
+      }
+    }
+  });
+  return out.sort(function(a, b) { return a.dateKey < b.dateKey ? 1 : -1; });
+}
+
+function AbsenceMakeup({ students, attendance, makeups, setMakeups, forceSave, holidays, bare }) {
+  var list = computeAbsences(students, attendance, makeups, 30, holidays);
+  var REASONS = { "일정 안 맞음": { i: "🗓️", c: "#b45309", b: "#fef3c7" }, "무단결석": { i: "🚷", c: "#dc2626", b: "#fee2e2" }, "누락": { i: "⚠️", c: "#9333ea", b: "#f3e8ff" }, "예정": { i: "📅", c: "#2563eb", b: "#dbeafe" } };
+  var updateMakeup = function(sid, key, patch) {
+    setMakeups(function(p) {
+      var np = Object.assign({}, p); np[sid] = Object.assign({}, p[sid]);
+      var cur = np[sid][key]; cur = (typeof cur === "string") ? { type: cur } : (cur ? Object.assign({}, cur) : {});
+      Object.assign(cur, patch);
+      if (!cur.type && !cur.reason && !cur.expectDate) delete np[sid][key]; else np[sid][key] = cur;
+      return np;
+    });
+    if (forceSave) forceSave();
+  };
+  var fmtD = function(k) { return (k || "").slice(5).replace("-", "/"); };
+  if (!list.length) return null;
+  return (
+    <div style={bare ? {} : { background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      {!bare && <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>🩹 결석 · 보충 관리 <span style={{ fontSize: 11, fontWeight: 700, color: "var(--tx2)", background: "#f3f4f6", borderRadius: 10, padding: "1px 8px" }}>최근 30일 {list.length}건</span></div>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 6 }}>
+        {list.map(function(a) {
+          var done = a.makeup && a.makeup.type;
+          var reason = a.makeup && a.makeup.reason;
+          var overdue = a.daysAgo >= 7 && !done && (!reason || (reason === "예정" && a.makeup.expectDate && a.makeup.expectDate < _dateKey(new Date())));
+          var rmeta = reason && REASONS[reason];
+          var hasReason = !!reason && !done && !overdue;
+          return <div key={a.student.id + a.dateKey} style={{ padding: "7px 9px", background: overdue ? "#fef2f2" : hasReason ? "#eff6ff" : "#f9fafb", borderRadius: 8, border: overdue ? "1px solid #fecaca" : hasReason ? "1px solid #bfdbfe" : "1px solid transparent", minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 13, flexShrink: 0 }}>{stuAvatar(a.student)}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, wordBreak: "keep-all", lineHeight: 1.15 }}>{a.student.name}</span>
+              <span style={{ fontSize: 9, color: "var(--tx2)", flexShrink: 0 }}>{a.student.classId}</span>
+            </div>
+            <div style={{ fontSize: 9, color: "var(--tx2)", marginTop: 2 }}>{fmtD(a.dateKey)} 결석·{a.daysAgo}일전{overdue && <span style={{ color: "#dc2626", fontWeight: 700 }}> ⚠️미보충</span>}{reason === "예정" && a.makeup.expectDate && <span style={{ color: "#2563eb", fontWeight: 700 }}> 예정 {fmtD(a.makeup.expectDate)}</span>}</div>
+            <div style={{ marginTop: 5 }}>
+              {done
+                ? <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}><span style={{ fontSize: 10, fontWeight: 700, color: "#065f46", background: "#d1fae5", borderRadius: 8, padding: "2px 7px" }}>✅ {a.makeup.type === "offline" ? "오프라인" : "온라인"}</span><button className="btn btn-g btn-s" style={{ fontSize: 9 }} onClick={function() { updateMakeup(a.student.id, a.dateKey, { type: null }); }}>취소</button></div>
+                : <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}><button className="btn btn-g btn-s" style={{ fontSize: 10, fontWeight: 700 }} onClick={function() { updateMakeup(a.student.id, a.dateKey, { type: "offline", reason: null, expectDate: null }); }}>🏫 오프라인</button><button className="btn btn-g btn-s" style={{ fontSize: 10, fontWeight: 700 }} onClick={function() { updateMakeup(a.student.id, a.dateKey, { type: "online", reason: null, expectDate: null }); }}>💻 온라인</button></div>}
+            </div>
+            {!done && <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 5, flexWrap: "wrap" }}>
+              {rmeta && <span style={{ fontSize: 9, fontWeight: 700, color: rmeta.c, background: rmeta.b, borderRadius: 7, padding: "1px 6px" }}>{rmeta.i} {reason === "예정" ? "예상" : reason}</span>}
+              <select value={reason || ""} onChange={function(e) { var v = e.target.value; updateMakeup(a.student.id, a.dateKey, { reason: v || null, expectDate: v === "예정" ? (a.makeup && a.makeup.expectDate) || "" : null }); }} style={{ fontSize: 10, padding: "3px 5px", border: "1px solid var(--bdr)", borderRadius: 7, fontFamily: "'Noto Sans KR'", background: "#fff" }}>
+                <option value="">사유</option>
+                <option value="일정 안 맞음">일정 안 맞음</option>
+                <option value="무단결석">보충 무단결석</option>
+                <option value="누락">누락</option>
+                <option value="예정">예상 일정</option>
+              </select>
+              {reason === "예정" && <input type="date" value={(a.makeup && a.makeup.expectDate) || ""} onChange={function(e) { updateMakeup(a.student.id, a.dateKey, { expectDate: e.target.value }); }} style={{ fontSize: 10, padding: "3px 5px", border: "1px solid var(--bdr)", borderRadius: 7, fontFamily: "'Noto Sans KR'" }} />}
+            </div>}
+          </div>;
+        })}
+      </div>
+      <div style={{ fontSize: 10, color: "var(--tx2)", marginTop: 8 }}>＊ 보충 완료를 누르면 해결됩니다. 사유를 기록하면 미보충 알림에서 빠지고, "예상 일정"은 그 날짜가 지나도록 미완료면 다시 알림이 옵니다.</div>
+    </div>
+  );
+}
+
+// 강사 진도점수 가중치 (진도 완료 후 100% 회수 속도)
+// 진단지 기한점수 (담당 학생 중 기한 내 발송률 %)
+function diagOnTimeRate(diagnostics, users, instId) {
+  var inst = users.find(function(u) { return u.id === instId; });
+  var classes = (inst && inst.assignedClasses) || [];
+  if (!classes.length) return null;
+  var myStu = users.filter(function(u) { return u.role === "student" && classes.indexOf(u.classId) >= 0; });
+  if (!myStu.length) return null;
+  var today = _dateKey(new Date());
+  var num = 0, den = 0;
+  Object.keys(diagnostics || {}).forEach(function(did) {
+    var dg = diagnostics[did]; if (!dg || !dg.students) return;
+    myStu.forEach(function(s) {
+      var st = dg.students[s.id] || {};
+      if (st.held || st.notSent) return; // 보류·미발송 확정 제외
+      var due = st.redueDate || dg.dueDate || "";
+      if (st.sent) { den++; if (!due || (st.sentDate && st.sentDate <= due)) num++; }
+      else if (due && due <= today) { den++; } // 기한 지난 미발송 → 감점
+      // 아직 기한 전 미발송 → 진행중, 제외
+    });
+  });
+  if (den === 0) return null;
+  return Math.round(num / den * 100);
+}
+function collectionScore(collections, curriculum, users, instId) {
+  var keys = Object.keys(collections || {}).filter(function(k) { return k.indexOf(instId + "__") === 0; });
+  var today = _dateKey(new Date());
+  var scores = [];
+  keys.forEach(function(k) {
+    var col = collections[k]; if (!col || !col.students) return;
+    var classId = k.split("__")[1];
+    var cst = users.filter(function(u) { return u.role === "student" && u.classId === classId; });
+    if (!cst.length) return;
+    var cur = (curriculum || []).find(function(c) { return c.key === k; });
+    var finishDate = "";
+    if (cur && cur.lessons) cur.lessons.forEach(function(l) { if (l.date && l.date > finishDate) finishDate = l.date; });
+    if (!finishDate) return; // 진도 미완료 → 점수 제외
+    var allSub = cst.every(function(s) { return col.students[s.id] && col.students[s.id].state === "submitted"; });
+    if (allSub) {
+      var cd = col.completedDate || today;
+      var gap = Math.round((new Date(cd) - new Date(finishDate)) / 86400000);
+      scores.push(gap <= 0 ? 10 : gap <= 3 ? 5 : gap <= 7 ? 0 : -5);
+    } else {
+      var since = Math.round((new Date(today) - new Date(finishDate)) / 86400000);
+      if (since > 30) scores.push(-10); // 한 달 이상 전체 미제출
+    }
+  });
+  if (!scores.length) return null;
+  return Math.round(scores.reduce(function(a, b) { return a + b; }, 0) / scores.length);
+}
+// 진단지 미발송 알림 (발송 기한/재완료 기한 지남, 발송보류 제외)
+function computeDiagAlerts(diagnostics, students) {
+  var today = _dateKey(new Date());
+  var out = [];
+  Object.keys(diagnostics || {}).forEach(function(did) {
+    var dg = diagnostics[did]; if (!dg || !dg.students) return;
+    (students || []).forEach(function(s) {
+      var st = dg.students[s.id];
+      if (st && (st.sent || st.held || st.notSent)) return;
+      var due = (st && st.redueDate) || dg.dueDate;
+      if (due && due <= today) out.push({ did: did, diagName: dg.name, student: s, dueDate: due, isRedue: !!(st && st.redueDate), reason: (st && st.reason === "기타") ? ((st && st.reasonEtc) || "기타") : ((st && st.reason) || "") });
+    });
+  });
+  return out.sort(function(a, b) { return a.dueDate < b.dueDate ? -1 : 1; });
+}
+// 발송 보류 명단
+function computeDiagHolds(diagnostics, students) {
+  var out = [];
+  Object.keys(diagnostics || {}).forEach(function(did) {
+    var dg = diagnostics[did]; if (!dg || !dg.students) return;
+    (students || []).forEach(function(s) { var st = dg.students[s.id]; if (st && st.held) out.push({ did: did, diagName: dg.name, student: s, reason: st.heldReason === "기타" ? (st.heldReasonEtc || "기타") : (st.heldReason || "") }); });
+  });
+  return out;
+}
+function DiagHoldAlerts({ diagnostics, students }) {
+  var list = computeDiagHolds(diagnostics, students);
+  if (!list.length) return null;
+  var groups = {};
+  list.forEach(function(a) { (groups[a.diagName] = groups[a.diagName] || []).push(a); });
+  return (
+    <div style={{ background: "#fff", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#b45309", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>⏸️ 발송 보류 명단 <span style={{ fontSize: 11, fontWeight: 700, background: "#fef3c7", borderRadius: 10, padding: "1px 8px" }}>{list.length}명</span></div>
+      {Object.keys(groups).map(function(dn) {
+        return <div key={dn} style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tx2)", marginBottom: 6 }}>{dn} <span style={{ color: "#b45309" }}>{groups[dn].length}명</span></div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 6 }}>
+            {groups[dn].map(function(a) {
+              return <div key={a.did + a.student.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 8px", background: "#fffbeb", borderRadius: 8, border: "1px solid #fde68a", minWidth: 0 }}>
+                <span style={{ fontSize: 14 }}>{stuAvatar(a.student)}</span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, wordBreak: "keep-all", lineHeight: 1.15 }}>{a.student.name}</div>
+                  <div style={{ fontSize: 9, color: "var(--tx2)", wordBreak: "keep-all" }}>{a.student.classId}{a.reason ? " · " + a.reason : ""}</div>
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>;
+      })}
+      <div style={{ fontSize: 10, color: "var(--tx2)", marginTop: 4 }}>＊ 검토 결과 발송을 보류한 학생입니다. 진단지 탭에서 발송완료/해제할 수 있습니다.</div>
+    </div>
+  );
+}
+function DiagAlerts({ diagnostics, students, bare }) {
+  var list = computeDiagAlerts(diagnostics, students);
+  if (!list.length) return null;
+  var groups = {};
+  list.forEach(function(a) { (groups[a.diagName] = groups[a.diagName] || []).push(a); });
+  return (
+    <div style={bare ? {} : { background: "#fff", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      {!bare && <div style={{ fontSize: 13, fontWeight: 800, color: "#dc2626", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>🩺 진단지 미발송 알림 <span style={{ fontSize: 11, fontWeight: 700, background: "#fef2f2", borderRadius: 10, padding: "1px 8px" }}>기한 지남 {list.length}명</span></div>}
+      {Object.keys(groups).map(function(dn) {
+        return <div key={dn} style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--tx2)", marginBottom: 6 }}>{dn} <span style={{ color: "#dc2626" }}>{groups[dn].length}명</span></div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 6 }}>
+            {groups[dn].map(function(a) {
+              return <div key={a.did + a.student.id} style={{ display: "flex", alignItems: "center", gap: 5, padding: "6px 8px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca", minWidth: 0 }}>
+                <span style={{ fontSize: 14 }}>{stuAvatar(a.student)}</span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, wordBreak: "keep-all", lineHeight: 1.15 }}>{a.student.name}</div>
+                  <div style={{ fontSize: 9, color: "var(--tx2)" }}>{a.student.classId}</div>
+                </div>
+              </div>;
+            })}
+          </div>
+        </div>;
+      })}
+      <div style={{ fontSize: 10, color: "var(--tx2)", marginTop: 4 }}>＊ 발송/재완료 기한이 지난 미발송 학생입니다. 진단지 탭에서 발송 완료 처리하세요.</div>
+    </div>
+  );
+}
+
+// 교재 회수율 (강사 점수 연동)
+function collectionRate(collections, users, instId) {
+  var keys = Object.keys(collections || {}).filter(function(k) { return k.indexOf(instId + "__") === 0; });
+  var total = 0, sub = 0;
+  keys.forEach(function(k) {
+    var classId = k.split("__")[1]; var col = collections[k]; if (!col || !col.students) return;
+    var cst = users.filter(function(u) { return u.role === "student" && u.classId === classId; });
+    total += cst.length;
+    cst.forEach(function(s) { if (col.students[s.id] && col.students[s.id].state === "submitted") sub++; });
+  });
+  return total ? Math.round(sub / total * 100) : null;
+}
+// 교재 미제출 알림 (예정일 지남)
+function computeCollectionAlerts(collections, users, instFilter) {
+  var today = _dateKey(new Date());
+  var out = [];
+  Object.keys(collections || {}).forEach(function(k) {
+    var parts = k.split("__"); var instId = parts[0], classId = parts[1], tbId = parts[2];
+    if (instFilter && instId !== instFilter) return;
+    var col = collections[k]; if (!col || !col.students) return;
+    var cst = users.filter(function(u) { return u.role === "student" && u.classId === classId; });
+    cst.forEach(function(s) { var c = col.students[s.id]; if (c && c.state === "missing" && c.dueDate && c.dueDate <= today) out.push({ key: k, classId: classId, tbId: tbId, student: s, dueDate: c.dueDate, reason: c.reason === "기타" ? (c.reasonEtc || "기타") : (c.reason || "") }); });
+  });
+  return out.sort(function(a, b) { return a.dueDate < b.dueDate ? -1 : 1; });
+}
+function CollectionAlerts({ collections, setCollections, users, textbooks, instId, forceSave }) {
+  var list = computeCollectionAlerts(collections, users, instId || null);
+  if (!list.length) return null;
+  var tbName = function(id) { var t = (textbooks || []).find(function(x) { return x.id === id; }); return t ? t.name : "교재"; };
+  var patch = function(k, sid, p) { var classId = k.split("__")[1]; var cst = users.filter(function(u) { return u.role === "student" && u.classId === classId; }); setCollections(function(prev) { var np = Object.assign({}, prev); var col = Object.assign({ students: {} }, np[k]); col.students = Object.assign({}, col.students); col.students[sid] = Object.assign({}, col.students[sid], p); var allSub = cst.length > 0 && cst.every(function(s) { return col.students[s.id] && col.students[s.id].state === "submitted"; }); if (allSub && !col.completedDate) col.completedDate = _dateKey(new Date()); if (!allSub) col.completedDate = null; np[k] = col; return np; }); if (forceSave) forceSave(); };
+  return (
+    <div style={{ background: "#fff", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#dc2626", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>📦 교재 미제출 알림 <span style={{ fontSize: 11, fontWeight: 700, background: "#fef2f2", borderRadius: 10, padding: "1px 8px" }}>예정일 지남 {list.length}건</span></div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))", gap: 6 }}>
+        {list.map(function(a) {
+          return <div key={a.key + a.student.id} style={{ padding: "7px 9px", background: "#fef2f2", borderRadius: 8, border: "1px solid #fecaca", minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 13, flexShrink: 0 }}>{stuAvatar(a.student)}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, wordBreak: "keep-all", lineHeight: 1.15 }}>{a.student.name}</span>
+              <span style={{ fontSize: 9, color: "var(--tx2)", flexShrink: 0 }}>{a.classId}</span>
+            </div>
+            <div style={{ fontSize: 9, color: "var(--tx2)", marginTop: 2 }}>{tbName(a.tbId)} · 예정 {(a.dueDate || "").slice(5).replace("-", "/")} 지남{a.reason ? " · " + a.reason : ""}</div>
+            <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 5, flexWrap: "wrap" }}>
+              <button className="btn btn-ok btn-s" style={{ fontSize: 10, fontWeight: 700 }} onClick={function() { patch(a.key, a.student.id, { state: "submitted", reason: "", dueDate: "" }); }}>제출완료</button>
+              <span style={{ fontSize: 9, color: "var(--tx2)" }}>재예정</span>
+              <input type="date" value={a.dueDate || ""} onChange={function(e) { patch(a.key, a.student.id, { dueDate: e.target.value }); }} style={{ padding: "3px 5px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 10, fontFamily: "'Noto Sans KR'" }} />
+            </div>
+          </div>;
+        })}
+      </div>
+      <div style={{ fontSize: 10, color: "var(--tx2)", marginTop: 8 }}>＊ 예정 제출일이 지난 미제출 건입니다. 걷었으면 "제출완료", 아직이면 "재예정" 날짜를 다시 잡아 끝까지 회수하세요.</div>
+    </div>
+  );
+}
+
+function ByTeacherAlerts({ title, icon, students, users, countFn, renderFn }) {
+  var [open, setOpen] = useState({});
+  var groups = {};
+  (students || []).forEach(function(s) { var hr = findHomeroom(s, users); var id = hr ? hr.id : "none"; if (!groups[id]) groups[id] = { teacher: hr, students: [] }; groups[id].students.push(s); });
+  var rows = Object.keys(groups).map(function(id) { return { id: id, teacher: groups[id].teacher, students: groups[id].students, count: countFn(groups[id].students) }; }).filter(function(r) { return r.count > 0; }).sort(function(a, b) { return b.count - a.count; });
+  if (!rows.length) return null;
+  var total = rows.reduce(function(acc, r) { return acc + r.count; }, 0);
+  return (
+    <div style={{ background: "#fff", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#b45309", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>{icon} {title} <span style={{ fontSize: 11, fontWeight: 700, background: "#fef3c7", borderRadius: 10, padding: "1px 8px" }}>담임 {rows.length}명 · {total}건</span></div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {rows.map(function(r) {
+          var op = !!open[r.id];
+          return <div key={r.id} style={{ border: "1px solid var(--bdr)", borderRadius: 9, overflow: "hidden" }}>
+            <div onClick={function() { setOpen(function(p) { var np = Object.assign({}, p); np[r.id] = !np[r.id]; return np; }); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", cursor: "pointer", background: op ? "#f9fafb" : "#fff" }}>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>👨‍🏫 {r.teacher ? r.teacher.name : "담임 미지정"}</span>
+              <span style={{ fontSize: 11, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 8, padding: "1px 8px" }}>{r.count}건</span>
+              <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--tx2)" }}>{op ? "▲ 접기" : "▼ 담당 학생"}</span>
+            </div>
+            {op && <div style={{ padding: "10px 12px", borderTop: "1px solid var(--bdr)" }}>{renderFn(r.students)}</div>}
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AttnAlerts({ students, attendance, makeups, holidays, bare }) {
+  var alerts = computeAttnAlerts(students, attendance, makeups, holidays);
+  if (!alerts.length) return null;
+  return (
+    <div style={bare ? {} : { background: "#fff", border: "1px solid #fecaca", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      {!bare && <div style={{ fontSize: 13, fontWeight: 800, color: "#dc2626", marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>🔔 출석 주의 알림 <span style={{ fontSize: 11, fontWeight: 700, background: "#fef2f2", borderRadius: 10, padding: "1px 8px" }}>{alerts.length}명</span></div>}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(125px, 1fr))", gap: 6 }}>
+        {alerts.map(function(a) {
+          return <div key={a.student.id} style={{ padding: "6px 8px", background: "#fff7ed", borderRadius: 8, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 13, flexShrink: 0 }}>{stuAvatar(a.student)}</span>
+              <span style={{ fontSize: 12, fontWeight: 700, wordBreak: "keep-all", lineHeight: 1.15 }}>{a.student.name}</span>
+              <span style={{ fontSize: 9, color: "var(--tx2)", flexShrink: 0 }}>{a.student.classId}</span>
+            </div>
+            <div style={{ display: "flex", gap: 3, flexWrap: "wrap", marginTop: 4 }}>
+              {a.reasons.map(function(r, i) { var col = r.type === "late" ? { c: "#b45309", b: "#fef3c7", i: "⏰ " } : r.type === "absent" ? { c: "#dc2626", b: "#fee2e2", i: "🚫 " } : { c: "#9333ea", b: "#f3e8ff", i: "🩹 " }; return <span key={i} style={{ fontSize: 9, fontWeight: 700, color: col.c, background: col.b, borderRadius: 7, padding: "1px 6px", whiteSpace: "nowrap" }}>{col.i}{r.text}</span>; })}
+            </div>
+          </div>;
+        })}
+      </div>
+      <div style={{ fontSize: 10, color: "var(--tx2)", marginTop: 8 }}>＊ 연속 지각 3회 · 당월 결석 2회 이상 · 결석 7일 경과 미보충 학생입니다. 지각 판정은 이 기기의 지각시간 설정 기준입니다.</div>
+    </div>
+  );
+}
+
+// 학생 아이콘: 반 앞글자로 초(E)/중(M)/고(H) 통일. 직원 등은 기존 아이콘 유지.
+function stuAvatar(u) {
+  if (!u) return "";
+  if (u.role && u.role !== "student") return u.avatar || "";
+  var f = (String(u.classId || "").match(/[A-Za-z]/) || [""])[0].toUpperCase();
+  if (f === "E") return "🟢초";
+  if (f === "M") return "🟡중";
+  if (f === "H") return "🔴고";
+  return u.avatar || "🎒";
+}
+
+
+// 유튜브 URL에서 videoId 추출 (youtu.be / watch?v= / shorts / embed 지원)
+function parseYouTubeId(url) {
+  if (!url) return "";
+  var u = String(url).trim();
+  var m = u.match(/(?:youtu\.be\/|v=|\/embed\/|\/shorts\/)([A-Za-z0-9_-]{11})/);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9_-]{11}$/.test(u)) return u;
+  return "";
+}
+
+
 
 var CSS = "\
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&display=swap');\
@@ -190,7 +644,7 @@ td{padding:10px 12px;border-bottom:1px solid #f3f4f6}\
 .donut-stat{display:flex;align-items:center;gap:8px}\
 .donut-stat-dot{width:12px;height:12px;border-radius:3px;flex-shrink:0}\
 .donut-stat-text{font-size:12px}.donut-stat-val{font-size:14px;font-weight:800;margin-left:auto}\
-.stu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}\
+.stu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}\
 .stu-card{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--card);border:1px solid var(--bdr);border-radius:var(--r)}\
 .stu-card:hover{box-shadow:var(--sh)}\
 .stu-card-av{width:36px;height:36px;border-radius:8px;background:#f3f4f6;display:flex;align-items:center;justify-content:center;font-size:18px}\
@@ -200,7 +654,7 @@ td{padding:10px 12px;border-bottom:1px solid #f3f4f6}\
 .bulk-item{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#f9fafb;border-radius:6px;margin-bottom:4px;font-size:12px}\
 .bulk-count{display:inline-flex;padding:4px 12px;background:var(--prib);color:var(--pri);border-radius:12px;font-size:12px;font-weight:700;margin-left:8px}\
 .new-class-input{margin-top:6px;width:100%;padding:8px 10px;border:2px solid var(--pri);border-radius:var(--rs);font-size:12px;font-family:'Noto Sans KR';background:#fff}\
-@media(max-width:768px){.side{display:none}.main{padding:16px 12px}.sg{grid-template-columns:repeat(2,1fr)}.stu-grid{grid-template-columns:1fr}.mob-hd{display:flex!important}}\
+@media(max-width:768px){.side{display:none}.main{padding:16px 12px}.sg{grid-template-columns:repeat(2,1fr)}.stu-grid{grid-template-columns:repeat(auto-fill,minmax(170px,1fr))}.mob-hd{display:flex!important}}\
 .mob-hd{display:none;align-items:center;gap:10px;padding:10px 14px;margin:-16px -12px 14px;background:var(--side);border-radius:0 0 12px 12px}\
 .mob-hd .mob-name{flex:1;color:#fff;font-size:13px;font-weight:700}\
 .mob-hd .mob-role{color:#94a3b8;font-size:10px}\
@@ -251,7 +705,7 @@ function BarChart({ data, title }) {
   return (
     <div className="chart-card"><div className="chart-title">{title}</div>
       {data.map(function(d, i) { var col = d.pct === 100 ? "#34d399" : d.pct >= 50 ? "#fbbf24" : "#f87171";
-        return (<div key={i} className="chart-bar-row"><div className="chart-bar-label">{d.avatar} {d.name}</div><div className="chart-bar-bg"><div className="chart-bar-fill" style={{ width: Math.max(d.pct, 2) + "%", background: col }} />{d.pct > 15 && <span className="chart-bar-text">{d.pct}%</span>}</div><div className="chart-bar-pct" style={{ color: col }}>{d.pct}%</div></div>);
+        return (<div key={i} className="chart-bar-row"><div className="chart-bar-label">{stuAvatar(d)} {d.name}</div><div className="chart-bar-bg"><div className="chart-bar-fill" style={{ width: Math.max(d.pct, 2) + "%", background: col }} />{d.pct > 15 && <span className="chart-bar-text">{d.pct}%</span>}</div><div className="chart-bar-pct" style={{ color: col }}>{d.pct}%</div></div>);
       })}
       <div className="chart-legend"><div className="chart-legend-item"><div className="chart-legend-dot" style={{ background: "#34d399" }} />완료</div><div className="chart-legend-item"><div className="chart-legend-dot" style={{ background: "#fbbf24" }} />진행중</div><div className="chart-legend-item"><div className="chart-legend-dot" style={{ background: "#f87171" }} />미흡</div></div>
     </div>
@@ -302,7 +756,7 @@ function Login({ users, onLogin, onParent }) {
     // 같은 이름+비밀번호가 여러명 → 역할 선택
     setSelRole(matched);
   };
-  var roleLabels = { admin: "🛡️ 관리자", manager: "👔 매니저", instructor: "📚 강사", student: "🎒 학생", parent: "👨‍👩‍👧 학부모" };
+  var roleLabels = { admin: "🛡️ 관리자", manager: "👔 매니저", staff: "🏢 행정팀", instructor: "📚 강사", student: "🎒 학생", parent: "👨‍👩‍👧 학부모" };
 
   if (selRole) {
     return (
@@ -337,6 +791,61 @@ var WITHDRAW_REASONS = [
   { key: "etc", label: "기타" }
 ];
 var WLABEL = {}; WITHDRAW_REASONS.forEach(function(r) { WLABEL[r.key] = r.label; });
+
+// ── 퇴원서 사유 (강사·학원 공통 4종) ──
+var WD_REASONS = [
+  { key: "class", label: "강사 불만" },
+  { key: "system", label: "시스템 불만" },
+  { key: "moving", label: "이사" },
+  { key: "etc", label: "기타" }
+];
+var WD_RLABEL = {}; WD_REASONS.forEach(function(r) { WD_RLABEL[r.key] = r.label; });
+// AI 진단(6종) → 4종 매핑: 시스템 문제→시스템 불만 / 관리·과제·태도·성적→수업 불만 / 기타→기타
+function aiTo4(aiPrimary) { if (!aiPrimary) return ""; if (aiPrimary === "system") return "system"; if (aiPrimary === "etc") return "etc"; return "class"; }
+// 3자 일치 계수 (만점 1.0, 낮을수록 감점) — 감점 적은 순
+var WD_COEF = { all: 1.0, ta: 0.8, to: 0.6, oa: 0.4, none: 0.2 };
+var WD_TIER_LABEL = { all: "3자 모두 일치", ta: "강사+AI 일치", to: "강사+학원 일치", oa: "학원+AI 일치", none: "3자 모두 불일치" };
+// teacherR: 강사 사유, aiR: AI 사유(4종), orgR: 학원 판정 사유 — 미검수면 null
+function wdAgreeTier(teacherR, aiR, orgR) {
+  if (!orgR) return null;
+  if (teacherR && aiR && orgR && teacherR === aiR && aiR === orgR) return "all";
+  if (teacherR && aiR && teacherR === aiR) return "ta";
+  if (teacherR && orgR && teacherR === orgR) return "to";
+  if (orgR && aiR && orgR === aiR) return "oa";
+  return "none";
+}
+// 퇴원 기록 하나의 점수 계수 (검수 전이면 null)
+function wdCoef(w) {
+  if (w.match !== true && w.match !== false) return null;
+  var t4 = wdReason4(w.reason || "");
+  var a4 = aiTo4(w.ai && w.ai.primary);
+  var o4 = w.match === true ? t4 : wdReason4(w.realReason || "");
+  var ta = !!(t4 && a4 && t4 === a4);
+  var oa = !!(a4 && o4 && a4 === o4);
+  var tier;
+  if (w.match === true) { tier = ta ? "all" : "to"; }
+  else { tier = ta ? "ta" : (oa ? "oa" : "none"); }
+  return { tier: tier, coef: WD_COEF[tier], t4: t4, a4: a4, o4: o4 };
+}
+// 강사 퇴원 진단 점수 = 검수된 기록들의 계수 합
+function wdInstScore(withdrawals, instId) {
+  var sum = 0, n = 0;
+  (withdrawals || []).forEach(function(w) { if (w.teacherId !== instId || w.status === "delayed") return; var c = wdCoef(w); if (c) { sum += c.coef; n++; } });
+  return { score: Math.round(sum * 10) / 10, count: n };
+}
+
+// 퇴원 상담 사유 (강사 선택 6종) — 강사불만 계열은 4종 매핑에서 class로 취급
+var WD_C_REASONS = [
+  { key: "teacher", label: "강사 불만" },
+  { key: "system", label: "시스템 불만" },
+  { key: "grade", label: "성적 하락" },
+  { key: "friend", label: "친구 이동" },
+  { key: "moving", label: "이사" },
+  { key: "etc", label: "기타" }
+];
+var WD_C_RLABEL = {}; WD_C_REASONS.forEach(function(r) { WD_C_RLABEL[r.key] = r.label; });
+// 상담 6종 → 4종 매핑 (계수 비교용): 강사불만·성적하락·친구이동 → 수업(class)
+function wdReason4(k) { if (k === "system") return "system"; if (k === "moving") return "moving"; if (k === "etc") return "etc"; return "class"; }
 
 function findHomeroom(student, users) {
   if (!student || !users) return null;
@@ -387,39 +896,114 @@ function diagnoseWithdrawal(student, ctx) {
 function aiFlaggedKeys(ai) { return (ai.reasons || []).filter(function(r) { return r.score >= 50; }).map(function(r) { return r.key; }); }
 function diagMatches(teacherReasons, ai) { var f = aiFlaggedKeys(ai); return (teacherReasons || []).some(function(k) { return f.indexOf(k) >= 0; }); }
 
-// 퇴원 진단 모달
+// 퇴원 처리 (퇴원서) 모달
 function WithdrawalModal({ student, ctx, cur, onClose, onConfirm }) {
-  var [sel, setSel] = useState([]);
-  var [etc, setEtc] = useState("");
+  var [lastAttend, setLastAttend] = useState(td());
+  var [makeup, setMakeup] = useState("done");
+  var [makeupNote, setMakeupNote] = useState("");
+  var [reason, setReason] = useState("");
+  var [reasonEtc, setReasonEtc] = useState("");
+  var [hrCounsel, setHrCounsel] = useState("done");
+  var [hrReason, setHrReason] = useState("");
+  var [hrCallDates, setHrCallDates] = useState([]);
+  var [hrCallInput, setHrCallInput] = useState("");
+  var [hrEtc, setHrEtc] = useState("");
   var [note, setNote] = useState("");
+  var [returnPossible, setReturnPossible] = useState(false);
+  var [returnContactDate, setReturnContactDate] = useState("");
   var ai = useMemo(function() { return diagnoseWithdrawal(student, ctx); }, [student]);
-  var canSeeAI = cur && (cur.role === "manager" || cur.role === "admin");
+  var canSeeAI = cur && (cur.role === "manager" || cur.role === "staff" || cur.role === "admin");
   var hr = findHomeroom(student, ctx.users);
-  var toggle = function(k) { setSel(function(p) { return p.indexOf(k) >= 0 ? p.filter(function(x) { return x !== k; }) : p.concat([k]); }); };
-  var willMatch = diagMatches(sel, ai);
+  var addCallDate = function() { if (hrCallInput && hrCallDates.indexOf(hrCallInput) < 0) { setHrCallDates(hrCallDates.concat([hrCallInput]).sort()); setHrCallInput(""); } };
   var confirm = function() {
-    if (!sel.length) { window.alert("담임 진단 사유를 1개 이상 선택하세요."); return; }
-    if (sel.indexOf("etc") >= 0 && !etc.trim()) { window.alert("기타 사유를 입력하세요."); return; }
+    if (!lastAttend) { window.alert("마지막 출석일을 선택하세요."); return; }
+    if (makeup === "incomplete" && !makeupNote.trim()) { window.alert("보강 미완료 내용을 입력하세요."); return; }
+    if (hrCounsel === "incomplete") {
+      if (!hrReason) { window.alert("담임 상담 미완료 사유를 선택하세요."); return; }
+      if (hrReason === "call" && hrCallDates.length === 0) { window.alert("통화 시도 날짜를 1개 이상 추가하세요."); return; }
+      if (hrReason === "etc" && !hrEtc.trim()) { window.alert("담임 상담 미완료 기타 사유를 입력하세요."); return; }
+    }
+    if (!reason) { window.alert("퇴원 상담 사유를 선택하세요."); return; }
+    if (!reasonEtc.trim()) { window.alert("퇴원 사유를 입력하세요. (필수)"); return; }
     onConfirm({
       id: "wd_" + mkid(), studentId: student.id, studentName: student.name, classId: student.classId,
       teacherId: hr ? hr.id : "", teacherName: hr ? hr.name : "",
-      date: td(), teacherReasons: sel, teacherEtc: etc.trim(), teacherNote: note.trim(),
+      date: td(), lastAttendDate: lastAttend,
+      makeupStatus: makeup, makeupNote: makeup === "incomplete" ? makeupNote.trim() : "",
+      hrCounsel: hrCounsel, hrReason: hrCounsel === "incomplete" ? hrReason : "", hrCallDates: hrCounsel === "incomplete" && hrReason === "call" ? hrCallDates : [], hrEtc: hrCounsel === "incomplete" && hrReason === "etc" ? hrEtc.trim() : "",
+      status: hrCounsel === "incomplete" ? "delayed" : "done",
+      reason: reason, reasonEtc: reasonEtc.trim(),
+      teacherNote: note.trim(), counseled: !!student._counseled,
       ai: { reasons: ai.reasons, primary: ai.primary, summary: ai.summary },
-      match: willMatch, by: { id: cur.id, role: cur.role, name: cur.name }
+      match: null, realReason: "", returnPossible: returnPossible, returnContactDate: returnPossible ? returnContactDate : "", returnContacted: false, by: { id: cur.id, role: cur.role, name: cur.name }
     });
   };
+  var segBtn = function(on) { return { flex: 1, padding: "9px 0", borderRadius: 9, border: on ? "2px solid var(--pri)" : "1px solid var(--bdr)", background: on ? "var(--prib)" : "#fff", color: on ? "var(--pri)" : "var(--tx2)", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Noto Sans KR'" }; };
   return (
-    <div className="mo" onClick={onClose}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 540 }}>
-      <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>🚪 퇴원 진단 — {student.name} <span style={{ fontSize: 12, color: "var(--tx2)", fontWeight: 500 }}>{student.classId}{hr ? " · 담임 " + hr.name : ""}</span></h3>
-      <div style={{ fontSize: 13, fontWeight: 800, color: "var(--pri)", margin: "10px 0 6px" }}>담임 진단 (퇴원 사유)</div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 8 }}>
-        {WITHDRAW_REASONS.map(function(r) {
-          var on = sel.indexOf(r.key) >= 0;
-          return <button type="button" key={r.key} onClick={function() { toggle(r.key); }} style={{ padding: "8px 12px", borderRadius: 20, border: on ? "2px solid var(--pri)" : "1px solid var(--bdr)", background: on ? "var(--prib)" : "#fff", color: on ? "var(--pri)" : "var(--tx2)", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "'Noto Sans KR'" }}>{on ? "✓ " : ""}{r.label}</button>;
-        })}
+    <div className="mo" onClick={onClose}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 520, maxHeight: "88vh", overflowY: "auto" }}>
+      <h3 style={{ display: "flex", alignItems: "center", gap: 8 }}>🚪 퇴원 처리 — {student.name} <span style={{ fontSize: 12, color: "var(--tx2)", fontWeight: 500 }}>{student.classId}{hr ? " · 담임 " + hr.name : ""}</span></h3>
+      <div style={{ fontSize: 11, marginTop: 4, marginBottom: 10 }}>{student._counseled ? <span style={{ fontWeight: 700, color: "#065f46", background: "#d1fae5", borderRadius: 8, padding: "2px 8px" }}>✅ 퇴원 상담 완료</span> : <span style={{ fontWeight: 700, color: "#b45309", background: "#fef3c7", borderRadius: 8, padding: "2px 8px" }}>⚠️ 퇴원 상담 미완료</span>}</div>
+
+      <label className="fl">① 퇴원 상담 사유</label>
+      <select value={reason} onChange={function(e) { setReason(e.target.value); }} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", background: "#fff", marginBottom: reason === "etc" ? 8 : 10 }}>
+        <option value="">선택</option>
+        {WD_C_REASONS.map(function(r) { return <option key={r.key} value={r.key}>{r.label}</option>; })}
+      </select>
+      {reason && <input value={reasonEtc} onChange={function(e) { setReasonEtc(e.target.value); }} placeholder="퇴원 사유 입력 (필수)" style={{ width: "100%", padding: "9px 11px", border: "1px solid " + (reasonEtc.trim() ? "var(--bdr)" : "#fecaca"), borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", marginBottom: 10 }} />}
+      {!reason ? <div style={{ fontSize: 12, color: "var(--tx2)", background: "#f9fafb", border: "1px dashed var(--bdr)", borderRadius: 9, padding: "12px", textAlign: "center" }}>⬆ 퇴원 상담 사유를 입력하면 다음 단계가 열립니다.</div> : <>
+
+      <label className="fl">마지막 출석일</label>
+      <input type="date" value={lastAttend} onChange={function(e) { setLastAttend(e.target.value); }} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", marginBottom: 12 }} />
+
+      <label className="fl">보강</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: makeup === "incomplete" ? 8 : 12 }}>
+        <button type="button" style={segBtn(makeup === "done")} onClick={function() { setMakeup("done"); }}>✅ 보강 완료</button>
+        <button type="button" style={segBtn(makeup === "incomplete")} onClick={function() { setMakeup("incomplete"); }}>⏳ 보강 미완료</button>
       </div>
-      {sel.indexOf("etc") >= 0 && <input value={etc} onChange={function(e) { setEtc(e.target.value); }} placeholder="기타 사유 입력" style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", marginBottom: 8 }} />}
+      {makeup === "incomplete" && <textarea value={makeupNote} onChange={function(e) { setMakeupNote(e.target.value); }} placeholder="보강 미완료 내용 (남은 보강·사유 등)" rows={2} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", marginBottom: 12 }} />}
+
+      <label className="fl">담임 상담 여부</label>
+      <div style={{ display: "flex", gap: 8, marginBottom: hrCounsel === "incomplete" ? 8 : 12 }}>
+        <button type="button" style={segBtn(hrCounsel === "done")} onClick={function() { setHrCounsel("done"); }}>✅ 완료</button>
+        <button type="button" style={segBtn(hrCounsel === "incomplete")} onClick={function() { setHrCounsel("incomplete"); }}>⏳ 미완료</button>
+      </div>
+      {hrCounsel === "incomplete" && <div style={{ background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+        <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--tx2)", marginBottom: 7 }}>미완료 사유 선택</div>
+        {[["call", "📞 3회 이상 부재중 · 통화 지속 시도"], ["declined", "🙅 데스크를 통한 담임 상담 원하지 않음"], ["etc", "✏️ 기타"]].map(function(o) {
+          var on = hrReason === o[0];
+          return <label key={o[0]} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", cursor: "pointer" }}>
+            <input type="radio" name="hrReason" checked={on} onChange={function() { setHrReason(o[0]); }} style={{ width: 16, height: 16, accentColor: "var(--pri)" }} />
+            <span style={{ fontSize: 12.5, fontWeight: on ? 700 : 500, color: on ? "var(--pri)" : "var(--tx)" }}>{o[1]}</span>
+          </label>;
+        })}
+        {hrReason === "call" && <div style={{ marginTop: 8, paddingLeft: 4 }}>
+          <div style={{ fontSize: 11, color: "var(--tx2)", marginBottom: 5 }}>통화 시도 날짜 (달력에서 선택 후 추가)</div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: hrCallDates.length ? 6 : 0, flexWrap: "wrap" }}>
+            <input type="date" value={hrCallInput} onChange={function(e) { setHrCallInput(e.target.value); }} style={{ padding: "6px 8px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 12, fontFamily: "'Noto Sans KR'" }} />
+            <button type="button" className="btn btn-g btn-s" onClick={addCallDate}>+ 추가</button>
+            <span style={{ fontSize: 10.5, color: hrCallDates.length >= 3 ? "#065f46" : "#b45309", fontWeight: 700 }}>{hrCallDates.length}회 기록{hrCallDates.length < 3 ? " (3회 이상 권장)" : ""}</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+            {hrCallDates.map(function(d) { return <span key={d} style={{ fontSize: 11, fontWeight: 700, color: "var(--pri)", background: "var(--prib)", borderRadius: 7, padding: "2px 8px" }}>{d.slice(5).replace("-", "/")} <span style={{ cursor: "pointer", color: "#dc2626" }} onClick={function() { setHrCallDates(hrCallDates.filter(function(x) { return x !== d; })); }}>✕</span></span>; })}
+          </div>
+        </div>}
+        {hrReason === "etc" && <input value={hrEtc} onChange={function(e) { setHrEtc(e.target.value); }} placeholder="담임 상담 미완료 기타 사유 입력" style={{ width: "100%", padding: "8px 10px", border: "1px solid var(--bdr)", borderRadius: 8, fontSize: 12.5, fontFamily: "'Noto Sans KR'", marginTop: 8 }} />}
+      </div>}
+
       <textarea value={note} onChange={function(e) { setNote(e.target.value); }} placeholder="담임 메모 (선택)" rows={2} style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", marginBottom: 12 }} />
+
+      <div style={{ border: "1px solid " + (returnPossible ? "#93c5fd" : "var(--bdr)"), background: returnPossible ? "#eff6ff" : "#fff", borderRadius: 10, padding: "10px 12px", marginBottom: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+          <input type="checkbox" checked={returnPossible} onChange={function(e) { setReturnPossible(e.target.checked); if (e.target.checked && !returnContactDate) { var d = new Date(); d.setDate(d.getDate() + 14); setReturnContactDate(_dateKey(d)); } }} style={{ width: 17, height: 17, accentColor: "#2563eb" }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: returnPossible ? "#1e40af" : "var(--tx)" }}>🔄 복귀 가능성 있음</span>
+          <span style={{ fontSize: 11, color: "var(--tx2)" }}>(재등록 유도 문자 연락 대상)</span>
+        </label>
+        {returnPossible && <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11.5, color: "#1e40af", fontWeight: 700 }}>📱 문자 연락 예정일</span>
+          <input type="date" value={returnContactDate} onChange={function(e) { setReturnContactDate(e.target.value); }} style={{ padding: "6px 9px", border: "1px solid #93c5fd", borderRadius: 8, fontSize: 12.5, fontFamily: "'Noto Sans KR'", background: "#fff" }} />
+          <span style={{ fontSize: 10.5, color: "var(--tx2)" }}>이 날짜에 행정팀 퇴원통계에 연락 알림이 표시됩니다</span>
+        </div>}
+      </div>
 
       {canSeeAI ? (
         <div style={{ border: "1px solid #c7d2fe", background: "#eef2ff", borderRadius: 12, padding: "12px 14px", marginBottom: 12 }}>
@@ -432,27 +1016,161 @@ function WithdrawalModal({ student, ctx, cur, onClose, onConfirm }) {
               <span style={{ flex: 1, color: "#4b5563" }}>{r.evidence}</span>
             </div>;
           })}
-          <div style={{ marginTop: 9, paddingTop: 9, borderTop: "1px solid #c7d2fe", fontSize: 12, fontWeight: 700, color: willMatch ? "#065f46" : "#6b7280" }}>
-            {willMatch ? "✅ 담임 진단과 AI 진단 일치 → 담임 강사 평가 +1점" : "○ 현재 선택은 AI 진단과 일치하지 않습니다"}
-          </div>
+          <div style={{ marginTop: 9, paddingTop: 9, borderTop: "1px solid #c7d2fe", fontSize: 11.5, color: "#4b5563" }}>AI 추정 사유(4종): <b style={{ color: "#3730a3" }}>{WD_RLABEL[aiTo4(ai.primary)] || "—"}</b> · 최종 일치 점수는 관리자 검수(일치/불일치) 후 산정됩니다.</div>
         </div>
       ) : (
         <div style={{ border: "1px dashed var(--bdr)", borderRadius: 12, padding: "11px 14px", marginBottom: 12, fontSize: 12, color: "var(--tx2)" }}>🔒 AI 진단 결과는 매니저 이상만 열람할 수 있습니다.</div>
       )}
 
-      <div className="br"><button className="btn btn-g" onClick={onClose}>취소</button><button className="btn btn-p" onClick={confirm}>퇴원 확정</button></div>
+      {hrCounsel === "incomplete" && <div style={{ fontSize: 12, fontWeight: 700, color: "#b45309", background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 9, padding: "9px 11px", marginBottom: 10, lineHeight: 1.5 }}>⏳ 담임 상담 미완료 → <b>정식 퇴원이 아닌 "퇴원 지연"으로 등록</b>됩니다. 담임 상담을 완료해야 실제 퇴원 처리가 됩니다.</div>}
+      <div className="br"><button className="btn btn-g" onClick={onClose}>취소</button><button className="btn btn-p" onClick={confirm} disabled={!reason || !reasonEtc.trim()} style={Object.assign({}, hrCounsel === "incomplete" ? { background: "#d97706", borderColor: "#d97706" } : {}, (!reason || !reasonEtc.trim()) ? { opacity: 0.5, cursor: "not-allowed" } : {})}>{hrCounsel === "incomplete" ? "⏳ 퇴원 지연 등록" : "🚪 퇴원서 제출"}</button></div>
+      </>}
     </div></div>
   );
 }
 
+// 수업 영상 링크 관리 (원장/매니저)
+function AdminVideos({ videos, setVideos, classList, forceSave }) {
+  var TYPES = ["정규", "특강", "텐투텐", "러닝"];
+  var [cls, setCls] = useState((classList && classList[0]) || "");
+  var [date, setDate] = useState(td());
+  var [type, setType] = useState("정규");
+  var [url, setUrl] = useState("");
+  var [title, setTitle] = useState("");
+  var [cf, setCf] = useState("all");
+  var save = function() { if (forceSave) forceSave(); };
+  var add = function() {
+    if (!cls) { window.alert("반을 선택하세요."); return; }
+    var vid = parseYouTubeId(url);
+    if (!vid) { window.alert("올바른 유튜브 링크를 입력하세요.\n예: https://youtu.be/XXXXXXXXXXX"); return; }
+    var rec = { id: "vid_" + mkid(), classId: cls, date: date, type: type, videoId: vid, url: "https://youtu.be/" + vid, title: title.trim() || (cls + " " + date + " " + type), createdAt: Date.now() };
+    setVideos(function(p) { return (p || []).concat([rec]); });
+    save();
+    setUrl(""); setTitle("");
+    window.alert("영상 링크를 등록했습니다.");
+  };
+  var remove = function(id) { if (window.confirm("이 영상 링크를 삭제할까요?")) { setVideos(function(p) { return (p || []).filter(function(v) { return v.id !== id; }); }); save(); } };
+  var classes = sortClasses(classList || []);
+  var list = (videos || []).slice().sort(function(a, b) { return (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0); });
+  var filtered = cf === "all" ? list : list.filter(function(v) { return v.classId === cf; });
+  var fmt = function(d) { return (d || "").replace(/-/g, "."); };
+  return (
+    <div>
+      <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "14px 16px", marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10 }}>🎬 수업 영상 링크 등록</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <div className="fg" style={{ flex: "1 1 100px", margin: 0 }}><label>반</label><select value={cls} onChange={function(e) { setCls(e.target.value); }}>{classes.map(function(c) { return <option key={c} value={c}>{c}</option>; })}</select></div>
+          <div className="fg" style={{ flex: "1 1 120px", margin: 0 }}><label>날짜</label><input type="date" value={date} onChange={function(e) { setDate(e.target.value); }} /></div>
+          <div className="fg" style={{ flex: "1 1 90px", margin: 0 }}><label>종류</label><select value={type} onChange={function(e) { setType(e.target.value); }}>{TYPES.map(function(t) { return <option key={t} value={t}>{t}</option>; })}</select></div>
+        </div>
+        <div className="fg" style={{ margin: "0 0 8px" }}><label>유튜브 링크</label><input value={url} onChange={function(e) { setUrl(e.target.value); }} placeholder="https://youtu.be/XXXXXXXXXXX 또는 watch?v=..." style={{ fontFamily: "monospace" }} /></div>
+        <div className="fg" style={{ margin: "0 0 10px" }}><label>제목 (선택 — 비우면 자동)</label><input value={title} onChange={function(e) { setTitle(e.target.value); }} placeholder="예: M2 7/14 정규 수업" /></div>
+        {parseYouTubeId(url) && <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, padding: 8, background: "#f9fafb", borderRadius: 8 }}><img src={"https://img.youtube.com/vi/" + parseYouTubeId(url) + "/mqdefault.jpg"} alt="" style={{ width: 100, borderRadius: 6 }} /><span style={{ fontSize: 11, color: "var(--ok)", fontWeight: 700 }}>✅ 링크 인식됨 · 미리보기</span></div>}
+        <button className="btn btn-p" style={{ width: "100%" }} onClick={add}>+ 영상 링크 등록</button>
+      </div>
+
+      <div className="fb"><button className={cn("fc", cf === "all" && "on")} onClick={function() { setCf("all"); }}>전체</button>{classes.map(function(c) { return <button key={c} className={cn("fc", cf === c && "on")} onClick={function() { setCf(c); }}>{c}</button>; })}</div>
+
+      {filtered.length === 0 ? <div className="empty"><div className="eic">🎬</div><p>등록된 영상이 없습니다</p></div> :
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {filtered.map(function(v) {
+            return (
+              <div key={v.id} className="card" style={{ display: "flex", alignItems: "center", gap: 10, padding: 10 }}>
+                <a href={v.url} target="_blank" rel="noopener noreferrer" style={{ flexShrink: 0 }}><img src={"https://img.youtube.com/vi/" + v.videoId + "/mqdefault.jpg"} alt="" style={{ width: 110, borderRadius: 8, display: "block" }} /></a>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}><span style={{ fontSize: 11, fontWeight: 800, color: "var(--pri)", background: "var(--prib)", borderRadius: 8, padding: "1px 8px" }}>{v.classId}</span><span style={{ fontSize: 10, color: "var(--tx2)" }}>{fmt(v.date)} · {v.type}</span></div>
+                  <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.title}</div>
+                  <a href={v.url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: "#2563eb" }}>▶ 영상 열기</a>
+                </div>
+                <button className="btn-d" style={{ fontSize: 13, flexShrink: 0 }} onClick={function() { remove(v.id); }}>✕</button>
+              </div>
+            );
+          })}
+        </div>}
+    </div>
+  );
+}
+
 // 퇴원 기록 + 강사 평가 (매니저 이상)
-function AdminWithdrawals({ withdrawals, setWithdrawals, users, forceSave }) {
+// 연락 대상 알림 (복귀 문자 + 신입생 3주) — 행정팀/원장 전용
+function ContactAlerts({ withdrawals, setWithdrawals, users, setUsers, forceSave }) {
+  var all = (withdrawals || []).slice();
+  var markContacted = function(id) { setWithdrawals(function(p) { return (p || []).map(function(w) { return w.id === id ? Object.assign({}, w, { returnContacted: true, returnContactedDate: td() }) : w; }); }); if (forceSave) forceSave(); };
+  var setContactDate = function(id, d) { setWithdrawals(function(p) { return (p || []).map(function(w) { return w.id === id ? Object.assign({}, w, { returnContactDate: d }) : w; }); }); if (forceSave) forceSave(); };
+  var returnList = all.filter(function(w) { return w.returnPossible && w.status !== "delayed"; }).sort(function(a, b) { return (a.returnContactDate || "9999").localeCompare(b.returnContactDate || "9999"); });
+  var _daysBetween = function(d) { if (!d) return -1; var a = new Date(d + "T00:00:00"); var b = new Date(td() + "T00:00:00"); return Math.floor((b - a) / 86400000); };
+  var withdrawnIds = (withdrawals || []).filter(function(w) { return w.status !== "delayed"; }).map(function(w) { return w.studentId; });
+  var newbieList = (users || []).filter(function(u) { return u.role === "student" && u.joinDate && !u.newbie3wNote && withdrawnIds.indexOf(u.id) < 0 && _daysBetween(u.joinDate) >= 21; }).sort(function(a, b) { return (a.joinDate || "").localeCompare(b.joinDate || ""); });
+  var saveNewbieNote = function(uid, note) { if (!note || !note.trim()) { window.alert("상담 내용을 입력해야 알림이 꺼집니다."); return; } if (!setUsers) return; setUsers(function(p) { return (p || []).map(function(u) { return u.id === uid ? Object.assign({}, u, { newbie3wNote: note.trim(), newbie3wDate: td() }) : u; }); }); if (forceSave) forceSave(); };
+  var totalPending = returnList.filter(function(w) { return !w.returnContacted; }).length + newbieList.length;
+  return (
+    <div>
+      <div className="ph"><h2>📞 연락 대상</h2><p>복귀 유도 문자 연락과 신입생 3주 상담 연락 대상을 관리합니다.</p></div>
+      {totalPending === 0 && returnList.length === 0 && newbieList.length === 0 && <div className="empty"><div className="eic">✅</div><p>연락할 대상이 없습니다</p></div>}
+      {returnList.length > 0 && <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#1e40af", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>🔄 복귀 가능 · 문자 연락 대상 <span style={{ fontSize: 11, fontWeight: 700, background: "#dbeafe", borderRadius: 10, padding: "1px 8px" }}>{returnList.filter(function(w) { return !w.returnContacted; }).length}명 대기</span></div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {returnList.map(function(w) {
+            var stu = users.find(function(u) { return u.id === w.studentId; });
+            var due = w.returnContactDate && w.returnContactDate <= td();
+            return <div key={w.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", padding: "8px 10px", background: "#fff", border: "1px solid " + (w.returnContacted ? "#d1fae5" : due ? "#fca5a5" : "#e5e7eb"), borderRadius: 9 }}>
+              <span style={{ fontSize: 15 }}>{stu ? stuAvatar(stu) : "🎒"}</span>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{w.studentName}</span>
+              <span style={{ fontSize: 11, color: "var(--tx2)" }}>{w.classId}{w.teacherName ? " · 담임 " + w.teacherName : ""}</span>
+              {w.returnContacted
+                ? <span style={{ fontSize: 10.5, fontWeight: 800, color: "#065f46", background: "#d1fae5", borderRadius: 8, padding: "1px 8px" }}>✅ 문자 연락함{w.returnContactedDate ? " " + w.returnContactedDate.slice(5).replace("-", "/") : ""}</span>
+                : <span style={{ fontSize: 10.5, fontWeight: 800, color: due ? "#b91c1c" : "#1e40af", background: due ? "#fee2e2" : "#dbeafe", borderRadius: 8, padding: "1px 8px" }}>{due ? "📱 오늘 연락!" : "📱 연락 예정"} {w.returnContactDate ? w.returnContactDate.slice(5).replace("-", "/") : "미정"}</span>}
+              <div style={{ marginLeft: "auto", display: "flex", gap: 5, alignItems: "center", flexShrink: 0 }}>
+                {!w.returnContacted && <input type="date" value={w.returnContactDate || ""} onChange={function(e) { setContactDate(w.id, e.target.value); }} style={{ padding: "4px 6px", border: "1px solid var(--bdr)", borderRadius: 6, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />}
+                {!w.returnContacted
+                  ? <button className="btn btn-s" style={{ fontSize: 11, fontWeight: 700, background: "#2563eb", color: "#fff", border: "1px solid #2563eb" }} onClick={function() { markContacted(w.id); }}>📱 문자 연락함</button>
+                  : <button className="btn btn-g btn-s" style={{ fontSize: 10 }} onClick={function() { setWithdrawals(function(p) { return (p || []).map(function(x) { return x.id === w.id ? Object.assign({}, x, { returnContacted: false }) : x; }); }); if (forceSave) forceSave(); }}>취소</button>}
+              </div>
+            </div>;
+          })}
+        </div>
+      </div>}
+      {newbieList.length > 0 && <NewbieAlerts list={newbieList} daysFn={_daysBetween} onSave={saveNewbieNote} />}
+    </div>
+  );
+}
+
+function NewbieAlerts({ list, daysFn, onSave }) {
+  var [notes, setNotes] = useState({});
+  return (
+    <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "#166534", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>🆕 신입생 3주 · 상담 연락 대상 <span style={{ fontSize: 11, fontWeight: 700, background: "#dcfce7", borderRadius: 10, padding: "1px 8px" }}>{list.length}명</span></div>
+      <div style={{ fontSize: 11, color: "#15803d", marginBottom: 10 }}>등록 3주가 된 신입생입니다. <b>상담 내용을 입력해야 알림이 꺼집니다.</b></div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        {list.map(function(s) {
+          var d = daysFn(s.joinDate);
+          return <div key={s.id} style={{ padding: "9px 11px", background: "#fff", border: "1px solid #bbf7d0", borderRadius: 9 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+              <span style={{ fontSize: 15 }}>{stuAvatar(s)}</span>
+              <span style={{ fontSize: 13, fontWeight: 700 }}>{s.name}</span>
+              <span style={{ fontSize: 11, color: "var(--tx2)" }}>{s.classId}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 700, color: "#166534", background: "#dcfce7", borderRadius: 8, padding: "1px 8px" }}>등록 {s.joinDate ? s.joinDate.replace(/-/g, ".") : "-"} · {d}일차</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
+              <textarea value={notes[s.id] || ""} onChange={function(e) { var v = e.target.value; setNotes(function(p) { var np = Object.assign({}, p); np[s.id] = v; return np; }); }} placeholder="상담 내용 입력 (연락·상담 결과) — 입력해야 알림이 꺼집니다" rows={2} style={{ flex: "1 1 220px", minWidth: 180, padding: "8px 10px", border: "1px solid var(--bdr)", borderRadius: 8, fontSize: 12.5, fontFamily: "'Noto Sans KR'", resize: "vertical" }} />
+              <button className="btn btn-s" style={{ fontSize: 11.5, fontWeight: 700, background: "#16a34a", color: "#fff", border: "1px solid #16a34a", alignSelf: "stretch" }} onClick={function() { onSave(s.id, notes[s.id] || ""); }}>✅ 상담 완료 · 알림 끄기</button>
+            </div>
+          </div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AdminWithdrawals({ withdrawals, setWithdrawals, users, setUsers, forceSave }) {
   var [fromD, setFromD] = useState("");
   var [toD, setToD] = useState("");
   var all = (withdrawals || []).slice().sort(function(a, b) { return (b.date || "").localeCompare(a.date || ""); });
   var lastDate = all.length ? all[0].date : null;
   var insts = users.filter(function(u) { return u.role === "instructor"; });
-  var evalScore = function(instId) { return (withdrawals || []).filter(function(w) { return w.teacherId === instId && w.match; }).length; };
+  var evalScore = function(instId) { return wdInstScore(withdrawals, instId).score; };
+  var review = function(id, match, realReason) { setWithdrawals(function(p) { return (p || []).map(function(w) { return w.id === id ? Object.assign({}, w, { match: match, realReason: match === false ? (realReason || w.realReason || "") : "" }) : w; }); }); if (forceSave) forceSave(); };
+  var convertDelayed = function(id) { if (!window.confirm("담임 상담을 완료하셨습니까?\n\n지연 기록이 정식 퇴원으로 전환·정리됩니다.")) return; setWithdrawals(function(p) { return (p || []).map(function(w) { return w.id === id ? Object.assign({}, w, { status: "done", hrCounsel: "done", hrReason: "", hrCallDates: [], hrEtc: "", date: td() }) : w; }); }); if (forceSave) forceSave(); };
   var remove = function(id) { if (window.confirm("이 퇴원 기록을 삭제할까요?")) { setWithdrawals(function(p) { return (p || []).filter(function(w) { return w.id !== id; }); }); forceSave(); } };
   var fmt = function(d) { return (d || "").replace(/-/g, "."); };
   var mLabel = function(m) { var p = m.split("-"); return p.length === 2 ? p[0] + "년 " + (+p[1]) + "월" : m; };
@@ -499,10 +1217,12 @@ function AdminWithdrawals({ withdrawals, setWithdrawals, users, forceSave }) {
       </div>
 
       {/* 강사 평가 */}
-      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>강사 평가 — 진단 일치 점수</h3>
+      <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>강사 평가 — 퇴원 진단 점수</h3>
+      <div style={{ fontSize: 11, color: "var(--tx2)", background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 8, padding: "8px 11px", marginBottom: 10, lineHeight: 1.7 }}>강사·AI·학원 3자 일치도로 기록당 계수를 부여합니다 (감점 적은 순): <b>3자 일치 1.0</b> → 강사+AI 0.8 → 강사+학원 0.6 → 학원+AI 0.4 → 3자 불일치 0.2. 관리자 검수(일치/불일치) 후 산정됩니다.</div>
       <div className="sg" style={{ marginBottom: 18 }}>
         {insts.length === 0 ? <div style={{ fontSize: 12, color: "var(--tx2)" }}>강사가 없습니다</div> : insts.map(function(it) {
-          return <div className="sc" key={it.id}><div className="sl">{it.avatar} {it.name}</div><div className="sv g">+{evalScore(it.id)}</div></div>;
+          var r = wdInstScore(withdrawals, it.id);
+          return <div className="sc" key={it.id}><div className="sl">{it.avatar} {it.name}</div><div className="sv g">{r.score}<span style={{ fontSize: 10, fontWeight: 600, color: "var(--tx2)" }}> / {r.count}건</span></div></div>;
         })}
       </div>
 
@@ -519,19 +1239,51 @@ function AdminWithdrawals({ withdrawals, setWithdrawals, users, forceSave }) {
               </div>
               {recs.map(function(w) {
                 var stu = users.find(function(u) { return u.id === w.studentId; });
+                var delayed = w.status === "delayed";
+                var c = delayed ? null : wdCoef(w);
+                var reviewed = w.match === true || w.match === false;
                 return (
-                  <div key={w.id} className="card" style={{ marginBottom: 8 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                      <span style={{ fontSize: 18 }}>{stu ? stu.avatar : "🎒"}</span>
+                  <div key={w.id} className="card" style={{ marginBottom: 8, border: delayed ? "1px solid #fde68a" : undefined, background: delayed ? "#fffbeb" : undefined }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 18 }}>{stu ? stuAvatar(stu) : "🎒"}</span>
                       <span style={{ fontSize: 15, fontWeight: 800 }}>{w.studentName}</span>
                       <span style={{ fontSize: 11.5, color: "var(--tx2)" }}>{w.classId}{w.teacherName ? " · 담임 " + w.teacherName : ""}</span>
-                      {w.match && <span style={{ fontSize: 10, fontWeight: 800, color: "#065f46", background: "#d1fae5", borderRadius: 10, padding: "1px 8px" }}>일치 +1</span>}
+                      {delayed && <span style={{ fontSize: 10, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 10, padding: "1px 8px" }}>⏳ 퇴원 지연 (담임 상담 미완료)</span>}
+                      {w.counseled === true
+                        ? <span style={{ fontSize: 10, fontWeight: 800, color: "#065f46", background: "#d1fae5", borderRadius: 10, padding: "1px 8px" }}>✅ 상담 완료</span>
+                        : w.counseled === false
+                          ? <span style={{ fontSize: 10, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 10, padding: "1px 8px" }}>⚠️ 상담 미완료</span>
+                          : <span style={{ fontSize: 10, fontWeight: 800, color: "#6b7280", background: "#f3f4f6", borderRadius: 10, padding: "1px 8px" }}>상담 미확인</span>}
+                      {c && <span style={{ fontSize: 10, fontWeight: 800, color: c.coef >= 0.8 ? "#065f46" : c.coef >= 0.5 ? "#b45309" : "#b91c1c", background: c.coef >= 0.8 ? "#d1fae5" : c.coef >= 0.5 ? "#fef3c7" : "#fee2e2", borderRadius: 10, padding: "1px 8px" }}>{WD_TIER_LABEL[c.tier]} · 계수 {c.coef}</span>}
                       <button className="btn-d" style={{ marginLeft: "auto", fontSize: 13 }} onClick={function() { remove(w.id); }}>✕</button>
                     </div>
-                    <div style={{ display: "inline-block", fontSize: 11.5, fontWeight: 700, color: "var(--pri)", background: "var(--prib)", borderRadius: 8, padding: "2px 9px", marginBottom: 7 }}>🚪 퇴원처리 {fmt(w.date)}</div>
-                    <div style={{ fontSize: 12.5, marginBottom: 4 }}><b style={{ color: "var(--pri)" }}>퇴원 사유:</b> {(w.teacherReasons || []).map(function(k) { return WLABEL[k]; }).join(", ") || "—"}{w.teacherEtc ? " (" + w.teacherEtc + ")" : ""}</div>
-                    {w.teacherNote && <div style={{ fontSize: 11.5, color: "var(--tx2)", marginBottom: 4 }}>메모: {w.teacherNote}</div>}
-                    <div style={{ fontSize: 12, background: "#eef2ff", borderRadius: 8, padding: "7px 10px" }}><b style={{ color: "#3730a3" }}>🤖 AI 진단:</b> {(w.ai && w.ai.summary) || "—"}</div>
+                    <div style={{ display: "inline-block", fontSize: 11.5, fontWeight: 700, color: delayed ? "#b45309" : "var(--pri)", background: delayed ? "#fef3c7" : "var(--prib)", borderRadius: 8, padding: "2px 9px", marginBottom: 7 }}>{delayed ? "⏳ 퇴원 지연 등록" : "🚪 퇴원처리"} {fmt(w.date)}</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6, marginBottom: 8 }}>
+                      <div style={{ fontSize: 11.5 }}><b style={{ color: "var(--tx2)" }}>마지막 출석</b><br />{w.lastAttendDate ? fmt(w.lastAttendDate) : "—"}</div>
+                      <div style={{ fontSize: 11.5 }}><b style={{ color: "var(--tx2)" }}>보강</b><br />{w.makeupStatus === "done" ? "✅ 완료" : w.makeupStatus === "incomplete" ? "⏳ 미완료" : "—"}{w.makeupNote ? " (" + w.makeupNote + ")" : ""}</div>
+                      <div style={{ fontSize: 11.5 }}><b style={{ color: "var(--tx2)" }}>담임 상담</b><br />{w.hrCounsel === "done" ? "✅ 완료" : w.hrCounsel === "incomplete" ? ("⏳ 미완료 · " + (w.hrReason === "call" ? "부재중 통화(" + ((w.hrCallDates || []).length) + "회)" : w.hrReason === "declined" ? "상담 원치 않음" : w.hrReason === "etc" ? (w.hrEtc || "기타") : "")) : "—"}{w.hrReason === "call" && (w.hrCallDates || []).length > 0 ? " [" + w.hrCallDates.map(function(d) { return d.slice(5).replace("-", "/"); }).join(", ") + "]" : ""}</div>
+                      <div style={{ fontSize: 11.5 }}><b style={{ color: "var(--pri)" }}>강사 사유</b><br />{WD_C_RLABEL[w.reason] || "—"} {w.reason && WD_C_RLABEL[w.reason] !== WD_RLABEL[wdReason4(w.reason)] && <span style={{ fontSize: 9.5, fontWeight: 700, color: "#9333ea", background: "#f3e8ff", borderRadius: 7, padding: "1px 6px" }}>→ {WD_RLABEL[wdReason4(w.reason)]}</span>}{w.reasonEtc ? " · " + w.reasonEtc : ""}</div>
+                      <div style={{ fontSize: 11.5 }}><b style={{ color: "#3730a3" }}>🤖 AI 사유</b><br />{WD_RLABEL[aiTo4(w.ai && w.ai.primary)] || "—"}</div>
+                    </div>
+                    {w.teacherNote && <div style={{ fontSize: 11.5, color: "var(--tx2)", marginBottom: 6 }}>메모: {w.teacherNote}</div>}
+                    {w.ai && w.ai.summary && <div style={{ fontSize: 11.5, background: "#eef2ff", borderRadius: 8, padding: "7px 10px", marginBottom: 8 }}><b style={{ color: "#3730a3" }}>🤖 AI 진단:</b> {w.ai.summary}</div>}
+                    {/* 관리자 검수 (정식 퇴원만) */}
+                    {delayed ? <div style={{ background: "#fef3c7", border: "1px solid #fde68a", borderRadius: 9, padding: "8px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 11.5, color: "#b45309", flex: 1, minWidth: 140 }}>⏳ 담임 상담 완료 시 정식 퇴원으로 전환됩니다. (현재 퇴원 미확정)</span>
+                      <button className="btn btn-s" style={{ background: "#10b981", color: "#fff", border: "1px solid #10b981", fontWeight: 700, fontSize: 11 }} onClick={function() { convertDelayed(w.id); }}>✅ 담임 상담 완료 · 정식 전환</button>
+                    </div> : <div style={{ background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 9, padding: "8px 10px" }}>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--tx)", marginBottom: 6 }}>🏫 학원 검수 — 강사 사유가 실제와 일치합니까?</div>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                        <button className="btn btn-s" style={{ background: w.match === true ? "#10b981" : "#fff", color: w.match === true ? "#fff" : "#065f46", border: "1px solid " + (w.match === true ? "#10b981" : "#a7f3d0"), fontWeight: 700 }} onClick={function() { review(w.id, true, ""); }}>일치</button>
+                        <button className="btn btn-s" style={{ background: w.match === false ? "#dc2626" : "#fff", color: w.match === false ? "#fff" : "#b91c1c", border: "1px solid " + (w.match === false ? "#dc2626" : "#fecaca"), fontWeight: 700 }} onClick={function() { review(w.id, false, w.realReason || ""); }}>불일치</button>
+                        {w.match === false && <select value={w.realReason || ""} onChange={function(e) { review(w.id, false, e.target.value); }} style={{ padding: "6px 8px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 12, fontFamily: "'Noto Sans KR'", background: "#fff" }}>
+                          <option value="">실제 사유 선택</option>
+                          {WD_C_REASONS.map(function(r) { return <option key={r.key} value={r.key}>{r.label}</option>; })}
+                        </select>}
+                        {!reviewed && <span style={{ fontSize: 10.5, color: "#b45309" }}>미검수 (점수 미산정)</span>}
+                        {w.match === false && !w.realReason && <span style={{ fontSize: 10.5, color: "#b91c1c" }}>실제 사유를 선택하세요</span>}
+                      </div>
+                    </div>}
                   </div>
                 );
               })}
@@ -588,22 +1340,53 @@ function fetchClientIP(cb) {
   } catch (e) { cb(""); }
 }
 
-function AdminAccessLogs({ accessLogs, setAccessLogs, forceSave }) {
+function AdminAccessLogs({ accessLogs, setAccessLogs, activityLogs, setActivityLogs, forceSave }) {
   var pad = function(x) { return x < 10 ? "0" + x : "" + x; };
   var monthRange = function(offset) { var n = new Date(); var d = new Date(n.getFullYear(), n.getMonth() + (offset || 0), 1); var y = d.getFullYear(), m = d.getMonth(); return [y + "-" + pad(m + 1) + "-01", y + "-" + pad(m + 1) + "-" + pad(new Date(y, m + 1, 0).getDate())]; };
   var _mr = monthRange(0);
+  var [mode, setMode] = useState("access");
+  var [archMonth, setArchMonth] = useState((new Date()).toISOString().slice(0, 7));
+  var [archRecs, setArchRecs] = useState([]);
+  var [archMsg, setArchMsg] = useState("");
   var [roleF, setRoleF] = useState("all");
+  var [nameQ, setNameQ] = useState("");
   var [fromD, setFromD] = useState(_mr[0]);
   var [toD, setToD] = useState(_mr[1]);
-  var RL = { admin: "관리자", manager: "매니저", instructor: "강사" };
-  var RC = { admin: "#c0392b", manager: "#7c5cbf", instructor: "#1a6fa8" };
+  var RL = { admin: "관리자", manager: "매니저", staff: "행정팀", instructor: "강사", student: "학생" };
+  var RC = { admin: "#c0392b", manager: "#7c5cbf", staff: "#0e7490", instructor: "#1a6fa8", student: "#10b981" };
   var fmt = function(t) { if (!t) return "—"; var d = new Date(t); if (isNaN(d.getTime())) return t; return d.getFullYear() + "." + pad(d.getMonth() + 1) + "." + pad(d.getDate()) + " " + pad(d.getHours()) + ":" + pad(d.getMinutes()); };
   var localDate = function(t) { var d = new Date(t); if (isNaN(d.getTime())) return ""; return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); };
 
   var logs = (accessLogs || []).slice().sort(function(a, b) { return (b.time || "").localeCompare(a.time || ""); });
   var lastTime = logs.length ? logs[0].time : null;
   var periodLogs = logs.filter(function(l) { var d = localDate(l.time); return (!fromD || d >= fromD) && (!toD || d <= toD); });
-  var filtered = roleF === "all" ? periodLogs : periodLogs.filter(function(l) { return l.role === roleF; });
+  var filtered = (roleF === "all" ? periodLogs : periodLogs.filter(function(l) { return l.role === roleF; })).filter(function(l) { return !nameQ.trim() || (l.userName || "").toLowerCase().indexOf(nameQ.trim().toLowerCase()) >= 0; });
+
+  var ACT = { "과제완료": { c: "#10b981", i: "✅" }, "완료취소": { c: "#f59e0b", i: "↩️" }, "영상시청": { c: "#e11d48", i: "🎬" }, "출석체크": { c: "#2563eb", i: "📋" }, "오답완료": { c: "#7c3aed", i: "📝" } };
+  var [actF, setActF] = useState("all");
+  var acts = (function() {
+    var merged = (activityLogs || []).concat(archRecs || []);
+    var seen = {}, out = [];
+    merged.forEach(function(r) { if (r && r.id && !seen[r.id]) { seen[r.id] = 1; out.push(r); } });
+    return out.sort(function(a, b) { return (b.time || "").localeCompare(a.time || ""); });
+  })();
+  var loadArchive = function() {
+    setArchMsg("불러오는 중...");
+    getDoc(doc(db, "appData", "arch_" + archMonth)).then(function(snap) {
+      if (snap.exists()) {
+        var d = snap.data();
+        var logs = (d && d.logs) || [];
+        setArchRecs(logs);
+        setFromD(archMonth + "-01");
+        var y = +archMonth.slice(0, 4), mo = +archMonth.slice(5, 7);
+        setToD(archMonth + "-" + pad(new Date(y, mo, 0).getDate()));
+        setArchMsg(logs.length ? (archMonth + " 아카이브 " + logs.length + "건 불러옴 (아래 목록에 포함)") : (archMonth + " 아카이브에 기록이 없습니다"));
+      } else { setArchRecs([]); setArchMsg(archMonth + " 아카이브가 없습니다 (아직 이관된 기록 없음)"); }
+    }).catch(function() { setArchMsg("불러오기 실패 — 잠시 후 다시 시도하세요"); });
+  };
+  var periodActs = acts.filter(function(l) { var d = localDate(l.time); return (!fromD || d >= fromD) && (!toD || d <= toD); });
+  var filteredActs = (actF === "all" ? periodActs : periodActs.filter(function(l) { return l.action === actF; })).filter(function(l) { return !nameQ.trim() || (l.userName || "").toLowerCase().indexOf(nameQ.trim().toLowerCase()) >= 0; });
+  var actCount = function(key) { return key === "all" ? periodActs.length : periodActs.filter(function(l) { return l.action === key; }).length; };
 
   var clearAll = function() { if (window.confirm("접속 기록을 모두 삭제할까요?")) { setAccessLogs(function() { return []; }); forceSave(); } };
   var setThisMonth = function() { var r = monthRange(0); setFromD(r[0]); setToD(r[1]); };
@@ -611,9 +1394,21 @@ function AdminAccessLogs({ accessLogs, setAccessLogs, forceSave }) {
   var setAllPeriod = function() { setFromD(""); setToD(""); };
 
   var downloadExcel = function() {
+    if (mode === "activity") {
+      if (filteredActs.length === 0) { window.alert("다운로드할 활동 기록이 없습니다."); return; }
+      var arows = [["구분", "사용자", "반", "행동", "상세", "일시"]];
+      filteredActs.forEach(function(l) { arows.push([RL[l.role] || l.role, l.userName, l.classId || "", l.action, l.detail || "", fmt(l.time)]); });
+      var acsv = "\uFEFF" + arows.map(function(r) { return r.map(function(c) { var s = String(c == null ? "" : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(","); }).join("\r\n");
+      var ablob = new Blob([acsv], { type: "text/csv;charset=utf-8;" });
+      var aurl = URL.createObjectURL(ablob);
+      var aa = document.createElement("a"); aa.href = aurl;
+      aa.download = "ROUTETOP_활동기록_" + (fromD || "전체") + "~" + (toD || "전체") + ".csv";
+      document.body.appendChild(aa); aa.click(); document.body.removeChild(aa); URL.revokeObjectURL(aurl);
+      return;
+    }
     if (filtered.length === 0) { window.alert("다운로드할 접속 기록이 없습니다."); return; }
-    var rows = [["구분", "사용자", "접속일시", "IP주소"]];
-    filtered.forEach(function(l) { rows.push([RL[l.role] || l.role, l.userName, fmt(l.time), l.ip || "확인불가"]); });
+    var rows = [["구분", "사용자", "반", "접속일시", "IP주소"]];
+    filtered.forEach(function(l) { rows.push([RL[l.role] || l.role, l.userName, l.classId || "", fmt(l.time), l.ip || "확인불가"]); });
     var csv = "\uFEFF" + rows.map(function(r) { return r.map(function(c) { var s = String(c == null ? "" : c); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(","); }).join("\r\n");
     var blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     var url = URL.createObjectURL(blob);
@@ -633,9 +1428,21 @@ function AdminAccessLogs({ accessLogs, setAccessLogs, forceSave }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700 }}>🔐 접속 기록</h3>
-        <span style={{ fontSize: 12, color: "var(--tx2)" }}>마지막 접속: {lastTime ? fmt(lastTime) : "—"}</span>
-        {logs.length > 0 && <button className="btn btn-g btn-s" style={{ marginLeft: "auto", color: "#c0392b" }} onClick={clearAll}>전체 삭제</button>}
+        <h3 style={{ fontSize: 15, fontWeight: 700 }}>{mode === "activity" ? "📋 활동 상세 기록" : "🔐 접속 기록"}</h3>
+        <span style={{ fontSize: 12, color: "var(--tx2)" }}>{mode === "activity" ? "학생 행동 기록" : "마지막 접속: " + (lastTime ? fmt(lastTime) : "—")}</span>
+        {mode === "access" && logs.length > 0 && <button className="btn btn-g btn-s" style={{ marginLeft: "auto", color: "#c0392b" }} onClick={clearAll}>전체 삭제</button>}
+        {mode === "activity" && (activityLogs || []).length > 0 && <button className="btn btn-g btn-s" style={{ marginLeft: "auto", color: "#c0392b" }} onClick={function() { if (window.confirm("활동 기록을 모두 삭제할까요?")) { setActivityLogs(function() { return []; }); forceSave(); } }}>전체 삭제</button>}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 12, background: "#f3f4f6", padding: 4, borderRadius: 12 }}>
+        <button onClick={function() { setMode("access"); }} style={{ flex: 1, padding: "9px", borderRadius: 9, border: "none", background: mode === "access" ? "#fff" : "transparent", color: mode === "access" ? "var(--tx)" : "var(--tx2)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Noto Sans KR'", boxShadow: mode === "access" ? "0 1px 3px rgba(0,0,0,.1)" : "none" }}>🔐 접속</button>
+        <button onClick={function() { setMode("activity"); }} style={{ flex: 1, padding: "9px", borderRadius: 9, border: "none", background: mode === "activity" ? "#fff" : "transparent", color: mode === "activity" ? "var(--tx)" : "var(--tx2)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Noto Sans KR'", boxShadow: mode === "activity" ? "0 1px 3px rgba(0,0,0,.1)" : "none" }}>📋 활동 상세</button>
+      </div>
+
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 14, color: "var(--tx2)" }}>🔍</span>
+        <input value={nameQ} onChange={function(e) { setNameQ(e.target.value); }} placeholder="이름으로 검색" style={{ width: "100%", padding: "10px 34px", border: "1px solid var(--bdr)", borderRadius: 10, fontSize: 13, fontFamily: "'Noto Sans KR'", boxSizing: "border-box" }} />
+        {nameQ && <button onClick={function() { setNameQ(""); }} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", fontSize: 15, color: "var(--tx2)", cursor: "pointer" }}>✕</button>}
       </div>
 
       {/* 기간 설정 + 엑셀 다운로드 */}
@@ -657,11 +1464,13 @@ function AdminAccessLogs({ accessLogs, setAccessLogs, forceSave }) {
         </div>
       </div>
 
+      {mode === "access" ? <>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
         {pill("all", "전체 " + roleCount("all"))}
-        {pill("admin", "관리자 " + roleCount("admin"))}
-        {pill("manager", "매니저 " + roleCount("manager"))}
+        {pill("student", "학생 " + roleCount("student"))}
         {pill("instructor", "강사 " + roleCount("instructor"))}
+        {pill("manager", "매니저 " + roleCount("manager"))}
+        {pill("admin", "관리자 " + roleCount("admin"))}
       </div>
 
       {filtered.length === 0 ? <div className="empty"><div className="eic">🔐</div><p>해당 기간의 접속 기록이 없습니다</p></div> :
@@ -673,19 +1482,52 @@ function AdminAccessLogs({ accessLogs, setAccessLogs, forceSave }) {
             return (
               <div key={l.id} style={{ display: "flex", alignItems: "center", padding: "9px 12px", background: "#fff", border: "1px solid var(--bdr)", borderRadius: 10, marginBottom: 6 }}>
                 <span style={{ width: 54 }}><span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: RC[l.role] || "#888", borderRadius: 8, padding: "2px 7px" }}>{RL[l.role] || l.role}</span></span>
-                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>{l.userName}</span>
+                <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700 }}>{l.userName}{l.role === "student" && l.classId ? <span style={{ fontSize: 11, fontWeight: 600, color: "var(--tx2)", marginLeft: 6 }}>{l.classId}</span> : ""}</span>
                 <span style={{ width: 116, textAlign: "right", fontSize: 12, color: "var(--tx)" }}>{fmt(l.time)}</span>
                 <span style={{ width: 108, textAlign: "right", fontSize: 11.5, color: "var(--tx2)", fontFamily: "monospace" }}>{l.ip || "확인불가"}</span>
               </div>
             );
           })}
         </div>}
-      <div style={{ fontSize: 11, color: "var(--tx2)", marginTop: 10, lineHeight: 1.5 }}>＊ 기본 조회 기간은 이번 달(1일~말일)입니다. IP는 로그인 시점의 공인 IP이며 최근 500건까지 보관됩니다. 엑셀 다운로드는 현재 조회된 기록을 CSV(UTF-8)로 저장합니다.</div>
+      <div style={{ fontSize: 11, color: "var(--tx2)", marginTop: 10, lineHeight: 1.5 }}>＊ 기본 조회 기간은 이번 달(1일~말일)입니다. IP는 로그인 시점의 공인 IP이며 최근 500건까지 보관됩니다.</div>
+      </> : <>
+      {(activityLogs || []).length >= 900 && <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "12px 14px", borderRadius: 10, marginBottom: 12, background: "#fff7ed", border: "1px solid #fed7aa", color: "#c2410c", fontSize: 12.5, fontWeight: 600 }}><span style={{ fontSize: 18 }}>⚠️</span><span style={{ flex: 1, minWidth: 160 }}>활동 기록이 {(activityLogs || []).length}건이에요. <b>1,000건</b>을 넘으면 오래된 기록은 <b>아카이브로 자동 이관</b>됩니다. (아래에서 언제든 다시 불러올 수 있어요)</span><button className="btn btn-p btn-s" onClick={downloadExcel}>📥 지금 엑셀 저장</button></div>}
+      <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "12px 14px", marginBottom: 14 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 8 }}>📦 과거 기록 불러오기 <span style={{ fontSize: 11, fontWeight: 400, color: "var(--tx2)" }}>— 1,000건을 넘어 이관된 오래된 기록도 조회·저장할 수 있어요</span></div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <input type="month" value={archMonth} onChange={function(e) { setArchMonth(e.target.value); }} style={dInput} />
+          <button className="btn btn-g btn-s" onClick={loadArchive}>📂 불러오기</button>
+          {archRecs.length > 0 && <button className="btn btn-g btn-s" onClick={function() { setArchRecs([]); setArchMsg(""); }}>지우기</button>}
+          {archMsg && <span style={{ fontSize: 11.5, color: "var(--pri)", fontWeight: 600 }}>{archMsg}</span>}
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
+        <button onClick={function() { setActF("all"); }} style={qBtn(actF === "all")}>전체 {actCount("all")}</button>
+        {Object.keys(ACT).map(function(k) { return <button key={k} onClick={function() { setActF(k); }} style={qBtn(actF === k)}>{ACT[k].i} {k} {actCount(k)}</button>; })}
+      </div>
+      {filteredActs.length === 0 ? <div className="empty"><div className="eic">📋</div><p>해당 기간의 활동 기록이 없습니다</p></div> :
+        <div>
+          {filteredActs.map(function(l) {
+            var meta = ACT[l.action] || { c: "#888", i: "•" };
+            return (
+              <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", background: "#fff", border: "1px solid var(--bdr)", borderRadius: 10, marginBottom: 6 }}>
+                <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: meta.c, borderRadius: 8, padding: "2px 8px", whiteSpace: "nowrap" }}>{meta.i} {l.action}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{l.userName}{l.classId ? <span style={{ fontSize: 11, fontWeight: 600, color: "var(--tx2)", marginLeft: 6 }}>{l.classId}</span> : ""}</div>
+                  {l.detail && <div style={{ fontSize: 11.5, color: "var(--tx2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.detail}</div>}
+                </div>
+                <span style={{ fontSize: 11.5, color: "var(--tx2)", textAlign: "right", whiteSpace: "nowrap" }}>{fmt(l.time)}</span>
+              </div>
+            );
+          })}
+        </div>}
+      <div style={{ fontSize: 11, color: "var(--tx2)", marginTop: 10, lineHeight: 1.5 }}>＊ 학생이 과제 완료·완료 취소·수업 영상 시청 시 기록됩니다. 최근 1,000건은 즉시 조회되고, 초과분은 <b>월별 아카이브에 자동 보관</b>되어 위 "📦 과거 기록 불러오기"로 언제든 조회·저장할 수 있습니다.</div>
+      </>}
     </div>
   );
 }
 
-function AdminPage({ users, setUsers, textbooks, setTextbooks, curriculum, setCurriculum, allA, sp, classList, setClassList, hideCount, ohdap, setOhdap, forceSave, attendance, setAttendance, scores, setScores, selfCodes, setSelfCodes, messages, cur, withdrawals, setWithdrawals, counsels, setCounsels, accessLogs, setAccessLogs }) {
+function AdminPage({ users, setUsers, textbooks, setTextbooks, curriculum, setCurriculum, allA, sp, classList, setClassList, hideCount, ohdap, setOhdap, forceSave, attendance, setAttendance, scores, setScores, selfCodes, setSelfCodes, messages, cur, withdrawals, setWithdrawals, counsels, setCounsels, accessLogs, setAccessLogs, videos, setVideos, activityLogs, setActivityLogs, makeups, setMakeups, collections, setCollections, diagnostics, setDiagnostics, progressReqs, setProgressReqs, holidays, agreements }) {
   var [tab, setTab] = useState("students");
   var [openThread, setOpenThread] = useState(null);
   var students = users.filter(function(u) { return u.role === "student"; });
@@ -696,7 +1538,7 @@ function AdminPage({ users, setUsers, textbooks, setTextbooks, curriculum, setCu
   // Combine registered classes + classes from students
   var allClasses = classList.slice();
   students.forEach(function(s) { if (allClasses.indexOf(s.classId) === -1) allClasses.push(s.classId); });
-  allClasses.sort();
+  allClasses.sort(classCmp);
   return (
     <div>
       <div className="ph"><h2>{hideCount ? "👔 매니저 페이지" : "🛡️ 관리자 페이지"}</h2><p>학생, 강사, 교재, 진도를 관리하세요</p></div>
@@ -733,33 +1575,69 @@ function AdminPage({ users, setUsers, textbooks, setTextbooks, curriculum, setCu
       </div></div>}
 
       <div className="tabs notranslate" translate="no">
-        {[["students", "🎒 학생"], ["attendance", "📋 출석"], ["scores", "📝 성적"], ["ohdap", "📝 오답데이"], ["stats", "📊 통계·결과"], ["instructors", "👨‍🏫 직원"], ["parents", "👨‍👩‍👧 학부모"], ["textbooks", "📚 교재"], ["curriculum", "📖 진도배정"], ["withdrawals", "🚪 퇴원"], ...(cur && cur.role === "admin" ? [["access", "🔐 접속기록"]] : []), ["settings", "⚙️ 설정"]].map(function(item) {
+        {[["students", "🎒 학생"], ["attendance", "📋 출석"], ["scores", "📝 성적"], ["ohdap", "📝 오답데이"], ["videos", "🎬 수업영상"], ["stats", "📊 과제통계"], ["counsels", "💬 상담" + ((counsels || []).filter(function(c) { return c.status === "needed" && c.kind !== "withdraw"; }).length > 0 ? " ●" : "")], ["instructors", "👨‍🏫 직원"], ["parents", "👨‍👩‍👧 학부모"], ["textbooks", "📚 교재"], ["curriculum", "📖 진도배정"], ["diagnostics", "🩺 진단지"], ["withdrawals", "🚪 퇴원통계"], ...(cur && (cur.role === "admin" || cur.role === "staff") ? [["contacts", "📞 연락 대상"]] : []), ...(cur && cur.role === "admin" ? [["access", "🔐 접속기록"]] : []), ["settings", "⚙️ 설정"]].map(function(item) {
           var k = item[0], l = item[1];
           return <button key={k} className={cn("tab", tab === k && "on")} onClick={function() { setTab(k); }}>{l}</button>;
         })}
       </div>
-      {tab === "students" && <AdminStudents users={users} setUsers={setUsers} allClasses={allClasses} hideCount={hideCount} forceSave={forceSave} allA={allA} sp={sp} scores={scores} attendance={attendance} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={setWithdrawals} />}
-      {tab === "attendance" && <AdminAttendance users={users} attendance={attendance} setAttendance={setAttendance} forceSave={forceSave} selfCodes={selfCodes} setSelfCodes={setSelfCodes} />}
+      {tab === "students" && <AdminStudents users={users} setUsers={setUsers} allClasses={allClasses} hideCount={hideCount} forceSave={forceSave} allA={allA} sp={sp} scores={scores} attendance={attendance} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={setWithdrawals} counsels={counsels} setCounsels={setCounsels} />}
+      {tab === "attendance" && <AdminAttendance users={users} attendance={attendance} setAttendance={setAttendance} forceSave={forceSave} selfCodes={selfCodes} setSelfCodes={setSelfCodes} makeups={makeups} setMakeups={setMakeups} holidays={holidays} agreements={agreements} cur={cur} />}
       {tab === "scores" && <AdminScores users={users} scores={scores} setScores={setScores} forceSave={forceSave} cur={cur} counsels={counsels} setCounsels={setCounsels} />}
       {tab === "ohdap" && <AdminOhdap users={users} ohdap={ohdap} setOhdap={setOhdap} forceSave={forceSave} />}
-      {tab === "settings" && <AdminSettings users={users} setUsers={setUsers} classList={classList} setClassList={setClassList} forceSave={forceSave} hideCount={hideCount} />}
+      {tab === "settings" && <AdminSettings users={users} setUsers={setUsers} classList={classList} setClassList={setClassList} forceSave={forceSave} hideCount={hideCount} attendance={attendance} setAttendance={setAttendance} makeups={makeups} setMakeups={setMakeups} />}
       {tab === "stats" && <AdminStats users={users} allA={allA} sp={sp} hideCount={hideCount} />}
-      {tab === "instructors" && <AdminInstructors users={users} setUsers={setUsers} forceSave={forceSave} allClasses={allClasses} withdrawals={withdrawals} />}
+      {tab === "counsels" && <AdminCounsels users={users} counsels={counsels} setCounsels={setCounsels} forceSave={forceSave} cur={cur} />}
+      {tab === "instructors" && <AdminInstructors users={users} setUsers={setUsers} forceSave={forceSave} allClasses={allClasses} withdrawals={withdrawals} collections={collections} curriculum={curriculum} diagnostics={diagnostics} agreements={agreements} />}
       {tab === "parents" && <AdminParents users={users} setUsers={setUsers} forceSave={forceSave} />}
       {tab === "textbooks" && <AdminTextbooks textbooks={textbooks} setTextbooks={setTextbooks} />}
-      {tab === "curriculum" && <AdminCurriculum users={users} textbooks={textbooks} curriculum={curriculum} setCurriculum={setCurriculum} />}
-      {tab === "withdrawals" && <AdminWithdrawals withdrawals={withdrawals} setWithdrawals={setWithdrawals} users={users} forceSave={forceSave} />}
-      {tab === "access" && cur && cur.role === "admin" && <AdminAccessLogs accessLogs={accessLogs} setAccessLogs={setAccessLogs} forceSave={forceSave} />}
+      {tab === "curriculum" && <AdminCurriculum users={users} textbooks={textbooks} curriculum={curriculum} setCurriculum={setCurriculum} collections={collections} setCollections={setCollections} progressReqs={progressReqs} setProgressReqs={setProgressReqs} forceSave={forceSave} />}
+      {tab === "diagnostics" && <><DiagHoldAlerts diagnostics={diagnostics} students={users.filter(function(u){return u.role==="student";})} /><ByTeacherAlerts title="진단지 미발송 알림" icon="🩺" students={users.filter(function(u){return u.role==="student";})} users={users} countFn={function(ss) { return computeDiagAlerts(diagnostics, ss).length; }} renderFn={function(ss) { return <DiagAlerts diagnostics={diagnostics} students={ss} bare={true} />; }} /><AdminDiagnostics users={users} diagnostics={diagnostics} setDiagnostics={setDiagnostics} forceSave={forceSave} /></>}
+      {tab === "withdrawals" && <AdminWithdrawals withdrawals={withdrawals} setWithdrawals={setWithdrawals} users={users} setUsers={setUsers} forceSave={forceSave} />}
+      {tab === "contacts" && <ContactAlerts withdrawals={withdrawals} setWithdrawals={setWithdrawals} users={users} setUsers={setUsers} forceSave={forceSave} />}
+      {tab === "videos" && <AdminVideos videos={videos} setVideos={setVideos} classList={classList} forceSave={forceSave} />}
+      {tab === "access" && cur && cur.role === "admin" && <AdminAccessLogs accessLogs={accessLogs} setAccessLogs={setAccessLogs} activityLogs={activityLogs} setActivityLogs={setActivityLogs} forceSave={forceSave} />}
     </div>
   );
 }
 
-function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA, sp, scores, attendance, messages, cur, withdrawals, setWithdrawals }) {
+function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA, sp, scores, attendance, messages, cur, withdrawals, setWithdrawals, counsels, setCounsels }) {
   var [wdStudent, setWdStudent] = useState(null);
   var wdCtx = { allA: allA, sp: sp, scores: scores, attendance: attendance, messages: messages, users: users };
-  var isWithdrawn = function(sid) { return (withdrawals || []).some(function(w) { return w.studentId === sid; }); };
+  var isWithdrawn = function(sid) { return (withdrawals || []).some(function(w) { return w.studentId === sid && w.status !== "delayed"; }); };
+  var isDelayed = function(sid) { return (withdrawals || []).some(function(w) { return w.studentId === sid && w.status === "delayed"; }); };
+  var wdFlagged = function(sid) { return (counsels || []).some(function(c) { return c.studentId === sid && c.kind === "withdraw" && c.status === "needed"; }); };
+  var detectWithdraw = function(s) {
+    if (wdFlagged(s.id)) return;
+    var hr = findHomeroom(s, users);
+    if (!window.confirm("\uD83D\uDEA8 " + s.name + " \uD559\uC0DD\uC744 '\uD1F4\uC6D0 \uAC10\uC9C0'\uB85C \uB2F4\uC784" + (hr ? "(" + hr.name + ")" : "") + "\uC5D0\uAC8C \uC54C\uB9B4\uAE4C\uC694?\n\uB2F4\uC784 \uD654\uBA74\uC5D0 \uD1F4\uC6D0 \uC808\uCC28 \uC9C4\uD589 \uC54C\uB9BC\uC774 \uD45C\uC2DC\uB429\uB2C8\uB2E4.")) return;
+    var rec = { id: "cs_" + mkid(), kind: "withdraw", studentId: s.id, studentName: s.name, classId: s.classId, teacherId: hr ? hr.id : "", teacherName: hr ? hr.name : "", reason: "\uD83D\uDEAA \uD1F4\uC6D0 \uAC10\uC9C0 \u2014 \uD1F4\uC6D0 \uC808\uCC28\uB97C \uC9C4\uD589\uD574 \uC8FC\uC138\uC694", note: "", status: "needed", date: td(), by: cur ? { id: cur.id, role: cur.role, name: cur.name } : {} };
+    setCounsels(function(p) { return (p || []).concat([rec]); });
+    if (forceSave) forceSave();
+  };
+  var cancelDetect = function(sid) {
+    setCounsels(function(p) { return (p || []).filter(function(c) { return !(c.studentId === sid && c.kind === "withdraw" && c.status === "needed"); }); });
+    if (forceSave) forceSave();
+  };
+  var riskFlagged = function(sid) { return (counsels || []).some(function(c) { return c.studentId === sid && c.kind === "withdrawrisk" && c.status === "needed"; }); };
+  var detectRisk = function(s) {
+    if (riskFlagged(s.id)) return;
+    var hr = findHomeroom(s, users);
+    if (!window.confirm("⚠️ " + s.name + " 학생을 '퇴원 우려'로 담임" + (hr ? "(" + hr.name + ")" : "") + "에게 알릴까요?\n컴플레인 접수 등으로 퇴원이 우려되는 경우입니다. 담임 화면에 퇴원 방지 상담 알림이 표시됩니다.")) return;
+    var rec = { id: "cs_" + mkid(), kind: "withdrawrisk", studentId: s.id, studentName: s.name, classId: s.classId, teacherId: hr ? hr.id : "", teacherName: hr ? hr.name : "", reason: "⚠️ 퇴원 우려 (컴플레인 접수) — 퇴원 방지 상담을 진행해 주세요", note: "", status: "needed", date: td(), by: cur ? { id: cur.id, role: cur.role, name: cur.name } : {} };
+    setCounsels(function(p) { return (p || []).concat([rec]); });
+    if (forceSave) forceSave();
+  };
+  var cancelRisk = function(sid) {
+    setCounsels(function(p) { return (p || []).filter(function(c) { return !(c.studentId === sid && c.kind === "withdrawrisk" && c.status === "needed"); }); });
+    if (forceSave) forceSave();
+  };
+  var askWithdraw = function(s) {
+    if (window.confirm("퇴원 상담을 하셨습니까?\n\n[확인] 예 — 퇴원서 작성\n[취소] 아니오")) { setWdStudent(Object.assign({}, s, { _counseled: true })); return; }
+    window.alert("⚠️ 퇴원 상담을 먼저 진행해야 퇴원 처리를 할 수 있습니다.\n상담 완료 후 다시 시도해 주세요.\n\n(퇴원서 접수와 퇴원 상담이 모두 완료되어야 퇴원 처리가 됩니다.)");
+  };
   var confirmWithdraw = function(rec) {
     setWithdrawals(function(p) { return (p || []).concat([rec]); });
+    if (setCounsels) setCounsels(function(p) { return (p || []).map(function(c) { return (c.studentId === rec.studentId && c.kind === "withdraw" && c.status === "needed") ? Object.assign({}, c, { status: "done", doneDate: td(), doneBy: cur ? cur.name : "" }) : c; }); });
     setWdStudent(null);
     forceSave();
   };
@@ -804,6 +1682,7 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
   var [editNm, setEditNm] = useState("");
   var [editCls, setEditCls] = useState("");
   var [editPw, setEditPw] = useState("");
+  var [editJoin, setEditJoin] = useState("");
 
   var students = users.filter(function(u) { return u.role === "student"; });
   var classes = allClasses;
@@ -817,7 +1696,7 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
   var addSingle = function() {
     if (!nm.trim()) return;
     var av = STU_AVATARS[Math.floor(Math.random() * STU_AVATARS.length)];
-    setUsers(function(p) { return p.concat([{ id: "stu_" + mkid(), name: nm.trim(), role: "student", password: pw || "1234", classId: cls, avatar: av }]); });
+    setUsers(function(p) { return p.concat([{ id: "stu_" + mkid(), name: nm.trim(), role: "student", password: pw || "1234", classId: cls, avatar: av, joinDate: td() }]); });
     setNm(""); setPw("1234"); setShowAdd(false); forceSave();
   };
 
@@ -899,7 +1778,7 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
     var items = bulkPreview;
     if (items.length === 0) return;
     var newUsers = items.map(function(item) {
-      return { id: "stu_" + mkid() + Math.random().toString(36).slice(2, 4), name: item.name, role: "student", password: item.password, classId: item.classId, avatar: item.avatar };
+      return { id: "stu_" + mkid() + Math.random().toString(36).slice(2, 4), name: item.name, role: "student", password: item.password, classId: item.classId, avatar: item.avatar, joinDate: td() };
     });
     setUsers(function(p) { return p.concat(newUsers); });
     setBulkSuccess(newUsers.length + "명의 학생이 추가되었습니다!");
@@ -908,10 +1787,10 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
     forceSave();
   };
 
-  var openEdit = function(s) { setShowEdit(s.id); setEditNm(s.name); setEditCls(s.classId); setEditPw(s.password); };
+  var openEdit = function(s) { setShowEdit(s.id); setEditNm(s.name); setEditCls(s.classId); setEditPw(s.password); setEditJoin(s.joinDate || ""); };
   var saveEdit = function() {
     if (!editNm.trim()) return;
-    setUsers(function(p) { return p.map(function(u) { return u.id === showEdit ? Object.assign({}, u, { name: editNm.trim(), classId: editCls, password: editPw || "1234" }) : u; }); });
+    setUsers(function(p) { return p.map(function(u) { return u.id === showEdit ? Object.assign({}, u, { name: editNm.trim(), classId: editCls, password: editPw || "1234", joinDate: editJoin || u.joinDate || "" }) : u; }); });
     setShowEdit(null); forceSave();
   };
 
@@ -959,23 +1838,39 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
       {hideCount && cf === "all" && <div style={{ padding: 20, textAlign: "center", background: "#f9fafb", borderRadius: "var(--r)", marginTop: 10 }}><div style={{ fontSize: 30, marginBottom: 8 }}>🏫</div><div style={{ fontSize: 13, color: "var(--tx2)", fontWeight: 600 }}>반을 선택하면 학생 목록이 표시됩니다</div></div>}
 
       {(!hideCount || cf !== "all") && (filtered.length === 0 ? <div className="empty"><div className="eic">🎒</div><p>등록된 학생이 없습니다</p></div> :
+        <>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", fontSize: 11, color: "var(--tx2)", background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 8, padding: "7px 11px", margin: "10px 0 8px" }}>
+          <b style={{ color: "var(--tx)" }}>퇴원 표시</b>
+          <span><span style={{ fontSize: 9, fontWeight: 800, color: "#dc2626", background: "#fef2f2", borderRadius: 6, padding: "1px 5px" }}>퇴원</span> 퇴원 처리된 학생</span>
+          <span><span style={{ fontSize: 9, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 6, padding: "1px 5px" }}>지연</span> 담임 상담 미완료로 퇴원 지연</span>
+          <span><b style={{ color: "#dc2626" }}>🚪</b> 퇴원 처리 · <b style={{ color: "#2563eb" }}>↩ 퇴원취소</b>/<b style={{ color: "#b45309" }}>지연취소</b> 복원</span>
+        </div>
         <div className="stu-grid">
           {filtered.map(function(s) {
             var wd = isWithdrawn(s.id);
+            var dl = isDelayed(s.id);
             return (
-              <div key={s.id} className="stu-card" style={wd ? { opacity: 0.6 } : null}>
-                <div className="stu-card-av">{s.avatar}</div>
-                <div className="stu-card-info"><div className="stu-card-name">{s.name}{wd && <span style={{ fontSize: 9, fontWeight: 800, color: "#dc2626", background: "#fef2f2", borderRadius: 8, padding: "1px 6px", marginLeft: 6 }}>퇴원</span>}</div><div className="stu-card-meta">{s.classId}{!hideCount && " · 비번: " + s.password}</div></div>
-                <div className="stu-card-actions">
-                  {!hideCount && !wd && <button className="btn btn-g btn-s" onClick={function() { openEdit(s); }}>수정</button>}
-                  {wd ? <button className="btn btn-g btn-s" style={{ color: "var(--tx2)" }} onClick={function() { undoWithdraw(s.id); }}>되돌리기</button>
-                      : <button className="btn btn-g btn-s" style={{ color: "#dc2626", borderColor: "#fecaca" }} onClick={function() { setWdStudent(s); }}>🚪 퇴원</button>}
-                  {!hideCount && !wd && <button className="btn-d" style={{ fontSize: 14 }} onClick={function() { if (window.confirm("삭제할까요?")) { setUsers(function(p) { return p.filter(function(u) { return u.id !== s.id; }); }); forceSave(); } }}>✕</button>}
+              <div key={s.id} className="stu-card" style={{ gap: 6, padding: "5px 8px", opacity: wd ? 0.6 : 1 }}>
+                <div className="stu-card-av" style={{ width: 22, height: 22, fontSize: 11, flexShrink: 0, borderRadius: 6 }}>{stuAvatar(s)}</div>
+                <div style={{ flex: 1, minWidth: 0 }}><div className="stu-card-name" style={{ fontSize: 11, wordBreak: "keep-all", lineHeight: 1.2 }}>{s.name}{wd && <span style={{ fontSize: 7, fontWeight: 800, color: "#dc2626", background: "#fef2f2", borderRadius: 6, padding: "0 3px", marginLeft: 3 }}>퇴원</span>}{!wd && dl && <span style={{ fontSize: 7, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 6, padding: "0 3px", marginLeft: 3 }}>지연</span>}{!wd && !dl && wdFlagged(s.id) && <span style={{ fontSize: 7, fontWeight: 800, color: "#9333ea", background: "#f3e8ff", borderRadius: 6, padding: "0 3px", marginLeft: 3 }}>감지</span>}{!wd && !dl && riskFlagged(s.id) && <span style={{ fontSize: 7, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 6, padding: "0 3px", marginLeft: 3 }}>우려</span>}</div><div className="stu-card-meta" style={{ fontSize: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.classId}{!hideCount && " · " + s.password}</div></div>
+                <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+                  {!hideCount && !wd && <button className="btn btn-g btn-s" style={{ fontSize: 9, padding: "2px 5px" }} onClick={function() { openEdit(s); }}>수정</button>}
+                  {!wd && !dl && (wdFlagged(s.id)
+                    ? <button className="btn btn-s" style={{ fontSize: 9, padding: "2px 5px", background: "#f3e8ff", color: "#9333ea", border: "1px solid #e9d5ff", fontWeight: 700 }} onClick={function() { cancelDetect(s.id); }}>감지취소</button>
+                    : <button className="btn btn-s" style={{ fontSize: 9, padding: "2px 5px", background: "#fff", color: "#9333ea", border: "1px solid #e9d5ff", fontWeight: 700 }} onClick={function() { detectWithdraw(s); }}>🚨 퇴원감지</button>)}
+                  {!wd && !dl && (riskFlagged(s.id)
+                    ? <button className="btn btn-s" style={{ fontSize: 9, padding: "2px 5px", background: "#fef3c7", color: "#b45309", border: "1px solid #fde68a", fontWeight: 700 }} onClick={function() { cancelRisk(s.id); }}>우려취소</button>
+                    : <button className="btn btn-s" style={{ fontSize: 9, padding: "2px 5px", background: "#fff", color: "#b45309", border: "1px solid #fde68a", fontWeight: 700 }} onClick={function() { detectRisk(s); }}>⚠️ 퇴원우려</button>)}
+                  {wd ? <button className="btn btn-g btn-s" style={{ fontSize: 9, padding: "2px 5px", color: "#2563eb", borderColor: "#bfdbfe", fontWeight: 700 }} onClick={function() { undoWithdraw(s.id); }}>↩ 퇴원취소</button>
+                    : dl ? <button className="btn btn-g btn-s" style={{ fontSize: 9, padding: "2px 5px", color: "#b45309", borderColor: "#fde68a", fontWeight: 700 }} onClick={function() { undoWithdraw(s.id); }}>↩ 지연취소</button>
+                      : <button className="btn btn-g btn-s" style={{ fontSize: 9, padding: "2px 4px", color: "#dc2626", borderColor: "#fecaca" }} onClick={function() { askWithdraw(s); }}>🚪</button>}
+                  {!hideCount && !wd && <button className="btn-d" style={{ fontSize: 11 }} onClick={function() { if (window.confirm("삭제할까요?")) { setUsers(function(p) { return p.filter(function(u) { return u.id !== s.id; }); }); forceSave(); } }}>✕</button>}
                 </div>
               </div>
             );
           })}
         </div>
+        </>
       )}
 
       {wdStudent && <WithdrawalModal student={wdStudent} ctx={wdCtx} cur={cur} onClose={function() { setWdStudent(null); }} onConfirm={confirmWithdraw} />}
@@ -1127,7 +2022,7 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
               });
             })()}
           </div>
-          <div className="bulk-preview">{bulkPreview.map(function(p, i) { return <div key={i} className="bulk-item"><span>{p.avatar}</span><span style={{ fontWeight: 600 }}>{p.name}</span><span className="chip">{p.classId}</span></div>; })}</div>
+          <div className="bulk-preview">{bulkPreview.map(function(p, i) { return <div key={i} className="bulk-item"><span>{stuAvatar(p)}</span><span style={{ fontWeight: 600 }}>{p.name}</span><span className="chip">{p.classId}</span></div>; })}</div>
         </div>}
         <div className="br"><button className="btn btn-g" onClick={function() { setShowBulk(false); setBulkFileMsg(""); setBulkMode("text"); }}>취소</button><button className="btn btn-p" onClick={function() { addBulk(); setBulkFileMsg(""); }}>{bulkPreview.length}명 등록하기</button></div>
       </div></div>}
@@ -1138,6 +2033,7 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
         <div className="row2">
           <ClassSelect value={editCls} onChange={setEditCls} classes={classes} label="반" editKey={showEdit} />
           <div className="fg"><label>비밀번호</label><input value={editPw} onChange={function(e) { setEditPw(e.target.value); }} /></div>
+          <div className="fg"><label>등록일 (신입생 3주 알림 기준)</label><input type="date" value={editJoin} onChange={function(e) { setEditJoin(e.target.value); }} /></div>
         </div>
         <div className="br"><button className="btn btn-g" onClick={function() { setShowEdit(null); }}>취소</button><button className="btn btn-p" onClick={saveEdit}>저장</button></div>
       </div></div>}
@@ -1145,7 +2041,49 @@ function AdminStudents({ users, setUsers, allClasses, hideCount, forceSave, allA
   );
 }
 
-function AdminSettings({ users, setUsers, classList, setClassList, forceSave, hideCount }) {
+function AdminCounsels({ users, counsels, setCounsels, forceSave, cur }) {
+  var [modal, setModal] = useState(null);
+  var needed = (counsels || []).filter(function(c) { return c.status === "needed" && c.kind !== "withdraw"; });
+  var save = function(id, note) { setCounsels(function(p) { return (p || []).map(function(c) { return c.id === id ? Object.assign({}, c, { note: note, status: "done", doneDate: td(), doneBy: cur ? cur.name : "" }) : c; }); }); setModal(null); if (forceSave) forceSave(); };
+  var groups = {};
+  needed.forEach(function(c) { var k = c.teacherName || "담임 미지정"; (groups[k] = groups[k] || []).push(c); });
+  var names = Object.keys(groups).sort(function(a, b) { return groups[b].length - groups[a].length; });
+  var stuById = {}; (users || []).forEach(function(u) { if (u.role === "student") stuById[u.id] = u; });
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <h3 style={{ margin: 0 }}>💬 상담 필요 학생</h3>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#dc2626", background: "#fee2e2", borderRadius: 10, padding: "2px 9px" }}>{needed.length}명</span>
+      </div>
+      {needed.length === 0 ? <div className="empty"><div className="eic">✅</div><p>상담 필요 학생이 없습니다</p></div> : names.map(function(nm) {
+        return <div key={nm} style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#1d2733" }}>👨‍🏫 {nm}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--tx2)", background: "#f3f4f6", borderRadius: 8, padding: "1px 7px" }}>{groups[nm].length}명</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 6 }}>
+            {groups[nm].map(function(c) {
+              var stu = stuById[c.studentId];
+              return <div key={c.id} onClick={function() { setModal(c); }} style={{ padding: "7px 9px", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, cursor: "pointer", minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 13, flexShrink: 0 }}>{stu ? stuAvatar(stu) : "🎒"}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, wordBreak: "keep-all", lineHeight: 1.15 }}>{c.studentName}</span>
+                  <span style={{ fontSize: 9, color: "var(--tx2)", flexShrink: 0 }}>{c.classId}</span>
+                </div>
+                <div style={{ fontSize: 9.5, color: "#b91c1c", fontWeight: 600, marginTop: 3, wordBreak: "keep-all", lineHeight: 1.3 }}>⚠️ {c.reason}</div>
+                {c.date && <div style={{ fontSize: 8.5, color: "var(--tx2)", marginTop: 1 }}>{c.date}</div>}
+              </div>;
+            })}
+          </div>
+        </div>;
+      })}
+      {modal && <CounselModal counsel={modal} onClose={function() { setModal(null); }} onSave={function(note) { save(modal.id, note); }} />}
+    </div>
+  );
+}
+
+function AdminSettings({ users, setUsers, classList, setClassList, forceSave, hideCount, attendance, setAttendance, makeups, setMakeups, agreements, cur }) {
+  var [showAgr, setShowAgr] = useState(false);
   var [curPw, setCurPw] = useState("");
   var [newPw, setNewPw] = useState("");
   var [msg, setMsg] = useState("");
@@ -1153,6 +2091,54 @@ function AdminSettings({ users, setUsers, classList, setClassList, forceSave, hi
   var [classMsg, setClassMsg] = useState("");
   var [editingClass, setEditingClass] = useState(null);
   var [editClassName, setEditClassName] = useState("");
+  var [rsScope, setRsScope] = useState("all");
+  var [rsFrom, setRsFrom] = useState("");
+  var [rsTo, setRsTo] = useState("");
+  var [rsMsg, setRsMsg] = useState("");
+  var studentsInScope = function() { return (users || []).filter(function(u) { return u.role === "student" && (rsScope === "all" || u.classId === rsScope); }); };
+  var dateInRange = function(dk) { if (rsFrom && dk < rsFrom) return false; if (rsTo && dk > rsTo) return false; return true; };
+  var rangeLabel = function() { if (!rsFrom && !rsTo) return "전체 기간"; return (rsFrom || "처음") + " ~ " + (rsTo || "끝"); };
+  var resetAttendance = function() {
+    var stu = studentsInScope(); var label = rsScope === "all" ? "전체" : rsScope;
+    if (!window.confirm("⚠️ " + label + " 출석 기록을 리셋합니다.\n기간: " + rangeLabel() + "\n대상 학생 " + stu.length + "명의 해당 기간 출석 기록이 삭제됩니다.\n\n이 작업은 되돌릴 수 없습니다. 계속할까요?")) return;
+    if (!window.confirm("정말 삭제하시겠습니까?\n\n[확인]을 누르면 " + label + " · " + rangeLabel() + " 출석 기록이 영구 삭제됩니다.")) return;
+    var sidset = {}; stu.forEach(function(s) { sidset[s.id] = 1; });
+    var allScope = (rsScope === "all"); var noRange = (!rsFrom && !rsTo);
+    setAttendance(function(prev) {
+      var np = {};
+      Object.keys(prev || {}).forEach(function(dk) {
+        var inRange = dateInRange(dk);
+        var day = prev[dk] || {};
+        if (!inRange) { np[dk] = day; return; } // 기간 밖 날짜는 그대로 유지
+        var nd = {};
+        Object.keys(day).forEach(function(sid) { if (!(allScope || sidset[sid])) nd[sid] = day[sid]; }); // 대상 학생만 삭제
+        if (Object.keys(nd).length) np[dk] = nd;
+      });
+      return np;
+    });
+    if (forceSave) forceSave();
+    setRsMsg("✅ " + label + " 출석 기록을 리셋했습니다 (" + rangeLabel() + ", " + stu.length + "명).");
+  };
+  var resetMakeups = function() {
+    var stu = studentsInScope(); var label = rsScope === "all" ? "전체" : rsScope;
+    if (!window.confirm("⚠️ " + label + " 결석·보충 기록을 리셋합니다.\n기간: " + rangeLabel() + "\n대상 학생 " + stu.length + "명의 해당 기간 보충 기록이 삭제됩니다.\n\n이 작업은 되돌릴 수 없습니다. 계속할까요?")) return;
+    if (!window.confirm("정말 삭제하시겠습니까?\n\n[확인]을 누르면 " + label + " · " + rangeLabel() + " 결석·보충 기록이 영구 삭제됩니다.")) return;
+    var sidset = {}; stu.forEach(function(s) { sidset[s.id] = 1; });
+    var allScope = (rsScope === "all");
+    setMakeups(function(prev) {
+      var np = {};
+      Object.keys(prev || {}).forEach(function(sid) {
+        var rec = prev[sid] || {};
+        if (!(allScope || sidset[sid])) { np[sid] = rec; return; } // 대상 아닌 학생 유지
+        var nr = {};
+        Object.keys(rec).forEach(function(dk) { if (!dateInRange(dk)) nr[dk] = rec[dk]; }); // 기간 밖 날짜만 유지
+        if (Object.keys(nr).length) np[sid] = nr;
+      });
+      return np;
+    });
+    if (forceSave) forceSave();
+    setRsMsg("✅ " + label + " 결석·보충 기록을 리셋했습니다 (" + rangeLabel() + ", " + stu.length + "명).");
+  };
   var admin = users.find(function(u) { return u.role === "admin"; });
 
   // All classes = registered + from students
@@ -1160,7 +2146,7 @@ function AdminSettings({ users, setUsers, classList, setClassList, forceSave, hi
   users.filter(function(u) { return u.role === "student"; }).forEach(function(s) { if (studentClasses.indexOf(s.classId) === -1) studentClasses.push(s.classId); });
   var allClasses = classList.slice();
   studentClasses.forEach(function(c) { if (allClasses.indexOf(c) === -1) allClasses.push(c); });
-  allClasses.sort();
+  allClasses.sort(classCmp);
 
   var changePw = function() {
     if (curPw !== admin.password) { setMsg("❌ 현재 비밀번호가 틀렸습니다"); return; }
@@ -1291,6 +2277,40 @@ function AdminSettings({ users, setUsers, classList, setClassList, forceSave, hi
         <div className="fg"><label>새 비밀번호</label><input type="password" value={newPw} onChange={function(e) { setNewPw(e.target.value); setMsg(""); }} placeholder="새 비밀번호 입력 (4자 이상)" /></div>
         <div className="br"><button className="btn btn-p" onClick={changePw}>비밀번호 변경</button></div>
       </div>
+
+      {cur && (cur.role === "manager" || cur.role === "staff" || cur.role === "admin") && (function() { var agreed = _agreedThisMonth(agreements, cur.id); var info = _agreeInfo(agreements, cur.id); return <div className="card" style={{ maxWidth: 550, marginBottom: 14, border: "1px solid " + (agreed ? "#bbf7d0" : "#fecaca") }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 15 }}>📜</span>
+          <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 13, fontWeight: 700, color: agreed ? "#166534" : "#b91c1c" }}>관리에 관한 약정 {agreed ? "· 이번 달 확인 완료" : "· 이번 달 확인 필요"}</div>{info && <div style={{ fontSize: 10, color: "var(--tx2)" }}>최근 확인: {info.date}{info.ip ? " · " + info.ip : ""}</div>}</div>
+          <button className="btn btn-g btn-s" onClick={function() { setShowAgr(true); }}>📄 약정 보기</button>
+        </div>
+      </div>; })()}
+      {showAgr && cur && <AgreementModal user={cur} agreements={agreements} readOnly onClose={function() { setShowAgr(false); }} />}
+      {!hideCount && <div className="card" style={{ maxWidth: 550, border: "1px solid #fecaca" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 4, color: "#b91c1c" }}>⚠️ 데이터 리셋</div>
+        <div style={{ fontSize: 11, color: "var(--tx2)", marginBottom: 12 }}>새 학기·학년 시작 등으로 기록을 초기화할 때 사용하세요. <b style={{ color: "#b91c1c" }}>삭제된 기록은 되돌릴 수 없습니다.</b></div>
+        {rsMsg && <div style={{ padding: 10, borderRadius: "var(--rs)", marginBottom: 12, fontSize: 12, fontWeight: 600, background: "var(--okb)", color: "#065f46" }}>{rsMsg}</div>}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "var(--tx2)", fontWeight: 600 }}>범위</span>
+          <select value={rsScope} onChange={function(e) { setRsScope(e.target.value); setRsMsg(""); }} style={{ padding: "8px 10px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", background: "#fff" }}>
+            <option value="all">전체 학생</option>
+            {classList.map(function(c) { return <option key={c} value={c}>{c}</option>; })}
+          </select>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "var(--tx2)", fontWeight: 600 }}>기간</span>
+          <input type="date" value={rsFrom} onChange={function(e) { setRsFrom(e.target.value); setRsMsg(""); }} style={{ padding: "7px 8px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 12, fontFamily: "'Noto Sans KR'" }} />
+          <span style={{ fontSize: 12, color: "var(--tx2)" }}>~</span>
+          <input type="date" value={rsTo} onChange={function(e) { setRsTo(e.target.value); setRsMsg(""); }} style={{ padding: "7px 8px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 12, fontFamily: "'Noto Sans KR'" }} />
+          {(rsFrom || rsTo) && <button className="btn btn-g btn-s" style={{ fontSize: 10 }} onClick={function() { setRsFrom(""); setRsTo(""); }}>기간 지우기</button>}
+          <span style={{ fontSize: 10, color: "var(--tx2)" }}>(비우면 전체 기간)</span>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btn-g" style={{ color: "#b91c1c", borderColor: "#fecaca", fontWeight: 700 }} onClick={resetAttendance}>🗓 출석 기록 리셋</button>
+          <button className="btn btn-g" style={{ color: "#b91c1c", borderColor: "#fecaca", fontWeight: 700 }} onClick={resetMakeups}>🩹 결석·보충 기록 리셋</button>
+        </div>
+        <div style={{ fontSize: 10, color: "var(--tx2)", marginTop: 10 }}>＊ 각 버튼은 두 번의 확인을 거칩니다. 성적·과제·진단지 등 다른 기록은 영향받지 않습니다.</div>
+      </div>}
     </div>
   );
 }
@@ -1298,8 +2318,9 @@ function AdminSettings({ users, setUsers, classList, setClassList, forceSave, hi
 function AdminStats({ users, allA, sp, hideCount }) {
   var [cf, setCf] = useState("all");
   var [view, setView] = useState("summary");
+  var [detailStu, setDetailStu] = useState(null);
   var students = users.filter(function(u) { return u.role === "student"; });
-  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
+  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort(classCmp);
   var filtered = cf === "all" ? students : students.filter(function(s) { return s.classId === cf; });
   var studentStats = filtered.map(function(s) {
     var rel = allA.filter(function(a) { return a.classId === s.classId; });
@@ -1310,7 +2331,7 @@ function AdminStats({ users, allA, sp, hideCount }) {
   var completed = studentStats.filter(function(s) { return s.pct === 100; }).length;
   var inProgress = studentStats.filter(function(s) { return s.pct > 0 && s.pct < 100; }).length;
   var notStarted = studentStats.filter(function(s) { return s.pct === 0 && s.totalItems > 0; }).length;
-  var barData = studentStats.filter(function(s) { return s.totalItems > 0; }).sort(function(a, b) { return a.pct - b.pct; }).map(function(s) { return { name: s.name, avatar: s.avatar, pct: s.pct }; });
+  var barData = studentStats.filter(function(s) { return s.totalItems > 0; }).sort(function(a, b) { return a.pct - b.pct; }).map(function(s) { return { name: s.name, avatar: s.avatar, classId: s.classId, pct: s.pct }; });
   var segBtn = function(key, label) {
     var on = view === key;
     return <button onClick={function() { setView(key); }} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: "none", background: on ? "var(--pri)" : "transparent", color: on ? "#fff" : "var(--tx2)", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: "'Noto Sans KR'" }}>{label}</button>;
@@ -1329,36 +2350,94 @@ function AdminStats({ users, allA, sp, hideCount }) {
           {barData.length > 0 && <BarChart data={barData} title="📈 학생별 진행률 (낮은 순)" />}
         </>
       ) : (
-        <div className="card"><div className="tw"><table><thead><tr><th>학생</th><th>반</th><th>과제</th><th>진행률</th><th>상태</th></tr></thead><tbody>
-          {filtered.map(function(s) {
-            var rel = allA.filter(function(a) { return a.classId === s.classId; });
-            if (rel.length === 0) return (<tr key={s.id}><td style={{ fontWeight: 600 }}>{s.avatar} {s.name}</td><td><span className="chip">{s.classId}</span></td><td colSpan={3} style={{ color: "var(--tx2)" }}>과제 없음</td></tr>);
-            return rel.map(function(a, i) {
+        <div><div style={{ fontSize: 11, color: "var(--tx2)", marginBottom: 8 }}>💡 학생을 누르면 과제별 상세 결과(항목별 체크)를 볼 수 있어요.</div>
+          {filtered.length === 0 ? <div className="empty"><div className="eic">📋</div><p>학생이 없습니다</p></div> :
+            <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", fontSize: 11, color: "var(--tx2)", background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 8, padding: "7px 11px", marginBottom: 8 }}>
+              <b style={{ color: "var(--tx)" }}>표시 정의</b>
+              <span><b style={{ color: "var(--ok)" }}>✅ 완료</b> 100% 제출</span>
+              <span><b style={{ color: "var(--warn)" }}>🔄 진행중</b> 일부 제출</span>
+              <span><b style={{ color: "var(--pri)" }}>⭕ 미시작</b> 0% 제출</span>
+              <span style={{ color: "var(--tx2)" }}>· 오른쪽 <b>%</b> = 기한 지난 과제 수행률</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 5 }}>
+              {filtered.map(function(s) {
+                var rel = allA.filter(function(a) { return a.classId === s.classId; });
+                var doneN = 0, progN = 0, notN = 0;
+                rel.forEach(function(a) { var pp = getPct(sp, s.id, a.id, a.items); if (pp === 100) doneN++; else if (pp > 0) progN++; else notN++; });
+                var today = td();
+                var due = rel.filter(function(a) { return a.date && a.date <= today; });
+                var dueDone = due.filter(function(a) { return getPct(sp, s.id, a.id, a.items) === 100; }).length;
+                var pct = due.length === 0 ? 0 : Math.round(dueDone / due.length * 100);
+                var pcolor = pct === 100 ? "var(--ok)" : pct >= 50 ? "var(--warn)" : "var(--pri)";
+                var pbg = pct === 100 ? "var(--okb)" : pct >= 50 ? "var(--warnb)" : "var(--prib)";
+                var overall = rel.length === 0 ? { l: "과제없음", c: "var(--tx2)", b: "#f3f4f6" } : due.length === 0 ? { l: "예정", c: "var(--tx2)", b: "#f3f4f6" } : { l: "수행률", c: pcolor, b: pbg };
+                return <div key={s.id} onClick={function() { setDetailStu(s.id); }} style={{ padding: "5px 8px", border: "1px solid var(--bdr)", borderRadius: 8, background: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+                  <span style={{ fontSize: 14, flexShrink: 0 }}>{stuAvatar(s)}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, wordBreak: "keep-all", flexShrink: 0 }}>{s.name}</span>
+                  <span style={{ fontSize: 8.5, color: "var(--tx2)", flexShrink: 0 }}>{s.classId}</span>
+                  <span style={{ display: "flex", gap: 4, fontSize: 9.5, flexShrink: 0, marginLeft: 2 }}>
+                    <span style={{ color: "var(--ok)", fontWeight: 700 }}>✅{doneN}</span>
+                    <span style={{ color: "var(--warn)", fontWeight: 700 }}>🔄{progN}</span>
+                    <span style={{ color: "var(--pri)", fontWeight: 700 }}>⭕{notN}</span>
+                  </span>
+                  <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                    {due.length > 0 ? <span style={{ fontSize: 12, fontWeight: 800, color: overall.c }}>{pct}%</span> : <span style={{ fontSize: 9, fontWeight: 700, color: overall.c, background: overall.b, borderRadius: 7, padding: "1px 6px" }}>{overall.l}</span>}
+                    <span style={{ color: "var(--tx2)", fontSize: 10 }}>▶</span>
+                  </span>
+                </div>;
+              })}
+            </div>
+            </>}
+        </div>
+      )}
+      {detailStu && (function() {
+        var s = students.find(function(x) { return x.id === detailStu; });
+        if (!s) return null;
+        var rel = allA.filter(function(a) { return a.classId === s.classId; });
+        return <div className="mo" onClick={function() { setDetailStu(null); }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 560, maxHeight: "85vh", overflow: "auto" }}>
+          <h3>{stuAvatar(s)} {s.name} <span style={{ fontSize: 12, color: "var(--tx2)", fontWeight: 400 }}>({s.classId})</span></h3>
+          {rel.length === 0 ? <div style={{ padding: 16, textAlign: "center", color: "var(--tx2)" }}>배정된 과제가 없습니다</div> :
+            rel.map(function(a) {
+              var done = (sp[s.id] && sp[s.id][a.id]) ? sp[s.id][a.id] : [];
               var p = getPct(sp, s.id, a.id, a.items);
               var st = p === 100 ? { l: "완료", c: "var(--ok)", b: "var(--okb)" } : p > 0 ? { l: "진행중", c: "var(--warn)", b: "var(--warnb)" } : { l: "미시작", c: "var(--pri)", b: "var(--prib)" };
-              return (<tr key={s.id + "-" + a.id}>{i === 0 && <><td rowSpan={rel.length} style={{ fontWeight: 600, verticalAlign: "middle" }}>{s.avatar} {s.name}</td><td rowSpan={rel.length} style={{ verticalAlign: "middle" }}><span className="chip">{s.classId}</span></td></>}<td style={{ fontSize: 11 }}>{a.title}</td><td style={{ minWidth: 120 }}><div style={{ display: "flex", alignItems: "center", gap: 6 }}><div style={{ flex: 1 }}><PBar pct={p} /></div><span style={{ fontSize: 10, fontWeight: 700 }}>{p}%</span></div></td><td><span className="dbadge" style={{ color: st.c, background: st.b }}>{st.l}</span></td></tr>);
-            });
-          })}
-        </tbody></table></div></div>
-      )}
+              return <div key={a.id} style={{ marginBottom: 12, padding: 12, border: "1px solid var(--bdr)", borderRadius: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>{a.title}</span>
+                  <span className="dbadge" style={{ color: st.c, background: st.b }}>{st.l}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700 }}>{p}%</span>
+                </div>
+                <PBar pct={p} />
+                <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {a.items.map(function(it) {
+                    var ck = done.indexOf(it.id) >= 0;
+                    return <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}><span style={{ color: ck ? "var(--ok)" : "#d1d5db", fontWeight: 800 }}>{ck ? "✓" : "○"}</span><span style={{ color: ck ? "var(--tx)" : "var(--tx2)" }}>{it.label}</span></div>;
+                  })}
+                </div>
+              </div>;
+            })}
+          <div className="br"><button className="btn btn-g" onClick={function() { setDetailStu(null); }}>닫기</button></div>
+        </div></div>;
+      })()}
     </div>
   );
 }
 
-function AdminInstructors({ users, setUsers, forceSave, allClasses, withdrawals }) {
-  var evalPlus = function(instId) { return (withdrawals || []).filter(function(w) { return w.teacherId === instId && w.match; }).length; };
+function AdminInstructors({ users, setUsers, forceSave, allClasses, withdrawals, collections, curriculum, diagnostics, agreements }) {
+  var evalPlus = function(instId) { return wdInstScore(withdrawals, instId).score; };
   var [show, setShow] = useState(false);
   var [editId, setEditId] = useState(null);
   var [nm, setNm] = useState(""); var [pw, setPw] = useState("1234"); var [selClasses, setSelClasses] = useState([]); var [role, setRole] = useState("instructor");
   var [editNm, setEditNm] = useState(""); var [editPw, setEditPw] = useState(""); var [editClasses, setEditClasses] = useState([]); var [editRole, setEditRole] = useState("instructor");
-  var roleOrder = { admin: 0, manager: 1, instructor: 2 };
-  var staff = users.filter(function(u) { return u.role === "instructor" || u.role === "manager" || u.role === "admin"; }).slice().sort(function(a, b) { return (roleOrder[a.role] - roleOrder[b.role]) || a.name.localeCompare(b.name); });
+  var roleOrder = { admin: 0, manager: 1, staff: 2, instructor: 3 };
+  var staff = users.filter(function(u) { return u.role === "instructor" || u.role === "manager" || u.role === "staff" || u.role === "admin"; }).slice().sort(function(a, b) { return (roleOrder[a.role] - roleOrder[b.role]) || a.name.localeCompare(b.name); });
   var students = users.filter(function(u) { return u.role === "student"; });
   var classes = allClasses || [];
-  var avatarFor = function(r) { return r === "admin" ? "🛡️" : r === "manager" ? "👔" : "📚"; };
-  var roleLabel = function(r) { return r === "admin" ? "관리자" : r === "manager" ? "매니저" : "강사"; };
-  var roleBadgeBg = function(r) { return r === "admin" ? "#fef2f4" : r === "manager" ? "#eff6ff" : "#ecfdf5"; };
-  var roleBadgeFg = function(r) { return r === "admin" ? "#e94560" : r === "manager" ? "#1e40af" : "#065f46"; };
+  var avatarFor = function(r) { return r === "admin" ? "🛡️" : r === "manager" ? "👔" : r === "staff" ? "🏢" : "📚"; };
+  var roleLabel = function(r) { return r === "admin" ? "관리자" : r === "manager" ? "매니저" : r === "staff" ? "행정팀" : "강사"; };
+  var roleBadgeBg = function(r) { return r === "admin" ? "#fef2f4" : r === "manager" ? "#eff6ff" : r === "staff" ? "#ecfeff" : "#ecfdf5"; };
+  var roleBadgeFg = function(r) { return r === "admin" ? "#e94560" : r === "manager" ? "#1e40af" : r === "staff" ? "#0e7490" : "#065f46"; };
 
   var toggleClass = function(list, setList, cls) {
     if (list.indexOf(cls) >= 0) setList(list.filter(function(c) { return c !== cls; }));
@@ -1366,37 +2445,52 @@ function AdminInstructors({ users, setUsers, forceSave, allClasses, withdrawals 
   };
 
   var autoAssign = function(instName) {
-    // Extract each character from instructor name
-    var chars = instName.split("");
+    // 반 이름 "수X"의 X가 강사 이름의 첫 글자 또는 끝 글자와 일치할 때만 매칭 (중간 글자 오매칭 방지)
+    var nm = (instName || "").trim();
+    if (!nm) return [];
+    var first = nm[0], last = nm[nm.length - 1];
     var matched = [];
     classes.forEach(function(cls) {
-      // Extract the character after "수" in class name (e.g., "E3-수인(화목)" → "인")
       var m = cls.match(/수([가-힣])/);
-      if (m) {
-        var targetChar = m[1];
-        if (chars.indexOf(targetChar) >= 0) {
-          matched.push(cls);
-        }
-      }
+      if (m) { var t = m[1]; if (t === first || t === last) matched.push(cls); }
     });
     return matched;
   };
 
-  var add = function() { if (!nm.trim()) return; var finalClasses = role === "instructor" ? (selClasses.length > 0 ? selClasses : autoAssign(nm.trim())) : []; var idp = role === "admin" ? "adm_" : role === "manager" ? "mgr_" : "inst_"; setUsers(function(p) { return p.concat([{ id: idp + mkid(), name: nm.trim(), role: role, password: pw || "1234", avatar: avatarFor(role), assignedClasses: finalClasses }]); }); setNm(""); setPw("1234"); setSelClasses([]); setRole("instructor"); setShow(false); forceSave(); };
+  var add = function() { if (!nm.trim()) return; var finalClasses = role === "instructor" ? (selClasses.length > 0 ? selClasses : autoAssign(nm.trim())) : []; var idp = role === "admin" ? "adm_" : role === "manager" ? "mgr_" : role === "staff" ? "stf_" : "inst_"; setUsers(function(p) { return p.concat([{ id: idp + mkid(), name: nm.trim(), role: role, password: pw || "1234", avatar: avatarFor(role), assignedClasses: finalClasses }]); }); setNm(""); setPw("1234"); setSelClasses([]); setRole("instructor"); setShow(false); forceSave(); };
   var openEdit = function(u) { setEditId(u.id); setEditNm(u.name); setEditPw(u.password); setEditClasses(u.assignedClasses || []); setEditRole(u.role || "instructor"); };
   var saveEdit = function() { if (!editNm.trim()) return; setUsers(function(p) { return p.map(function(u) { return u.id === editId ? Object.assign({}, u, { name: editNm.trim(), password: editPw || "1234", role: editRole, avatar: avatarFor(editRole), assignedClasses: editRole === "instructor" ? editClasses : [] }) : u; }); }); setEditId(null); forceSave(); };
   var delInst = function(uid) { var t = users.find(function(x) { return x.id === uid; }); if (t && t.role === "admin" && users.filter(function(x) { return x.role === "admin"; }).length <= 1) { window.alert("마지막 관리자 계정은 삭제할 수 없습니다."); return; } if (window.confirm("이 계정을 삭제하시겠습니까?")) { setUsers(function(p) { return p.filter(function(x) { return x.id !== uid; }); }); forceSave(); } };
 
   var autoAssignAll = function() {
-    setUsers(function(p) {
-      return p.map(function(u) {
-        if (u.role !== "instructor") return u;
-        var matched = autoAssign(u.name);
-        if (matched.length > 0) return Object.assign({}, u, { assignedClasses: matched });
-        return u;
+    var insts = users.filter(function(u) { return u.role === "instructor"; });
+    // 반별 대상 글자
+    var classTarget = {};
+    classes.forEach(function(c) { var m = c.match(/수([가-힣])/); if (m) classTarget[c] = m[1]; });
+    // 반별 후보 강사 (첫/끝 글자 일치)
+    var cand = {};
+    Object.keys(classTarget).forEach(function(c) { var t = classTarget[c]; cand[c] = insts.filter(function(i) { var n = (i.name || "").trim(); return n && (n[0] === t || n[n.length - 1] === t); }); });
+    var assign = {}; insts.forEach(function(i) { assign[i.id] = []; });
+    var taken = {};
+    // 1차: 후보가 1명뿐인 반 확정
+    Object.keys(cand).forEach(function(c) { if (cand[c].length === 1) { assign[cand[c][0].id].push(c); taken[c] = true; } });
+    // 2차: 후보가 여럿인 반 → 아직 반이 적은 강사 우선, 동률이면 끝 글자 일치 강사 우선
+    Object.keys(cand).forEach(function(c) {
+      if (taken[c] || !cand[c].length) return;
+      var t = classTarget[c];
+      var cs = cand[c].slice().sort(function(a, b) {
+        var la = assign[a.id].length, lb = assign[b.id].length;
+        if (la !== lb) return la - lb;
+        var an = (a.name || "").trim(), bn = (b.name || "").trim();
+        var al = an[an.length - 1] === t ? 0 : 1, bl = bn[bn.length - 1] === t ? 0 : 1;
+        return al - bl;
       });
+      assign[cs[0].id].push(c); taken[c] = true;
     });
+    setUsers(function(p) { return p.map(function(u) { return (u.role === "instructor" && assign[u.id]) ? Object.assign({}, u, { assignedClasses: assign[u.id] }) : u; }); });
     forceSave();
+    var lines = insts.map(function(i) { return i.name + " → " + (assign[i.id].length ? assign[i.id].join(", ") : "(없음)"); });
+    window.alert("담임 자동 배정 완료 (겹치는 글자 충돌 해소):\n\n" + lines.join("\n"));
   };
 
   var classSelector = function(selected, setSelected) {
@@ -1421,7 +2515,7 @@ function AdminInstructors({ users, setUsers, forceSave, allClasses, withdrawals 
     return (
       <div className="fg"><label>역할</label>
         <div style={{ display: "flex", gap: 6 }}>
-          {[["instructor", "📚 강사"], ["manager", "👔 매니저"], ["admin", "🛡️ 관리자"]].map(function(r) {
+          {[["instructor", "📚 강사"], ["manager", "👔 매니저"], ["staff", "🏢 행정팀"], ["admin", "🛡️ 관리자"]].map(function(r) {
             var on = curR === r[0];
             return <button type="button" key={r[0]} onClick={function() { setCurR(r[0]); }} style={{ flex: 1, padding: "9px 4px", borderRadius: 8, border: on ? "2px solid var(--pri)" : "1px solid var(--bdr)", background: on ? "var(--prib)" : "#fff", fontSize: 12, fontWeight: 700, color: on ? "var(--pri)" : "var(--tx2)", cursor: "pointer", fontFamily: "'Noto Sans KR'" }}>{r[1]}</button>;
           })}
@@ -1432,6 +2526,30 @@ function AdminInstructors({ users, setUsers, forceSave, allClasses, withdrawals 
 
   return (
     <div>
+      {(function() {
+        var needAgree = (users || []).filter(function(u) { return u.role === "instructor" || u.role === "manager" || u.role === "staff"; });
+        var unconfirmed = needAgree.filter(function(u) { return !_agreedThisMonth(agreements, u.id); });
+        var confirmed = needAgree.filter(function(u) { return _agreedThisMonth(agreements, u.id); }).map(function(u) { return { u: u, info: _agreeInfo(agreements, u.id) }; });
+        var roleLabel = function(r) { return r === "manager" ? "매니저" : r === "staff" ? "행정팀" : r === "admin" ? "원장" : "강사"; };
+        return <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}><span style={{ fontSize: 14, fontWeight: 800 }}>📜 관리 약정 확인 현황</span><span style={{ fontSize: 11, color: "var(--tx2)" }}>{_monthKey().replace("-", "년 ") + "월"}</span></div>
+          {unconfirmed.length > 0 && <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "9px 11px", marginBottom: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#b91c1c", marginBottom: 6 }}>⚠️ 이번 달 미확인 {unconfirmed.length}명 — 확인 요청 필요</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(110px, 1fr))", gap: 5 }}>
+              {unconfirmed.map(function(u) { return <div key={u.id} style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", background: "#fff", border: "1px solid #fecaca", borderRadius: 7, padding: "3px 7px", wordBreak: "keep-all" }}>{u.name} <span style={{ fontSize: 9, fontWeight: 500, color: "var(--tx2)" }}>{roleLabel(u.role)}</span></div>; })}
+            </div>
+          </div>}
+          <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, padding: "9px 11px" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#166534", marginBottom: 6 }}>✅ 확인 완료 {confirmed.length}명 (강사·날짜·IP)</div>
+            {confirmed.length === 0 ? <div style={{ fontSize: 11, color: "var(--tx2)" }}>아직 확인한 인원이 없습니다.</div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 5 }}>
+              {confirmed.map(function(x) { return <div key={x.u.id} style={{ fontSize: 11, background: "#fff", border: "1px solid #bbf7d0", borderRadius: 7, padding: "4px 8px", minWidth: 0 }}>
+                <div style={{ fontWeight: 700, wordBreak: "keep-all" }}>{x.u.name} <span style={{ fontSize: 9, fontWeight: 500, color: "var(--tx2)" }}>{roleLabel(x.u.role)}</span></div>
+                <div style={{ fontSize: 9.5, color: "var(--tx2)" }}>🗓 {x.info.date} · 🌐 {x.info.ip || "확인불가"}</div>
+              </div>; })}
+            </div>}
+          </div>
+        </div>;
+      })()}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}><h3 style={{ fontSize: 15, fontWeight: 700 }}>강사·직원 목록 ({staff.length}명)</h3><div style={{ display: "flex", gap: 6 }}><button className="btn btn-ok btn-s" onClick={autoAssignAll}>🔄 자동 배정</button><button className="btn btn-p btn-s" onClick={function() { setShow(true); }}>+ 직원 추가</button></div></div>
       <div className="hint" style={{ marginBottom: 12 }}>💡 역할로 계정 종류를 지정합니다. 예: 이영민 → 관리자, 이선희 → 매니저. 담당 반은 강사에게만 적용됩니다.</div>
       {staff.length === 0 ? <div className="empty"><p>등록된 직원이 없습니다</p></div> :
@@ -1448,7 +2566,7 @@ function AdminInstructors({ users, setUsers, forceSave, allClasses, withdrawals 
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: 20 }}>{u.avatar}</span>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>{u.name}<span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 10, background: roleBadgeBg(u.role), color: roleBadgeFg(u.role) }}>{roleLabel(u.role)}</span>{u.role === "instructor" && evalPlus(u.id) > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "#065f46", background: "#d1fae5", borderRadius: 10, padding: "1px 7px" }}>진단일치 +{evalPlus(u.id)}</span>}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>{u.name}<span style={{ fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 10, background: roleBadgeBg(u.role), color: roleBadgeFg(u.role) }}>{roleLabel(u.role)}</span>{u.role === "instructor" && evalPlus(u.id) > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "#065f46", background: "#d1fae5", borderRadius: 10, padding: "1px 7px" }}>🚪 퇴원진단 {evalPlus(u.id)}</span>}{u.role === "instructor" && collectionRate(collections, users, u.id) !== null && <span style={{ fontSize: 10, fontWeight: 800, color: "#1e40af", background: "#dbeafe", borderRadius: 10, padding: "1px 7px" }}>📦 교재 회수 {collectionRate(collections, users, u.id)}%</span>}{u.role === "instructor" && collectionScore(collections, curriculum, users, u.id) !== null && (function() { var sc = collectionScore(collections, curriculum, users, u.id); return <span style={{ fontSize: 10, fontWeight: 800, color: sc > 0 ? "#065f46" : sc < 0 ? "#b91c1c" : "#6b7280", background: sc > 0 ? "#d1fae5" : sc < 0 ? "#fee2e2" : "#f3f4f6", borderRadius: 10, padding: "1px 7px" }}>📈 진도점수 {sc > 0 ? "+" : ""}{sc}%</span>; })()}{u.role === "instructor" && diagOnTimeRate(diagnostics, users, u.id) !== null && (function() { var dr = diagOnTimeRate(diagnostics, users, u.id); return <span style={{ fontSize: 10, fontWeight: 800, color: dr >= 90 ? "#065f46" : dr >= 70 ? "#b45309" : "#b91c1c", background: dr >= 90 ? "#d1fae5" : dr >= 70 ? "#fef3c7" : "#fee2e2", borderRadius: 10, padding: "1px 7px" }}>🩺 진단지 기한 {dr}%</span>; })()}</div>
                   <div style={{ fontSize: 10, color: "var(--tx2)" }}>비밀번호: {u.password}</div>
                 </div>
                 <button className="btn btn-ok btn-s" onClick={function() { openEdit(u); }}>✏️ 수정</button>
@@ -1468,6 +2586,132 @@ function AdminInstructors({ users, setUsers, forceSave, allClasses, withdrawals 
   );
 }
 
+function AdminDiagnostics({ users, diagnostics, setDiagnostics, forceSave, instId, hideCreate }) {
+  var students = users.filter(function(u) { return u.role === "student"; });
+  var [dtype, setDtype] = useState("월말평가");
+  var [dmonth, setDmonth] = useState(String((new Date()).getMonth() + 1));
+  var [dexam, setDexam] = useState("1학기중간");
+  var [dround, setDround] = useState("1차");
+  var [detc, setDetc] = useState("");
+  var [ddue, setDdue] = useState("");
+  var [expDid, setExpDid] = useState(null);
+  var [clsFilter, setClsFilter] = useState("all");
+  var mkid = function() { return Math.random().toString(36).slice(2, 8); };
+  var composeName = function() {
+    if (dtype === "월말평가") return dmonth + "월 월말평가";
+    if (dtype === "모의평가") return dexam + " 대비 모의평가 " + dround;
+    return detc.trim();
+  };
+  var addDiag = function() {
+    var name = composeName();
+    if (!name) { window.alert("진단지명을 입력/선택하세요."); return; }
+    if (!ddue) { window.alert("발송 기한을 선택하세요."); return; }
+    var did = "diag_" + mkid();
+    setDiagnostics(function(p) { var np = Object.assign({}, p); np[did] = { id: did, name: name, type: dtype, dueDate: ddue, createdAt: Date.now(), students: {} }; return np; });
+    if (forceSave) forceSave();
+    setDetc(""); setExpDid(did);
+  };
+  var delDiag = function(did) { if (!window.confirm("이 진단지를 삭제할까요?")) return; setDiagnostics(function(p) { var np = Object.assign({}, p); delete np[did]; return np; }); if (forceSave) forceSave(); };
+  var updateStu = function(did, sid, patch) { setDiagnostics(function(p) { var np = Object.assign({}, p); var dg = Object.assign({ students: {} }, np[did]); dg.students = Object.assign({}, dg.students); dg.students[sid] = Object.assign({}, dg.students[sid], patch); np[did] = dg; return np; }); if (forceSave) forceSave(); };
+  var bulkSend = function(did, sids) {
+    if (!sids.length) return;
+    setDiagnostics(function(p) { var np = Object.assign({}, p); var dg = Object.assign({ students: {} }, np[did]); dg.students = Object.assign({}, dg.students); sids.forEach(function(sid) { dg.students[sid] = Object.assign({}, dg.students[sid], { sent: true, sentDate: td(), reason: "", redueDate: "" }); }); np[did] = dg; return np; });
+    if (forceSave) forceSave();
+  };
+  var bulkNotSent = function(did, sids) {
+    if (!sids.length) return;
+    setDiagnostics(function(p) { var np = Object.assign({}, p); var dg = Object.assign({ students: {} }, np[did]); dg.students = Object.assign({}, dg.students); sids.forEach(function(sid) { dg.students[sid] = Object.assign({}, dg.students[sid], { notSent: true, sent: false, sentDate: null, held: false }); }); np[did] = dg; return np; });
+    if (forceSave) forceSave();
+  };
+  var today = td();
+  var diagList = Object.keys(diagnostics || {}).map(function(k) { return diagnostics[k]; }).sort(function(a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+  var classes = sortClasses(Array.from(new Set(students.map(function(s) { return s.classId; }).filter(Boolean))));
+  var inputS = { padding: "8px 10px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", background: "#fff" };
+  return (
+    <div>
+      <div style={{ marginBottom: 12 }}><h3 style={{ fontSize: 15, fontWeight: 700 }}>🩺 진단지 {hideCreate ? "발송 (담당 학생)" : "관리"}</h3><p style={{ fontSize: 12, color: "var(--tx2)", marginTop: 2 }}>{hideCreate ? "담당 학생별 진단지 발송 여부를 입력하고, 미발송 사유·재완료 기한을 관리합니다." : "학생별 진단지 발송 여부를 체크하고, 발송·재완료 기한과 미발송 사유를 관리합니다."}</p></div>
+
+      {!hideCreate && <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>➕ 새 진단지 만들기</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+          <select value={dtype} onChange={function(e) { setDtype(e.target.value); }} style={inputS}>
+            <option value="월말평가">월말평가</option>
+            <option value="모의평가">시험대비 모의평가</option>
+            <option value="기타">기타 (직접 입력)</option>
+          </select>
+          {dtype === "월말평가" && <select value={dmonth} onChange={function(e) { setDmonth(e.target.value); }} style={inputS}>{[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function(m) { return <option key={m} value={String(m)}>{m}월</option>; })}</select>}
+          {dtype === "모의평가" && <><select value={dexam} onChange={function(e) { setDexam(e.target.value); }} style={inputS}><option>1학기중간</option><option>1학기기말</option><option>2학기중간</option><option>2학기기말</option></select><select value={dround} onChange={function(e) { setDround(e.target.value); }} style={inputS}><option>1차</option><option>2차</option><option>3차</option></select></>}
+          {dtype === "기타" && <input value={detc} onChange={function(e) { setDetc(e.target.value); }} placeholder="진단지명 입력" style={Object.assign({}, inputS, { flex: "1 1 160px" })} />}
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 12, color: "var(--tx2)" }}>완성된 진단지명: <b style={{ color: "var(--pri)" }}>{composeName() || "—"}</b></span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+          <span style={{ fontSize: 12, color: "var(--tx2)" }}>발송 기한</span>
+          <input type="date" value={ddue} onChange={function(e) { setDdue(e.target.value); }} style={inputS} />
+          <button className="btn btn-p btn-s" style={{ fontWeight: 700 }} onClick={addDiag}>진단지 만들기</button>
+        </div>
+      </div>}
+
+      {diagList.length === 0 ? <div className="empty"><div className="eic">🩺</div><p>아직 만든 진단지가 없습니다</p></div> :
+        diagList.map(function(dg) {
+          var op = expDid === dg.id;
+          var roster = clsFilter === "all" ? students : students.filter(function(s) { return s.classId === clsFilter; });
+          var sentCnt = students.filter(function(s) { return dg.students[s.id] && dg.students[s.id].sent; }).length;
+          var notSentCnt = students.filter(function(s) { var x = dg.students[s.id]; return x && x.notSent; }).length;
+          var pendingCnt = students.filter(function(s) { var x = dg.students[s.id]; return !(x && (x.sent || x.held || x.notSent)); }).length;
+          var overdue = students.filter(function(s) { var st = dg.students[s.id]; var due = (st && st.redueDate) || dg.dueDate; return !(st && (st.sent || st.held || st.notSent)) && due && due <= today; }).length;
+          return <div key={dg.id} style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, marginBottom: 10, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px", cursor: "pointer" }} onClick={function() { setExpDid(op ? null : dg.id); }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 700 }}>{dg.name}</div>
+                <div style={{ fontSize: 11, color: "var(--tx2)" }}>발송 기한 {(dg.dueDate || "").replace(/-/g, ".")} · 발송 {sentCnt}/{students.length} · <span style={{ color: "#6b7280", fontWeight: 700 }}>🚫 미발송 {notSentCnt}</span>{pendingCnt > 0 && <span> · 미처리 {pendingCnt}</span>}{overdue > 0 && <span style={{ color: "#dc2626", fontWeight: 700 }}> · ⚠️ 기한지남 {overdue}</span>}</div>
+              </div>
+              <span className={cn("exp", op && "op")}>▼</span>
+            </div>
+            {op && <div style={{ padding: "0 14px 14px" }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 10, flexWrap: "wrap" }}>
+                <select value={clsFilter} onChange={function(e) { setClsFilter(e.target.value); }} style={Object.assign({}, inputS, { fontSize: 12, padding: "6px 8px" })}><option value="all">전체 반</option>{classes.map(function(c) { return <option key={c} value={c}>{c}</option>; })}</select>
+                {(function() { var unsent = roster.filter(function(s) { var x = dg.students[s.id]; return !(x && (x.sent || x.held)); }); return unsent.length > 0 ? <button className="btn btn-ok btn-s" style={{ fontSize: 11, fontWeight: 700 }} onClick={function() { if (window.confirm((clsFilter === "all" ? "전체 반" : clsFilter) + " 미발송 " + unsent.length + "명을 모두 발송완료 처리할까요?")) bulkSend(dg.id, unsent.map(function(s) { return s.id; })); }}>📤 {clsFilter === "all" ? "전체" : clsFilter} 일괄 발송완료 ({unsent.length})</button> : null; })()}
+                {(function() { var targets = roster.filter(function(s) { var x = dg.students[s.id]; return !(x && (x.sent || x.notSent)); }); return targets.length > 0 ? <button className="btn btn-s" style={{ fontSize: 11, fontWeight: 700, background: "#64748b", color: "#fff", border: "1px solid #64748b" }} onClick={function() { if (window.confirm((clsFilter === "all" ? "전체 반" : clsFilter) + " " + targets.length + "명을 모두 🚫 미발송 처리할까요?\n(발송 알림·기한점수에서 제외됩니다)")) bulkNotSent(dg.id, targets.map(function(s) { return s.id; })); }}>🚫 {clsFilter === "all" ? "전체" : clsFilter} 일괄 미발송 ({targets.length})</button> : null; })()}
+                {!hideCreate && <button className="btn btn-g btn-s" style={{ marginLeft: "auto", color: "#c0392b" }} onClick={function() { delDiag(dg.id); }}>🗑️ 진단지 삭제</button>}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {roster.map(function(s) {
+                  var st = dg.students[s.id] || {};
+                  var due = st.redueDate || dg.dueDate;
+                  var isOver = !st.sent && !st.notSent && due && due <= today;
+                  return <div key={s.id} style={{ padding: "8px 10px", background: st.held ? "#fffbeb" : st.notSent ? "#eef2f6" : isOver ? "#fef2f2" : "#f9fafb", borderRadius: 8, border: st.held ? "1px solid #fde68a" : st.notSent ? "1px solid #cbd5e1" : isOver ? "1px solid #fecaca" : "1px solid transparent" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 15 }}>{stuAvatar(s)}</span>
+                      <span style={{ fontSize: 13, fontWeight: 700, flex: 1, minWidth: 60 }}>{s.name} <span style={{ fontSize: 10, color: "var(--tx2)", fontWeight: 400 }}>{s.classId}</span></span>
+                      {st.sent
+                        ? <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 11, fontWeight: 700, color: "#065f46", background: "#d1fae5", borderRadius: 8, padding: "2px 8px" }}>✅ 발송완료{st.sentDate ? " " + st.sentDate.slice(5).replace("-", "/") : ""}</span><button className="btn btn-g btn-s" style={{ fontSize: 10 }} onClick={function() { updateStu(dg.id, s.id, { sent: false, sentDate: null }); }}>취소</button></div>
+                        : st.held
+                        ? <div style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fef3c7", borderRadius: 8, padding: "2px 8px" }}>⏸️ 발송보류</span><button className="btn btn-ok btn-s" style={{ fontSize: 10 }} onClick={function() { updateStu(dg.id, s.id, { sent: true, sentDate: td(), held: false, heldReason: "" }); }}>발송완료</button><button className="btn btn-g btn-s" style={{ fontSize: 10 }} onClick={function() { updateStu(dg.id, s.id, { held: false, heldReason: "" }); }}>해제</button></div>
+                        : st.notSent
+                        ? <div style={{ display: "flex", alignItems: "center", gap: 4 }}><span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: "#64748b", borderRadius: 8, padding: "2px 8px" }}>🚫 미발송 확정</span><button className="btn btn-ok btn-s" style={{ fontSize: 10 }} onClick={function() { updateStu(dg.id, s.id, { sent: true, sentDate: td(), notSent: false, reason: "", redueDate: "" }); }}>발송완료</button><button className="btn btn-g btn-s" style={{ fontSize: 10 }} onClick={function() { updateStu(dg.id, s.id, { notSent: false }); }}>취소</button></div>
+                        : <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}><button className="btn btn-ok btn-s" style={{ fontSize: 11, fontWeight: 700 }} onClick={function() { updateStu(dg.id, s.id, { sent: true, sentDate: td(), reason: "", redueDate: "" }); }}>📤 발송 완료</button><button className="btn btn-s" style={{ fontSize: 11, fontWeight: 700, background: "#fff", color: "#b45309", border: "1px solid #fcd34d" }} onClick={function() { updateStu(dg.id, s.id, { held: true, heldReason: "300제 미만" }); }}>⏸️ 발송보류</button><button className="btn btn-s" style={{ fontSize: 11, fontWeight: 700, background: "#64748b", color: "#fff", border: "1px solid #64748b" }} onClick={function() { updateStu(dg.id, s.id, { notSent: true }); }}>🚫 미발송</button></div>}
+                    </div>
+                    {st.held && <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center", paddingLeft: 23 }}><span style={{ fontSize: 10, color: "var(--tx2)" }}>보류 사유</span><select value={st.heldReason || ""} onChange={function(e) { var v = e.target.value; updateStu(dg.id, s.id, { heldReason: v, heldReasonEtc: v === "기타" ? (st.heldReasonEtc || "") : null }); }} style={{ fontSize: 11, padding: "5px 6px", border: "1px solid var(--bdr)", borderRadius: 7, fontFamily: "'Noto Sans KR'", background: "#fff" }}><option value="300제 미만">300제 미만</option><option value="정답률 5등급">정답률 5등급</option><option value="기타">기타</option></select>{st.heldReason === "기타" && <input value={st.heldReasonEtc || ""} onChange={function(e) { updateStu(dg.id, s.id, { heldReasonEtc: e.target.value }); }} placeholder="사유 입력" style={{ flex: "1 1 100px", padding: "5px 8px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />}</div>}
+                    {!st.sent && !st.held && !st.notSent && <div style={{ fontSize: 10, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, padding: "5px 8px", margin: "6px 0 0 23px" }}>📋 발송 전 확인: <b>풀린 문항 300제 미만</b>이거나 <b>정답률 5등급</b>이면 <b>발송보류</b>를 선택하세요.</div>}
+                    {!st.sent && !st.held && <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center", paddingLeft: 23 }}>
+                      <span style={{ fontSize: 10, color: "var(--tx2)" }}>미발송 사유</span>
+                      <select value={st.reason || ""} onChange={function(e) { var v = e.target.value; updateStu(dg.id, s.id, { reason: v || null, reasonEtc: v === "기타" ? (st.reasonEtc || "") : null }); }} style={{ fontSize: 11, padding: "5px 6px", border: "1px solid var(--bdr)", borderRadius: 7, fontFamily: "'Noto Sans KR'", background: "#fff" }}><option value="">선택</option><option value="미작성">미작성</option><option value="기타">기타</option></select>
+                      {st.reason === "기타" && <input value={st.reasonEtc || ""} onChange={function(e) { updateStu(dg.id, s.id, { reasonEtc: e.target.value }); }} placeholder="사유 입력" style={{ flex: "1 1 100px", padding: "5px 8px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />}
+                      <span style={{ fontSize: 10, color: "var(--tx2)" }}>재완료 기한</span>
+                      <input type="date" value={st.redueDate || ""} onChange={function(e) { updateStu(dg.id, s.id, { redueDate: e.target.value }); }} style={{ padding: "5px 6px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />
+                    </div>}
+                  </div>;
+                })}
+              </div>
+            </div>}
+          </div>;
+        })}
+    </div>
+  );
+}
+
 function AdminTextbooks({ textbooks, setTextbooks }) {
   var [show, setShow] = useState(false); var [editId, setEditId] = useState(null);
   var [nm, setNm] = useState(""); var [subj, setSubj] = useState(""); var [icon, setIcon] = useState("📘"); var [color, setColor] = useState("#3b82f6");
@@ -1483,9 +2727,9 @@ function AdminTextbooks({ textbooks, setTextbooks }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}><h3 style={{ fontSize: 15, fontWeight: 700 }}>교재 목록 ({textbooks.length}권)</h3><button className="btn btn-p btn-s" onClick={function() { reset(); setShow(true); }}>+ 교재 추가</button></div>
       {textbooks.map(function(tb) { var op = expTb === tb.id; var totalL = tb.chapters.reduce(function(s, c) { return s + c.lessons.length; }, 0);
-        return (<div key={tb.id} className="tb-card"><div className="tb-head" onClick={function() { setExpTb(op ? null : tb.id); }}><div className="tb-icon" style={{ background: tb.color + "18", color: tb.color }}>{tb.icon}</div><div style={{ flex: 1 }}><div className="tb-name">{tb.name}</div><div className="tb-sub">{tb.subject} · {tb.chapters.length}단원 · {totalL}차시</div></div><button className="btn btn-g btn-s" onClick={function(e) { e.stopPropagation(); openEdit(tb); }}>수정</button><button className="btn-d" onClick={function(e) { e.stopPropagation(); setTextbooks(function(p) { return p.filter(function(t) { return t.id !== tb.id; }); }); }}>✕</button><span className={cn("exp", op && "op")}>▼</span></div>
+        return (<div key={tb.id} className="tb-card"><div className="tb-head" onClick={function() { setExpTb(op ? null : tb.id); }}><div className="tb-icon" style={{ background: tb.color + "18", color: tb.color }}>{tb.icon}</div><div style={{ flex: 1 }}><div className="tb-name">{tb.name}</div><div className="tb-sub">{tb.subject} · {tb.chapters.length}단원 · {totalL}차시</div></div><button className="btn btn-g btn-s" onClick={function(e) { e.stopPropagation(); openEdit(tb); }}>수정</button><span className={cn("exp", op && "op")}>▼</span></div>
           {op && (<div className="tb-body">
-            <div style={{ marginBottom: 10 }}><button className="btn btn-ok btn-s" onClick={function() {
+            <div style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}><button className="btn btn-ok btn-s" onClick={function() {
               var html = '<html><head><meta charset="utf-8"><title>' + tb.name + '</title><style>body{font-family:Arial,sans-serif;padding:20px;color:#333}h1{font-size:20px;border-bottom:2px solid #333;padding-bottom:8px}h2{font-size:16px;color:#555;margin-top:20px;margin-bottom:8px}h3{font-size:13px;margin:12px 0 6px;padding:6px 10px;background:#f3f4f6;border-radius:4px}.task{padding:6px 0 6px 20px;font-size:12px;border-bottom:1px dotted #ddd}.task:before{content:"☐ ";font-size:14px}.pages{font-size:11px;color:#888;margin-left:10px}.lesson-num{font-weight:800;color:#e63946;margin-right:6px}@media print{body{padding:10px}}</style></head><body>';
               html += '<h1>' + tb.icon + ' ' + tb.name + '</h1>';
               tb.chapters.forEach(function(ch) {
@@ -1500,7 +2744,7 @@ function AdminTextbooks({ textbooks, setTextbooks }) {
               w.document.write(html);
               w.document.close();
               w.print();
-            }}>🖨️ 프린트</button></div>
+            }}>🖨️ 프린트</button><button onClick={function() { if (window.confirm("'" + tb.name + "' 교재를 삭제할까요?\n연결된 진도배정에도 영향을 줄 수 있고, 되돌릴 수 없습니다.")) { setTextbooks(function(p) { return p.filter(function(t) { return t.id !== tb.id; }); }); } }} style={{ fontSize: 12, fontWeight: 700, padding: "6px 14px", borderRadius: 8, border: "1px solid #fecaca", background: "#fef2f2", color: "#dc2626", cursor: "pointer", fontFamily: "'Noto Sans KR'" }}>🗑️ 교재 삭제하기</button></div>
             {tb.chapters.map(function(ch) { return (<div key={ch.id}><div className="ch-title">{ch.title}</div>{ch.lessons.map(function(ls, li) { return (<div key={ls.id}><div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 4px", fontSize: 12 }}><span style={{ fontSize: 10, fontWeight: 800, color: "var(--pri)", minWidth: 36 }}>{li + 1}차시</span><span style={{ fontWeight: 600 }}>{ls.title}</span><span style={{ color: "var(--tx2)", fontSize: 10 }}>{ls.pages}</span></div><div className="ls-tasks">{ls.tasks.map(function(t, i) { return <span key={i}>📌 {t}</span>; })}</div></div>); })}</div>); })}</div>)}</div>);
       })}
       {show && (<div className="mo" onClick={function() { setShow(false); reset(); }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 620 }}>
@@ -1532,9 +2776,9 @@ function AdminTextbooks({ textbooks, setTextbooks }) {
   );
 }
 
-function AdminCurriculum({ users, textbooks, curriculum, setCurriculum }) {
+function AdminCurriculum({ users, textbooks, curriculum, setCurriculum, collections, setCollections, progressReqs, setProgressReqs, forceSave }) {
   var insts = users.filter(function(u) { return u.role === "instructor"; });
-  var classes = []; users.filter(function(u) { return u.role === "student"; }).forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
+  var classes = []; users.filter(function(u) { return u.role === "student"; }).forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort(classCmp);
   var [selInst, setSelInst] = useState(insts.length > 0 ? insts[0].id : "");
   var [selClass, setSelClass] = useState(classes[0] || "");
   var [expTb, setExpTb] = useState(null);
@@ -1564,6 +2808,73 @@ function AdminCurriculum({ users, textbooks, curriculum, setCurriculum }) {
   var setLsDate = function(tbId, chId, lsId, date) {
     var key = selInst + "__" + selClass + "__" + tbId; var lid = chId + "__" + lsId;
     setCurriculum(function(prev) { return prev.map(function(c) { return c.key === key ? Object.assign({}, c, { lessons: c.lessons.map(function(l) { return l.lessonId === lid ? Object.assign({}, l, { date: date }) : l; }) }) : c; }); });
+  };
+
+  var GRADES = ["상", "중", "하"];
+  var colKeyOf = function(tbId) { return selInst + "__" + selClass + "__" + tbId; };
+  var classStudentsFor = function() { return users.filter(function(u) { return u.role === "student" && u.classId === selClass; }); };
+  var updateCol = function(tbId, sid, patch) {
+    var key = colKeyOf(tbId);
+    var cst = classStudentsFor();
+    setCollections(function(p) {
+      var np = Object.assign({}, p); var col = Object.assign({ students: {} }, np[key]); col.students = Object.assign({}, col.students); col.students[sid] = Object.assign({}, col.students[sid], patch);
+      var allSub = cst.length > 0 && cst.every(function(s) { return col.students[s.id] && col.students[s.id].state === "submitted"; });
+      if (allSub && !col.completedDate) col.completedDate = td();
+      if (!allSub) col.completedDate = null;
+      col.updatedAt = Date.now(); np[key] = col; return np;
+    });
+    if (forceSave) forceSave();
+  };
+  var gradeColor = function(g) { return g === "상" ? "#10b981" : g === "중" ? "#d97706" : "#dc2626"; };
+  var renderCollection = function(tb) {
+    var col = (collections && collections[colKeyOf(tb.id)]) || { students: {} };
+    var cst = classStudentsFor();
+    var sub = cst.filter(function(s) { return col.students[s.id] && col.students[s.id].state === "submitted"; }).length;
+    var rate = cst.length ? Math.round(sub / cst.length * 100) : 0;
+    return (<div style={{ marginTop: 14, paddingTop: 14, borderTop: "2px dashed var(--bdr)" }}>
+      <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 4 }}>📦 교재 걷기 <span style={{ fontSize: 10, fontWeight: 400, color: "var(--tx2)" }}>(마지막 차시 · {selClass})</span></div>
+      <div style={{ fontSize: 11, color: "var(--tx2)", marginBottom: 10 }}>반 인원 <b>{cst.length}</b>명 · 제출 <b style={{ color: "#10b981" }}>{sub}</b> · 미제출 <b style={{ color: "#dc2626" }}>{cst.length - sub}</b> · 회수율 <b style={{ color: "var(--pri)" }}>{rate}%</b></div>
+      <div style={{ background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 8, padding: "8px 10px", marginBottom: 10, fontSize: 10.5, lineHeight: 1.7, color: "var(--tx2)" }}>
+        <div style={{ fontWeight: 700, color: "var(--tx)", marginBottom: 2 }}>📖 교재 완성도 기준</div>
+        <div><b style={{ color: "#10b981" }}>상</b> 완성도 95% 이상 ~ 100%</div>
+        <div><b style={{ color: "#d97706" }}>중</b> 완성도 70% 이상 ~ 95% 미만</div>
+        <div><b style={{ color: "#dc2626" }}>하</b> 완성도 70% 미만 <span style={{ color: "#dc2626", fontWeight: 700 }}>(재제출 대상)</span> — 미제출보다는 상위</div>
+      </div>
+      {cst.length === 0 ? <div style={{ fontSize: 12, color: "var(--tx2)" }}>이 반에 학생이 없습니다</div> :
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {cst.map(function(s) {
+            var c = col.students[s.id] || {};
+            return <div key={s.id} style={{ padding: "8px 10px", background: "#f9fafb", borderRadius: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 15 }}>{stuAvatar(s)}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, flex: 1, minWidth: 50 }}>{s.name}</span>
+                {c.state === "submitted"
+                  ? <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "#065f46", background: "#d1fae5", borderRadius: 8, padding: "2px 7px" }}>✅ 제출</span>
+                      {GRADES.map(function(g) { return <button key={g} onClick={function() { updateCol(tb.id, s.id, { grade: g }); }} style={{ fontSize: 11, fontWeight: 800, width: 26, height: 24, borderRadius: 6, cursor: "pointer", border: c.grade === g ? "2px solid " + gradeColor(g) : "1px solid var(--bdr)", background: c.grade === g ? gradeColor(g) : "#fff", color: c.grade === g ? "#fff" : "var(--tx2)", fontFamily: "'Noto Sans KR'" }}>{g}</button>; })}
+                      <button className="btn btn-g btn-s" style={{ fontSize: 10 }} onClick={function() { updateCol(tb.id, s.id, { state: "missing", grade: null }); }}>미제출로</button>
+                    </div>
+                  : c.state === "missing"
+                  ? <div style={{ display: "flex", gap: 4, alignItems: "center" }}><span style={{ fontSize: 10, fontWeight: 700, color: "#dc2626", background: "#fee2e2", borderRadius: 8, padding: "2px 7px" }}>미제출</span><button className="btn btn-ok btn-s" style={{ fontSize: 10 }} onClick={function() { updateCol(tb.id, s.id, { state: "submitted", reason: "", dueDate: "" }); }}>제출완료</button></div>
+                  : <div style={{ display: "flex", gap: 4 }}><button className="btn btn-ok btn-s" style={{ fontSize: 11, fontWeight: 700 }} onClick={function() { updateCol(tb.id, s.id, { state: "submitted" }); }}>제출</button><button className="btn btn-g btn-s" style={{ fontSize: 11, fontWeight: 700, color: "#dc2626" }} onClick={function() { updateCol(tb.id, s.id, { state: "missing" }); }}>미제출</button></div>}
+              </div>
+              {c.state === "missing" && <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", paddingLeft: 23, alignItems: "center" }}>
+                <span style={{ fontSize: 10, color: "var(--tx2)" }}>사유</span>
+                <select value={c.reason || ""} onChange={function(e) { var v = e.target.value; updateCol(tb.id, s.id, { reason: v || null, reasonEtc: v === "기타" ? (c.reasonEtc || "") : null }); }} style={{ fontSize: 11, padding: "5px 6px", border: "1px solid var(--bdr)", borderRadius: 7, fontFamily: "'Noto Sans KR'", background: "#fff" }}>
+                  <option value="">선택</option>
+                  <option value="미완성">미완성</option>
+                  <option value="장기 결석">장기 결석</option>
+                  <option value="신입생">신입생</option>
+                  <option value="교재 잃어버림">교재 잃어버림</option>
+                  <option value="기타">기타 (입력)</option>
+                </select>
+                {c.reason === "기타" && <input value={c.reasonEtc || ""} onChange={function(e) { updateCol(tb.id, s.id, { reasonEtc: e.target.value }); }} placeholder="사유 입력" style={{ flex: "1 1 100px", padding: "5px 8px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />}
+                <span style={{ fontSize: 10, color: "var(--tx2)" }}>예정일</span><input type="date" value={c.dueDate || ""} onChange={function(e) { updateCol(tb.id, s.id, { dueDate: e.target.value }); }} style={{ padding: "5px 6px", border: "1px solid var(--bdr)", borderRadius: 7, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />
+              </div>}
+            </div>;
+          })}
+        </div>}
+    </div>);
   };
 
   var dayLabels = ["일", "월", "화", "수", "목", "금", "토"];
@@ -1598,6 +2909,32 @@ function AdminCurriculum({ users, textbooks, curriculum, setCurriculum }) {
 
   return (
     <div>
+      <CollectionAlerts collections={collections} setCollections={setCollections} users={users} textbooks={textbooks} forceSave={forceSave} />
+      {(function() {
+        var pend = (progressReqs || []).filter(function(r) { return r.status === "pending"; }).sort(function(a, b) { return (a.createdAt || 0) - (b.createdAt || 0); });
+        if (!pend.length) return null;
+        var approve = function(id) { setProgressReqs(function(p) { return (p || []).map(function(r) { return r.id === id ? Object.assign({}, r, { status: "approved", approvedBy: "관리자", approvedAt: td() }) : r; }); }); if (forceSave) forceSave(); };
+        var reject = function(id) { setProgressReqs(function(p) { return (p || []).map(function(r) { return r.id === id ? Object.assign({}, r, { status: "rejected", approvedAt: td() }) : r; }); }); if (forceSave) forceSave(); };
+        return <div style={{ background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: "12px 14px", marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: "#b45309", marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>⏳ 진도 수정요청 승인 대기 (3회 초과) <span style={{ fontSize: 11, fontWeight: 700, background: "#fef3c7", borderRadius: 10, padding: "1px 8px" }}>{pend.length}건</span></div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {pend.map(function(r) {
+              return <div key={r.id} style={{ background: "#fff", border: "1px solid #fde68a", borderRadius: 9, padding: "9px 11px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 4 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>🏫 {r.classId}</span>
+                  <span style={{ fontSize: 11, color: "var(--tx2)" }}>{r.teacherName} · {r.seq}회차 · 📅 {(r.date || "").replace(/-/g, ".")}</span>
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
+                    <button className="btn btn-s" style={{ fontSize: 11, fontWeight: 700, background: "#16a34a", color: "#fff", border: "1px solid #16a34a" }} onClick={function() { approve(r.id); }}>✅ 승인</button>
+                    <button className="btn btn-g btn-s" style={{ fontSize: 11, color: "#b91c1c" }} onClick={function() { if (window.confirm("이 요청을 반려할까요?")) reject(r.id); }}>반려</button>
+                  </div>
+                </div>
+                <div style={{ fontSize: 11.5, color: "var(--tx)" }}><b>사유:</b> {r.reason}</div>
+                <div style={{ fontSize: 11.5, color: "var(--tx)" }}><b>수행:</b> {r.performed}</div>
+              </div>;
+            })}
+          </div>
+        </div>;
+      })()}
       <div className="row2" style={{ marginBottom: 16 }}>
         <div className="fg"><label>강사</label><select value={selInst} onChange={function(e) { setSelInst(e.target.value); }}>{insts.map(function(i) { return <option key={i.id} value={i.id}>{i.avatar} {i.name}</option>; })}</select></div>
         <div className="fg"><label>반</label><select value={selClass} onChange={function(e) { setSelClass(e.target.value); }}>{classes.map(function(c) { return <option key={c} value={c}>{c}</option>; })}</select></div>
@@ -1683,7 +3020,7 @@ function AdminCurriculum({ users, textbooks, curriculum, setCurriculum }) {
             {ch.lessons.map(function(ls, li) {
               var done = isLsDone(tb.id, ch.id, ls.id); var dt = getLsDate(tb.id, ch.id, ls.id);
               return (<div key={ls.id}><div className="ls-row"><div className={cn("ls-ck", done && "done")} onClick={function() { toggleLesson(tb, ch.id, ls.id); }}>{done && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}</div><div><div className="ls-title"><span style={{ fontSize: 10, fontWeight: 800, color: "var(--pri)", marginRight: 4 }}>{li + 1}차시</span>{ls.title}</div><div className="ls-pages">{ls.pages}</div></div>{done && (<input type="date" value={dt} onChange={function(e) { setLsDate(tb.id, ch.id, ls.id, e.target.value); }} style={{ marginLeft: "auto", padding: "3px 6px", border: "1px solid var(--bdr)", borderRadius: 4, fontSize: 10, fontFamily: "Noto Sans KR" }} />)}</div>{done && <div className="ls-tasks">{ls.tasks.map(function(t, i) { return <span key={i}>📌 {t}</span>; })}</div>}</div>);
-            })}</div>); })}</div>)}</div>);
+            })}</div>); })}{renderCollection(tb)}</div>)}</div>);
       })}
       <div className="hint">💡 차시를 체크하면 과제가 배정됩니다. 잘못된 배정은 체크 해제하거나 "🗑 배정 초기화"로 삭제하세요.</div>
 
@@ -1791,15 +3128,117 @@ function MessageThread({ studentId, cur, messages, onSend }) {
   );
 }
 
-function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, attendance, scores, classList, forceSave, withdrawals, setWithdrawals, counsels, setCounsels }) {
+function ProgressView({ user, myClasses, curriculum, textbooks, progressReqs, setProgressReqs, forceSave }) {
+  var [modal, setModal] = useState(null); // classId being requested
+  var [rDate, setRDate] = useState(td());
+  var [rReason, setRReason] = useState("");
+  var [rPerformed, setRPerformed] = useState("");
+  var tbById = function(id) { return (textbooks || []).find(function(t) { return t.id === id; }); };
+  var LIMIT = 3;
+  // 반별 진도 엔트리 (내 담당 반)
+  var entriesFor = function(cls) { return (curriculum || []).filter(function(c) { var p = (c.key || "").split("__"); return p[1] === cls && (c.lessons || []).length > 0; }); };
+  // 반별 수정요청 (승인/자동 카운트 = ok+approved)
+  var reqsFor = function(cls) { return (progressReqs || []).filter(function(r) { return r.classId === cls; }).sort(function(a, b) { return (b.createdAt || 0) - (a.createdAt || 0); }); };
+  var countedFor = function(cls) { return reqsFor(cls).filter(function(r) { return r.status === "ok" || r.status === "approved"; }).length; };
+  var pendingFor = function(cls) { return reqsFor(cls).some(function(r) { return r.status === "pending"; }); };
+  var openReq = function(cls) { setModal(cls); setRDate(td()); setRReason(""); setRPerformed(""); };
+  var submitReq = function() {
+    if (!rReason.trim()) { window.alert("진도가 늦어진 사유를 입력해 주세요."); return; }
+    if (!rPerformed.trim()) { window.alert("그 시간에 수행한 내용을 입력해 주세요."); return; }
+    var cls = modal;
+    var counted = countedFor(cls);
+    var total = reqsFor(cls).length;
+    var overLimit = counted >= LIMIT;
+    var rec = { id: "pr_" + mkid(), classId: cls, teacherId: user.id, teacherName: user.name, date: rDate, reason: rReason.trim(), performed: rPerformed.trim(), seq: total + 1, status: overLimit ? "pending" : "ok", createdAt: Date.now() };
+    setProgressReqs(function(p) { return (p || []).concat([rec]); });
+    if (forceSave) forceSave();
+    setModal(null);
+    window.alert(overLimit ? "이번 요청은 " + (LIMIT + 1) + "번째입니다.\n3회를 초과하여 관리자 승인 후 반영됩니다." : "진도 수정요청이 등록되었습니다. (" + (counted + 1) + "/" + LIMIT + ")");
+  };
+  var stLabel = { ok: "✅ 반영", approved: "✅ 관리자 승인", pending: "⏳ 관리자 승인 대기", rejected: "❌ 반려" };
+  var stColor = { ok: { c: "#065f46", b: "#d1fae5" }, approved: { c: "#065f46", b: "#d1fae5" }, pending: { c: "#b45309", b: "#fef3c7" }, rejected: { c: "#b91c1c", b: "#fee2e2" } };
+  return (
+    <div>
+      <div className="ph"><h2>📖 진도</h2><p>담당 반에 배정된 진도를 확인하고, 따라가지 못한 경우 진도 수정요청을 등록합니다 (반별 3회까지, 이후 관리자 승인 필요).</p></div>
+      {myClasses.length === 0 ? <div className="empty"><div className="eic">📖</div><p>담당 반이 없습니다</p></div> :
+        myClasses.map(function(cls) {
+          var entries = entriesFor(cls);
+          var reqs = reqsFor(cls);
+          var counted = countedFor(cls);
+          var remain = Math.max(0, LIMIT - counted);
+          var pend = pendingFor(cls);
+          return <div key={cls} style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 12, padding: "13px 15px", marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <span style={{ fontSize: 15, fontWeight: 800 }}>🏫 {cls}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: remain > 0 ? "#1e40af" : "#b45309", background: remain > 0 ? "#dbeafe" : "#fef3c7", borderRadius: 10, padding: "2px 9px" }}>수정요청 {counted}/{LIMIT}{remain === 0 ? " · 초과(관리자 승인)" : " · " + remain + "회 남음"}</span>
+              <button className="btn btn-s" style={{ marginLeft: "auto", fontSize: 12, fontWeight: 700, background: "#e94560", color: "#fff", border: "1px solid #e94560" }} onClick={function() { openReq(cls); }}>✏️ 진도 수정요청</button>
+            </div>
+            {/* 배정된 진도 */}
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tx2)", marginBottom: 6 }}>배정된 진도</div>
+            {entries.length === 0 ? <div style={{ fontSize: 12, color: "var(--tx2)", padding: "8px 0" }}>배정된 진도가 없습니다.</div> :
+              entries.map(function(e) {
+                var tb = tbById((e.key || "").split("__")[2]);
+                var ls = (e.lessons || []).slice().sort(function(a, b) { return (a.date || "").localeCompare(b.date || ""); });
+                return <div key={e.key} style={{ border: "1px solid var(--bdr)", borderRadius: 9, padding: "8px 10px", marginBottom: 6, background: "#f9fafb" }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4 }}>📚 {tb ? tb.name : "교재"}<span style={{ fontSize: 11, color: "var(--tx2)", fontWeight: 400 }}> · {ls.length}강 배정</span></div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {ls.slice(0, 12).map(function(l) {
+                      var nm = "";
+                      if (tb) { var pp = (l.lessonId || "").split("__"); var ch = (tb.chapters || []).find(function(c) { return c.id === pp[0]; }); var lo = ch ? (ch.lessons || []).find(function(x) { return x.id === pp[1]; }) : null; nm = lo ? lo.name : ""; }
+                      return <span key={l.lessonId} style={{ fontSize: 10.5, color: "#334155", background: "#eef2f6", borderRadius: 6, padding: "2px 7px" }}>{l.date ? l.date.slice(5).replace("-", "/") + " " : ""}{nm || l.lessonId}</span>;
+                    })}
+                    {ls.length > 12 && <span style={{ fontSize: 10.5, color: "var(--tx2)" }}>+{ls.length - 12}강</span>}
+                  </div>
+                </div>;
+              })}
+            {/* 수정요청 이력 */}
+            {reqs.length > 0 && <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--tx2)", marginBottom: 6 }}>진도 수정요청 이력</div>
+              {reqs.map(function(r) {
+                var sc = stColor[r.status] || stColor.ok;
+                return <div key={r.id} style={{ border: "1px solid var(--bdr)", borderRadius: 9, padding: "8px 10px", marginBottom: 5 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginBottom: 3 }}>
+                    <span style={{ fontSize: 11.5, fontWeight: 700 }}>{r.seq}회차</span>
+                    <span style={{ fontSize: 11, color: "var(--tx2)" }}>📅 {(r.date || "").replace(/-/g, ".")}</span>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: sc.c, background: sc.b, borderRadius: 8, padding: "1px 8px" }}>{stLabel[r.status] || r.status}</span>
+                  </div>
+                  <div style={{ fontSize: 11.5, color: "var(--tx)" }}><b>사유:</b> {r.reason}</div>
+                  <div style={{ fontSize: 11.5, color: "var(--tx)" }}><b>수행:</b> {r.performed}</div>
+                </div>;
+              })}
+            </div>}
+            {pend && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 700, color: "#b45309", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 8, padding: "7px 10px" }}>⏳ 3회 초과 요청이 관리자 승인 대기 중입니다.</div>}
+          </div>;
+        })}
+
+      {modal && <div className="mo" onClick={function() { setModal(null); }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 460 }}>
+        <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 4 }}>✏️ 진도 수정요청 · {modal}</div>
+        <div style={{ fontSize: 12, color: "var(--tx2)", marginBottom: 14 }}>배정 진도를 따라가지 못한 경우 사유와 수행 내용을 남겨 주세요.{countedFor(modal) >= LIMIT ? " (3회 초과 — 관리자 승인 후 반영됩니다)" : " (" + (countedFor(modal) + 1) + "/" + LIMIT + "회차)"}</div>
+        <div className="fg" style={{ marginBottom: 10 }}><label>날짜</label><input type="date" value={rDate} onChange={function(e) { setRDate(e.target.value); }} style={{ fontFamily: "'Noto Sans KR'" }} /></div>
+        <div className="fg" style={{ marginBottom: 10 }}><label>진도가 늦어진 사유</label><textarea value={rReason} onChange={function(e) { setRReason(e.target.value); }} rows={2} placeholder="예: 학생 다수 결석 / 이전 단원 이해도 부족으로 복습 진행 등" style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", resize: "vertical" }} /></div>
+        <div className="fg" style={{ marginBottom: 14 }}><label>그 시간에 수행한 것</label><textarea value={rPerformed} onChange={function(e) { setRPerformed(e.target.value); }} rows={2} placeholder="예: 3단원 복습 및 오답 풀이, 개별 질의응답 진행" style={{ width: "100%", padding: "9px 11px", border: "1px solid var(--bdr)", borderRadius: 9, fontSize: 13, fontFamily: "'Noto Sans KR'", resize: "vertical" }} /></div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn btn-g btn-s" style={{ flex: 1 }} onClick={function() { setModal(null); }}>취소</button>
+          <button className="btn btn-p btn-s" style={{ flex: 2, fontWeight: 700 }} onClick={submitReq}>{countedFor(modal) >= LIMIT ? "관리자 승인 요청" : "수정요청 등록"}</button>
+        </div>
+      </div></div>}
+    </div>
+  );
+}
+
+function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, attendance, scores, classList, forceSave, withdrawals, setWithdrawals, counsels, setCounsels, makeups, setMakeups, collections, setCollections, textbooks, curriculum, progressReqs, setProgressReqs, diagnostics, setDiagnostics, holidays, agreements }) {
   var [counselModal, setCounselModal] = useState(null);
+  var [showAgr, setShowAgr] = useState(false);
   var csNotifSeen = useRef(null);
-  var myPendingCounsels = (counsels || []).filter(function(c) { return c.status === "needed" && (c.teacherId === user.id || (!c.teacherId && (user.assignedClasses || []).indexOf(c.classId) >= 0)); });
+  var myAllPending = (counsels || []).filter(function(c) { return c.status === "needed" && (c.teacherId === user.id || (!c.teacherId && (user.assignedClasses || []).indexOf(c.classId) >= 0)); });
+  var myWithdrawFlags = myAllPending.filter(function(c) { return c.kind === "withdraw"; });
+  var myWithdrawRisk = myAllPending.filter(function(c) { return c.kind === "withdrawrisk"; });
+  var myPendingCounsels = myAllPending.filter(function(c) { return c.kind !== "withdraw"; });
   useEffect(function() {
-    var ids = myPendingCounsels.map(function(c) { return c.id; });
+    var ids = myAllPending.map(function(c) { return c.id; });
     if (csNotifSeen.current === null) { csNotifSeen.current = ids; return; }
     var fresh = ids.filter(function(id) { return csNotifSeen.current.indexOf(id) < 0; });
-    if (fresh.length) { var c = myPendingCounsels.find(function(x) { return x.id === fresh[0]; }); if (c) fireNotif("⚠️ 상담 필요 — " + c.studentName, c.reason); }
+    if (fresh.length) { var c = myAllPending.find(function(x) { return x.id === fresh[0]; }); if (c) fireNotif(c.kind === "withdraw" ? "🚪 퇴원 감지 — " + c.studentName : c.kind === "withdrawrisk" ? "⚠️ 퇴원 우려 — " + c.studentName : "⚠️ 상담 필요 — " + c.studentName, c.reason); }
     csNotifSeen.current = ids;
   });
   var saveCounsel = function(id, note) {
@@ -1808,8 +3247,13 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
   };
   var [wdStudent, setWdStudent] = useState(null);
   var wdCtx = { allA: allA, sp: sp, scores: scores, attendance: attendance, messages: messages, users: users };
-  var isWithdrawn = function(sid) { return (withdrawals || []).some(function(w) { return w.studentId === sid; }); };
-  var confirmWithdraw = function(rec) { setWithdrawals(function(p) { return (p || []).concat([rec]); }); setWdStudent(null); if (forceSave) forceSave(); };
+  var isWithdrawn = function(sid) { return (withdrawals || []).some(function(w) { return w.studentId === sid && w.status !== "delayed"; }); };
+  var isDelayed = function(sid) { return (withdrawals || []).some(function(w) { return w.studentId === sid && w.status === "delayed"; }); };
+  var confirmWithdraw = function(rec) { setWithdrawals(function(p) { return (p || []).concat([rec]); }); if (setCounsels) setCounsels(function(p) { return (p || []).map(function(c) { return (c.studentId === rec.studentId && c.kind === "withdraw" && c.status === "needed") ? Object.assign({}, c, { status: "done", doneDate: td(), doneBy: user.name }) : c; }); }); setWdStudent(null); if (forceSave) forceSave(); };
+  var askWithdraw = function(s) {
+    if (window.confirm("퇴원 상담을 하셨습니까?\n\n[확인] 예 — 퇴원서 작성\n[취소] 아니오")) { setWdStudent(Object.assign({}, s, { _counseled: true })); return; }
+    window.alert("⚠️ 퇴원 상담을 먼저 진행해야 퇴원 처리를 할 수 있습니다.\n상담 완료 후 다시 시도해 주세요.\n\n(퇴원서 접수와 퇴원 상담이 모두 완료되어야 퇴원 처리가 됩니다.)");
+  };
   var [selDate, setSelDate] = useState(td()); var [view, setView] = useState("date"); var [expId, setExpId] = useState(null);
   var [cf, setCf] = useState("all");
   var [mainView, setMainView] = useState("homework");
@@ -1886,15 +3330,65 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
     return { classId: cs.classId, students: cs.students, studentCount: cs.studentCount, avgPct: cs.avgPct, presentToday: presentToday, rate2w: rate2w, avgGrade: avgGrade, gradedCount: grds.length };
   });
 
+  // 오늘 한눈에 요약
+  var todayPresent = myStudentsAll.filter(function(s) { return todayAttOf(s.id); }).length;
+  var attnCount = computeAttnAlerts(myStudentsAll, attendance, makeups, holidays).length;
+  var consultCount = myPendingCounsels.length;
+  var diagCount = computeDiagAlerts(diagnostics, myStudentsAll).length;
+  var colCount = computeCollectionAlerts(collections, users, user.id).length;
+  var sendCount = diagCount + colCount;
+  var _hr = new Date().getHours();
+  var _greet = _hr < 12 ? "좋은 아침이에요" : _hr < 18 ? "오늘도 힘내세요" : "오늘 하루 수고하셨어요";
+  var heroCard = function(icon, label, value, sub, color, bg, onClick) {
+    return <div onClick={onClick} style={{ background: bg, borderRadius: 14, padding: "12px 10px", textAlign: "center", cursor: onClick ? "pointer" : "default", border: "1px solid " + color + "33" }}>
+      <div style={{ fontSize: 19 }}>{icon}</div>
+      <div style={{ fontSize: 10, color: "var(--tx2)", fontWeight: 600, margin: "3px 0 5px" }}>{label}</div>
+      <div style={{ fontSize: 21, fontWeight: 800, color: color, lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 9, color: "var(--tx2)", marginTop: 3 }}>{sub}</div>}
+    </div>;
+  };
+
   return (
     <div>
-      <div className="ph"><h2>📋 {user.name} 담임 대시보드</h2><p>담당 반: {myClasses.length > 0 ? myClasses.join(", ") : "배정된 반이 없습니다 (관리자에게 요청하세요)"}</p></div>
-
-      {(selfCodes && selfCodes[td()]) && <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", marginBottom: 14, background: "linear-gradient(135deg, #ede9fe, #f5f3ff)", border: "2px solid #c4b5fd", borderRadius: "var(--r)" }}>
+      <div style={{ background: "linear-gradient(135deg, #fff 0%, #fef2f4 100%)", border: "1px solid var(--bdr)", borderRadius: 16, padding: "16px 16px 14px", marginBottom: 16 }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: "#1d2733" }}>👋 {_greet}, {user.name} 선생님</div>
+        <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
+          {myClasses.length > 0 ? myClasses.map(function(c) { return <span key={c} style={{ fontSize: 11, fontWeight: 700, color: "var(--pri)", background: "#fff", border: "1px solid var(--pri)", borderRadius: 20, padding: "2px 10px" }}>🏫 {c}</span>; }) : <span style={{ fontSize: 12, color: "var(--tx2)" }}>배정된 반이 없습니다 (관리자에게 요청하세요)</span>}
+        </div>
+        {myWithdrawFlags.length > 0 && <div onClick={function() { setMainView("attendance"); }} style={{ marginTop: 12, padding: "12px 14px", background: "linear-gradient(135deg, #fee2e2, #fef2f2)", border: "2px solid #fca5a5", borderRadius: "var(--r)", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>🚨</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#b91c1c" }}>학원 퇴원 감지 {myWithdrawFlags.length}명 — 퇴원 절차를 진행해 주세요</div>
+            <div style={{ fontSize: 11, color: "#dc2626", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myWithdrawFlags.map(function(c) { return c.studentName + "(" + c.classId + ")"; }).join(", ")}</div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#b91c1c", background: "#fff", borderRadius: 8, padding: "4px 10px", flexShrink: 0 }}>출석·퇴원 →</span>
+        </div>}
+        {myWithdrawRisk.length > 0 && <div onClick={function() { setMainView("consult"); }} style={{ marginTop: 12, padding: "12px 14px", background: "linear-gradient(135deg, #fef3c7, #fffbeb)", border: "2px solid #fcd34d", borderRadius: "var(--r)", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22 }}>⚠️</span>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#b45309" }}>퇴원 우려 {myWithdrawRisk.length}명 — 퇴원 방지 상담을 진행해 주세요</div>
+            <div style={{ fontSize: 11, color: "#d97706", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{myWithdrawRisk.map(function(c) { return c.studentName + "(" + c.classId + ")"; }).join(", ")} · 컴플레인 접수</div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#b45309", background: "#fff", borderRadius: 8, padding: "4px 10px", flexShrink: 0 }}>상담 →</span>
+        </div>}
+        {myStudentsAll.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 7, marginTop: 14 }}>
+          {heroCard("📋", "오늘 출석", todayPresent + "/" + myStudentsAll.length, todayPresent >= myStudentsAll.length ? "전원 출석" : "미출석 " + (myStudentsAll.length - todayPresent), todayPresent >= myStudentsAll.length ? "#10b981" : "#d97706", "#fff", function() { setMainView("attendance"); })}
+          {heroCard("🔔", "확인 필요", attnCount, attnCount === 0 ? "이상 없음" : "지각·결석·보충", attnCount === 0 ? "#10b981" : "#dc2626", "#fff", function() { setMainView("attn"); })}
+          {heroCard("💬", "상담 대기", consultCount, consultCount === 0 ? "없음" : "확인하세요", consultCount === 0 ? "#10b981" : "#9333ea", "#fff", function() { setMainView("consult"); })}
+          {heroCard("🩺", "발송·제출", sendCount, sendCount === 0 ? "없음" : "진단지 " + diagCount + "·교재 " + colCount, sendCount === 0 ? "#10b981" : "#b45309", "#fff", function() { setMainView("sending"); })}
+        </div>}
+      </div>
+      {(function() { var agreed = _agreedThisMonth(agreements, user.id); var info = _agreeInfo(agreements, user.id); return <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", marginBottom: 14, background: agreed ? "#f0fdf4" : "#fef2f2", border: "1px solid " + (agreed ? "#bbf7d0" : "#fecaca"), borderRadius: "var(--r)" }}>
+        <span style={{ fontSize: 15 }}>📜</span>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12, fontWeight: 700, color: agreed ? "#166534" : "#b91c1c" }}>관리에 관한 약정 {agreed ? "· 이번 달 확인 완료" : "· 이번 달 확인 필요"}</div>{info && <div style={{ fontSize: 10, color: "var(--tx2)" }}>최근 확인: {info.date}{info.ip ? " · " + info.ip : ""}</div>}</div>
+        <button className="btn btn-g btn-s" onClick={function() { setShowAgr(true); }}>📄 약정 보기</button>
+      </div>; })()}
+      {showAgr && <AgreementModal user={user} agreements={agreements} readOnly onClose={function() { setShowAgr(false); }} />}
+      {(function() { var sc = _activeSelfCode(selfCodes, td()); return sc.code ? <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", marginBottom: 14, background: "linear-gradient(135deg, #ede9fe, #f5f3ff)", border: "2px solid #c4b5fd", borderRadius: "var(--r)" }}>
         <span style={{ fontSize: 20 }}>📱</span>
-        <div><div style={{ fontSize: 11, fontWeight: 700, color: "#6d28d9" }}>오늘의 자가출석 코드</div><div style={{ fontSize: 24, fontWeight: 800, letterSpacing: 5, color: "#5b21b6", fontFamily: "'Noto Sans KR'" }}>{selfCodes[td()]}</div></div>
-        <div style={{ fontSize: 9, color: "var(--tx2)", marginLeft: "auto", maxWidth: 120, textAlign: "right" }}>학생 자가출석용. 학원에서만 보여주세요.</div>
-      </div>}
+        <div><div style={{ fontSize: 11, fontWeight: 700, color: "#6d28d9" }}>자가출석 코드{sc.time ? " · " + sc.time + " 교시" : ""}</div><div style={{ fontSize: 24, fontWeight: 800, letterSpacing: 5, color: "#5b21b6", fontFamily: "'Noto Sans KR'" }}>{sc.code}</div></div>
+        <div style={{ fontSize: 9, color: "var(--tx2)", marginLeft: "auto", maxWidth: 130, textAlign: "right" }}>{sc.time ? "이 교시 전용 코드입니다. 다음 교시 시작 시 자동으로 바뀝니다." : "학생 자가출석용. 학원에서만 보여주세요."}</div>
+      </div> : null; })()}
 
       <div key={notifTick} style={{ padding: 10, borderRadius: 10, marginBottom: 14, fontSize: 11, background: notifGranted ? "#eff6ff" : "#fef3c7", border: "1px solid " + (notifGranted ? "#bfdbfe" : "#fde68a") }}>
         {notifUnsupported ? <span>🔕 이 브라우저는 알림을 지원하지 않습니다 (PC Chrome 권장)</span>
@@ -1903,7 +3397,7 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
       </div>
 
       <div className="tabs notranslate" translate="no" style={{ marginBottom: 14 }}>
-        {[["homework", "📊 과제"], ["attendance", "📋 출석"], ["stats", "📈 통계"], ["consult", "💬 상담" + (unreadTotal > 0 ? " ●" : "")]].map(function(it) {
+        {[["homework", "📊 과제"], ["attendance", "📋 출석 및 퇴원"], ["progress", "📖 진도"], ["attn", "🔔 확인 필요" + (attnCount > 0 ? " ●" : "")], ["sending", "🩺 발송·제출" + (sendCount > 0 ? " ●" : "")], ["stats", "📈 과제통계"], ["consult", "💬 상담" + (unreadTotal > 0 ? " ●" : "")]].map(function(it) {
           return <button key={it[0]} className={cn("tab", mainView === it[0] && "on")} onClick={function() { setMainView(it[0]); }} style={{ fontSize: 14 }}>{it[1]}</button>;
         })}
       </div>
@@ -1929,7 +3423,7 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
         {inbox.map(function(it) {
           return (
             <div key={it.student.id} onClick={function() { setOpenThread(it.student.id); markRead(it.student.id); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 6px", borderBottom: "1px solid #f3f4f6", cursor: "pointer" }}>
-              <span style={{ fontSize: 22 }}>{it.student.avatar}</span>
+              <span style={{ fontSize: 22 }}>{stuAvatar(it.student)}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 15, fontWeight: 700 }}>{it.student.name} <span style={{ fontSize: 12.5, color: "var(--tx2)", fontWeight: 400 }}>· {it.parent.name} 학부모님</span></div>
                 <div style={{ fontSize: 13.5, color: "var(--tx2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.last ? (it.last.fromRole === "instructor" ? "나: " : "") + it.last.text : "대화를 시작해보세요"}</div>
@@ -1953,18 +3447,19 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
         return (
           <div key={cs.classId} className="card" style={{ marginBottom: 12 }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>🏫 {cs.classId} <span style={{ fontSize: 13, color: "var(--tx2)", fontWeight: 400 }}>· 오늘 {cs.presentToday}/{cs.studentCount} 출석</span></div>
-            {cs.students.length === 0 ? <div style={{ fontSize: 13, color: "var(--tx2)", padding: 6 }}>학생이 없습니다</div> : cs.students.map(function(s) {
+            {cs.students.length === 0 ? <div style={{ fontSize: 13, color: "var(--tx2)", padding: 6 }}>학생이 없습니다</div> : <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>{cs.students.map(function(s) {
               var ct = todayAttOf(s.id); var self = ct.indexOf("(자가)") >= 0; var pure = ct.replace("(자가)", "");
               return (
-                <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 4px", borderBottom: "1px solid #f3f4f6" }}>
-                  <span style={{ fontSize: 18 }}>{s.avatar}</span>
-                  <div style={{ flex: 1, fontSize: 15, fontWeight: 600 }}>{s.name}{isWithdrawn(s.id) && <span style={{ fontSize: 9, fontWeight: 800, color: "#dc2626", background: "#fef2f2", borderRadius: 8, padding: "1px 6px", marginLeft: 6 }}>퇴원</span>}</div>
-                  <div style={{ width: 84, textAlign: "center", fontSize: 14, fontWeight: 700 }}>{ct ? <span style={{ color: "var(--ok)" }}>{pure}{self && <span style={{ fontSize: 11.5, color: "#7c3aed" }}> 📱자가</span>}</span> : <span style={{ color: "#dc2626" }}>결석</span>}</div>
-                  <div style={{ width: 56, textAlign: "right", fontSize: 12, color: "var(--tx2)" }}>2주 {attDays(s.id)}일</div>
-                  {!isWithdrawn(s.id) && <button className="btn btn-g btn-s" style={{ fontSize: 11, padding: "3px 8px", color: "#dc2626", borderColor: "#fecaca" }} onClick={function() { setWdStudent(s); }}>퇴원</button>}
+                <div key={s.id} style={{ padding: "10px 6px", borderRadius: 10, border: "1px solid var(--bdr)", background: "#fff", textAlign: "center", opacity: isWithdrawn(s.id) ? 0.6 : 1 }}>
+                  <div style={{ fontSize: 20 }}>{stuAvatar(s)}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}{isWithdrawn(s.id) && <span style={{ fontSize: 8, fontWeight: 800, color: "#dc2626", background: "#fef2f2", borderRadius: 8, padding: "1px 4px", marginLeft: 3 }}>퇴원</span>}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginTop: 3 }}>{ct ? <span style={{ color: "var(--ok)" }}>{pure}{self && <span style={{ fontSize: 8, color: "#7c3aed" }}> 📱</span>}</span> : <span style={{ color: "#dc2626" }}>결석</span>}</div>
+                  <div style={{ fontSize: 9, color: "var(--tx2)", marginBottom: isWithdrawn(s.id) ? 0 : 5 }}>2주 {attDays(s.id)}일</div>
+                  {isDelayed(s.id) && <span style={{ fontSize: 8, fontWeight: 800, color: "#b45309", background: "#fef3c7", borderRadius: 8, padding: "1px 5px", marginRight: 3 }}>⏳ 퇴원지연</span>}
+                  {!isWithdrawn(s.id) && <button className="btn btn-g btn-s" style={{ fontSize: 9, padding: "3px 6px", color: "#dc2626", borderColor: "#fecaca" }} onClick={function() { askWithdraw(s); }}>🚪 퇴원</button>}
                 </div>
               );
-            })}
+            })}</div>}
           </div>
         );
       }))}
@@ -1984,6 +3479,25 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
           </div>
         );
       }))}
+
+      {mainView === "progress" && <ProgressView user={user} myClasses={myClasses} curriculum={curriculum} textbooks={textbooks} progressReqs={progressReqs} setProgressReqs={setProgressReqs} forceSave={forceSave} />}
+      {mainView === "attn" && <>
+        <div style={{ fontSize: 12, color: "var(--tx2)", background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 10, padding: "9px 12px", marginBottom: 12 }}>🔔 담당 반의 <strong>출결 주의</strong>(연속 지각·당월 결석·미보충)와 <strong>결석·보충 관리</strong>를 확인합니다.</div>
+        {attnCount === 0 && <div className="empty"><div className="eic">✅</div><p>확인할 출결 이슈가 없습니다</p></div>}
+        <AttnAlerts students={myStudentsAll} attendance={attendance} makeups={makeups} holidays={holidays} />
+        <AbsenceMakeup students={myStudentsAll} attendance={attendance} makeups={makeups} setMakeups={setMakeups} forceSave={forceSave} holidays={holidays} />
+      </>}
+
+      {mainView === "sending" && <>
+        <div style={{ fontSize: 12, color: "var(--tx2)", background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 10, padding: "9px 12px", marginBottom: 12 }}>🩺 담당 반의 <strong>진단지 미발송·발송 보류</strong>와 <strong>교재 미제출</strong>을 한 곳에서 확인·처리합니다.</div>
+        {sendCount === 0 && <div className="empty"><div className="eic">✅</div><p>확인할 발송·제출 건이 없습니다</p></div>}
+        <CollectionAlerts collections={collections} setCollections={setCollections} users={users} textbooks={textbooks} instId={user.id} forceSave={forceSave} />
+        <DiagAlerts diagnostics={diagnostics} students={myStudentsAll} />
+        <DiagHoldAlerts diagnostics={diagnostics} students={myStudentsAll} />
+        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--bdr)" }}>
+          <AdminDiagnostics users={myStudentsAll} diagnostics={diagnostics} setDiagnostics={setDiagnostics} forceSave={forceSave} instId={user.id} hideCreate={true} />
+        </div>
+      </>}
 
       {mainView === "homework" && <>
       <div style={{ fontSize: 12, color: "var(--tx2)", background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 10, padding: "9px 12px", marginBottom: 12 }}>👁 <strong>보기 전용</strong> — 담임은 학생들의 과제 진행 상태만 확인합니다. 과제 편집·체크는 관리자 권한입니다.</div>
@@ -2005,9 +3519,9 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
         return (
           <div className="card" style={{ marginBottom: 14 }}>
             <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>🏫 {cf} 학생 목록 ({cs.studentCount}명)</div>
-            {cs.students.map(function(s) {
-              return <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid #f3f4f6" }}><span>{s.avatar}</span><span style={{ fontSize: 13, fontWeight: 600 }}>{s.name}</span></div>;
-            })}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>{cs.students.map(function(s) {
+              return <div key={s.id} style={{ padding: "10px 6px", borderRadius: 10, border: "1px solid var(--bdr)", background: "#fff", textAlign: "center" }}><div style={{ fontSize: 20 }}>{stuAvatar(s)}</div><div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div></div>;
+            })}</div>
           </div>
         );
       })()}
@@ -2028,20 +3542,30 @@ function InstructorPage({ user, users, allA, sp, selfCodes, messages, onSend, at
           var avg = sts.length === 0 ? 0 : Math.round(sts.reduce(function(s, st) { return s + getPct(sp, st.id, a.id, a.items); }, 0) / sts.length);
           return (<div key={a.id} className="ac"><div className="ahead" onClick={function() { setExpId(open ? null : a.id); }}><div style={{ width: 6, height: 36, borderRadius: 3, background: a.color, flexShrink: 0 }} /><div style={{ flex: 1 }}><div className="at" style={{ fontSize: 16 }}>{a.title}</div><div className="am" style={{ fontSize: 12 }}><span>🏫 {a.classId}</span><span>📄 {a.desc}</span><span className="abadge">⚡ 진도연동</span>{view === "all" && <span className="dbadge" style={{ background: "#f3f4f6", color: "var(--tx2)" }}>📅 {a.date}</span>}</div></div><PRing pct={avg} /><span className={cn("exp", open && "op")} style={{ marginLeft: 6 }}>▼</span></div>
             {open && (<div className="abody"><div style={{ fontSize: 13, color: "var(--tx2)", marginBottom: 6 }}>📖 {a.chTitle}</div><div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>체크 항목:</div>{a.items.map(function(t) { return <div key={t.id} style={{ fontSize: 13, padding: "2px 0 2px 8px", color: "var(--tx2)" }}>• {t.label}</div>; })}<div style={{ marginTop: 12, fontSize: 13, fontWeight: 600, marginBottom: 4 }}>학생별 진행률:</div>
-              {sts.map(function(s) { var p = getPct(sp, s.id, a.id, a.items); return (<div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ fontSize: 13, width: 68, fontWeight: 500 }}>{s.avatar} {s.name}</span><div style={{ flex: 1 }}><PBar pct={p} /></div><span style={{ fontSize: 12, fontWeight: 700, width: 36, textAlign: "right" }}>{p}%</span>{p === 0 && <span className="dbadge" style={{ background: "#fef2f2", color: "#dc2626" }}>⚠️</span>}</div>); })}</div>)}</div>);
+              {sts.map(function(s) { var p = getPct(sp, s.id, a.id, a.items); return (<div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}><span style={{ fontSize: 13, width: 68, fontWeight: 500 }}>{stuAvatar(s)} {s.name}</span><div style={{ flex: 1 }}><PBar pct={p} /></div><span style={{ fontSize: 12, fontWeight: 700, width: 36, textAlign: "right" }}>{p}%</span>{p === 0 && <span className="dbadge" style={{ background: "#fef2f2", color: "#dc2626" }}>⚠️</span>}</div>); })}</div>)}</div>);
         }))}
       </>}
     </div>
   );
 }
 
-function StudentPage({ user, allA, sp, setSp, ohdap, setOhdap, attendance, setAttendance, forceSave, selfCodes }) {
+function StudentPage({ user, allA, sp, setSp, ohdap, setOhdap, attendance, setAttendance, forceSave, selfCodes, videos, logAct }) {
   var [expId, setExpId] = useState(null); var [filter, setFilter] = useState("all");
   var [view, setView] = useState("tasks");
+  var myVideos = (videos || []).filter(function(v) { return v.classId === user.classId; }).sort(function(a, b) { return (b.date || "").localeCompare(a.date || "") || (b.createdAt || 0) - (a.createdAt || 0); });
+  var todayVid = myVideos.filter(function(v) { return v.date === td(); });
   var myA = allA.filter(function(a) { return a.classId === user.classId; });
-  var toggle = function(aid, tid) { setSp(function(p) { var cur = (p[user.id] && p[user.id][aid]) ? p[user.id][aid] : []; var next = cur.indexOf(tid) >= 0 ? cur.filter(function(t) { return t !== tid; }) : cur.concat([tid]); var newSp = Object.assign({}, p); newSp[user.id] = Object.assign({}, p[user.id]); newSp[user.id][aid] = next; return newSp; }); };
-  var totalT = myA.reduce(function(s, a) { return s + a.items.length; }, 0);
-  var doneT = myA.reduce(function(s, a) { return s + ((sp[user.id] && sp[user.id][a.id]) ? sp[user.id][a.id].length : 0); }, 0);
+  var toggle = function(aid, tid) { setSp(function(p) { var cur = (p[user.id] && Array.isArray(p[user.id][aid])) ? p[user.id][aid] : []; var next = cur.indexOf(tid) >= 0 ? cur.filter(function(t) { return t !== tid; }) : cur.concat([tid]); var newSp = Object.assign({}, p); newSp[user.id] = Object.assign({}, p[user.id]); newSp[user.id][aid] = next; return newSp; }); };
+  var completeA = function(aid, items) {
+    setSp(function(p) { var newSp = Object.assign({}, p); newSp[user.id] = Object.assign({}, p[user.id]); newSp[user.id][aid] = (items && items.length) ? items.map(function(t) { return t.id; }) : ["__done__"]; return newSp; });
+    if (forceSave) forceSave();
+  };
+  var resetA = function(aid) {
+    setSp(function(p) { var newSp = Object.assign({}, p); newSp[user.id] = Object.assign({}, p[user.id]); newSp[user.id][aid] = []; return newSp; });
+    if (forceSave) forceSave();
+  };
+  var totalT = myA.reduce(function(s, a) { return s + (a.items.length || 1); }, 0);
+  var doneT = myA.reduce(function(s, a) { var unit = a.items.length || 1; return s + Math.round(unit * getPct(sp, user.id, a.id, a.items) / 100); }, 0);
   var pct = totalT === 0 ? 0 : Math.round(doneT / totalT * 100);
   var fA = filter === "all" ? myA : filter === "done" ? myA.filter(function(a) { return getPct(sp, user.id, a.id, a.items) === 100; }) : myA.filter(function(a) { return getPct(sp, user.id, a.id, a.items) < 100; });
   var incompleteCount = myA.filter(function(a) { return getPct(sp, user.id, a.id, a.items) < 100; }).length;
@@ -2072,6 +3596,22 @@ function StudentPage({ user, allA, sp, setSp, ohdap, setOhdap, attendance, setAt
 
       {Number(ohdap.active) > 0 && <div style={{ padding: "12px 16px", borderRadius: "var(--r)", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 600, background: "#fef2f4", border: "1px solid #fecdd3", color: "#be123c", cursor: "pointer" }} onClick={function() { setView("ohdap"); }}><span style={{ fontSize: 20 }}>🔥</span><span>오답데이 진행 중! 터치하여 확인하기 →</span></div>}
       {Number(ohdap.active) === 0 && <div style={{ padding: "10px 16px", borderRadius: "var(--r)", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 500, background: "#f3f4f6", border: "1px solid var(--bdr)", color: "var(--tx2)", cursor: "pointer" }} onClick={function() { setView("ohdap"); }}><span style={{ fontSize: 16 }}>📝</span><span>오답데이 확인하기 →</span></div>}
+      {myVideos.length > 0 && <div style={{ marginBottom: 14, background: "#fff", border: "1px solid var(--bdr)", borderRadius: "var(--r)", padding: "12px 14px" }}>
+        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>🎬 수업 영상 {todayVid.length > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: "#dc2626", background: "#fef2f2", borderRadius: 8, padding: "1px 8px" }}>오늘 {todayVid.length}개</span>}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {myVideos.slice(0, 5).map(function(v) {
+            var isToday = v.date === td();
+            return <a key={v.id} href={v.url} target="_blank" rel="noopener noreferrer" onClick={function() { if (logAct) logAct("영상시청", v.title); }} style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none", color: "inherit", padding: 6, borderRadius: 10, border: isToday ? "2px solid var(--pri)" : "1px solid var(--bdr)", background: isToday ? "#fff5f7" : "#fff" }}>
+              <div style={{ position: "relative", flexShrink: 0 }}><img src={"https://img.youtube.com/vi/" + v.videoId + "/mqdefault.jpg"} alt="" style={{ width: 120, borderRadius: 8, display: "block" }} /><span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, color: "#fff", textShadow: "0 1px 4px rgba(0,0,0,.5)" }}>▶</span></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10, color: "var(--tx2)", marginBottom: 2 }}>{(v.date || "").replace(/-/g, ".")} · {v.type}{isToday && " · 오늘"}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.title}</div>
+                <div style={{ fontSize: 11, color: "#2563eb", marginTop: 2 }}>▶ 영상 보기</div>
+              </div>
+            </a>;
+          })}
+        </div>
+      </div>}
       {incompleteCount > 0 && <div className="notif-banner warn" style={{ padding: "12px 16px", borderRadius: "var(--r)", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 600, background: "#fff7ed", border: "1px solid #fed7aa", color: "#c2410c" }}><span style={{ fontSize: 20 }}>📢</span><span>{"미완료 과제 " + incompleteCount + "개! 화이팅! 💪"}</span></div>}
       {pct === 100 && totalT > 0 && <div style={{ padding: "12px 16px", borderRadius: "var(--r)", marginBottom: 14, display: "flex", alignItems: "center", gap: 10, fontSize: 12, fontWeight: 600, background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1d4ed8" }}><span style={{ fontSize: 20 }}>🎉</span><span>모든 과제를 완료했어요! 대단해요!</span></div>}
       <div className="sg"><div className="sc"><div className="sl">전체 과제</div><div className="sv b">{myA.length}</div></div><div className="sc"><div className="sl">진행률</div><div className="sv g">{pct}%</div></div><div className="sc"><div className="sl">남은 항목</div><div className="sv a">{totalT - doneT}</div></div><div className="sc"><div className="sl">완료</div><div className="sv r">{myA.filter(function(a) { return getPct(sp, user.id, a.id, a.items) === 100; }).length}</div></div></div>
@@ -2080,10 +3620,17 @@ function StudentPage({ user, allA, sp, setSp, ohdap, setOhdap, attendance, setAt
         fA.map(function(a) {
           var p = getPct(sp, user.id, a.id, a.items); var open = expId === a.id;
           var done = (sp[user.id] && sp[user.id][a.id]) ? sp[user.id][a.id] : [];
-          return (<div key={a.id} className="ac" style={p === 0 ? { borderColor: "#fca5a5" } : {}}>
-            <div className="ahead" onClick={function() { setExpId(open ? null : a.id); }}><div style={{ width: 5, height: 32, borderRadius: 3, background: a.color, flexShrink: 0 }} /><div style={{ flex: 1 }}><div className="at">{a.title}{p === 0 && <span className="dbadge" style={{ background: "#fef2f2", color: "#dc2626", marginLeft: 6 }}>🔔 시작하세요!</span>}</div><div className="am"><span style={{ color: a.color, fontWeight: 600 }}>{a.tbIcon} {a.tbName}</span><span>📄 {a.desc}</span><span className="dbadge" style={{ background: "#f3f4f6", color: "var(--tx2)" }}>📅 {a.date}</span></div></div><PRing pct={p} /><span className={cn("exp", open && "op")} style={{ marginLeft: 6 }}>▼</span></div>
+          return (<div key={a.id} className="ac" style={p === 100 ? { borderColor: "var(--ok)", background: "#f0fdf4" } : p === 0 ? { borderColor: "#fca5a5" } : {}}>
+            <div className="ahead" onClick={function() { setExpId(open ? null : a.id); }}><div style={{ width: 5, height: 32, borderRadius: 3, background: p === 100 ? "var(--ok)" : a.color, flexShrink: 0 }} /><div style={{ flex: 1 }}><div className="at">{a.title}{p === 0 && <span className="dbadge" style={{ background: "#fef2f2", color: "#dc2626", marginLeft: 6 }}>🔔 시작하세요!</span>}</div><div className="am"><span style={{ color: a.color, fontWeight: 600 }}>{a.tbIcon} {a.tbName}</span><span>📄 {a.desc}</span><span className="dbadge" style={{ background: "#f3f4f6", color: "var(--tx2)" }}>📅 {a.date}</span></div></div>{p === 100 ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "6px 12px", borderRadius: 20, background: "var(--ok)", color: "#fff", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" }}>✅ 완료</span> : <PRing pct={p} />}<span className={cn("exp", open && "op")} style={{ marginLeft: 6 }}>▼</span></div>
             {open && (<div className="abody"><div style={{ fontSize: 11, color: "var(--tx2)", marginBottom: 8 }}>📖 {a.chTitle}</div>
-              {a.items.map(function(task) { var ck = done.indexOf(task.id) >= 0; return (<div key={task.id} className="ti"><div className={cn("tc", ck && "ck")} onClick={function() { toggle(a.id, task.id); }}>{ck && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}</div><span className={cn("tl", ck && "dn")}>{task.label}</span></div>); })}</div>)}
+              {a.items.length === 0 && p < 100 && <div style={{ fontSize: 12, color: "var(--tx2)", padding: "4px 0 8px" }}>📝 이 과제를 다 했으면 아래 <b>완료</b> 버튼을 눌러주세요.</div>}
+              {a.items.map(function(task) { var ck = done.indexOf(task.id) >= 0; return (<div key={task.id} className="ti"><div className={cn("tc", ck && "ck")} onClick={function() { toggle(a.id, task.id); }}>{ck && <span style={{ color: "#fff", fontSize: 12 }}>✓</span>}</div><span className={cn("tl", ck && "dn")}>{task.label}</span></div>); })}
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--bdr)" }}>
+                {p === 100
+                  ? <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center", flexWrap: "wrap" }}><span style={{ fontSize: 13, fontWeight: 800, color: "var(--ok)" }}>🎉 완료했어요!</span><button className="btn btn-g btn-s" onClick={function() { if (window.confirm("완료를 취소할까요?")) { resetA(a.id); if (logAct) logAct("완료취소", a.title); } }}>완료 취소</button></div>
+                  : <button className="btn btn-p" style={{ width: "100%", padding: "11px", fontSize: 14, fontWeight: 800 }} onClick={function() { if (window.confirm("이 과제를 완료로 표시할까요?")) { completeA(a.id, a.items); if (logAct) logAct("과제완료", a.title); } }}>✅ 과제 완료</button>}
+              </div>
+            </div>)}
           </div>);
         })}
     </div>
@@ -2106,7 +3653,7 @@ function AdminOhdap({ users, ohdap, setOhdap, forceSave }) {
   var curMonth = getMonthKey(0);
   var [viewMonth, setViewMonth] = useState(curMonth);
   var students = users.filter(function(u) { return u.role === "student"; });
-  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
+  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort(classCmp);
   var filtered = cf === "all" ? students : students.filter(function(s) { return s.classId === cf; });
   var week = Math.ceil(new Date().getDate() / 7);
   var months = ohdap.months || {};
@@ -2191,24 +3738,18 @@ function AdminOhdap({ users, ohdap, setOhdap, forceSave }) {
         <button className="btn btn-ok btn-s" onClick={function() { setAllRound(2, !allDone(2)); }}>2회차 {allDone(2) ? "전원 해제" : "전원 체크"}</button>
       </div>
 
-      <div className="card">
-        <div style={{ display: "flex", padding: "8px 4px", borderBottom: "2px solid var(--bdr)", fontSize: 10, fontWeight: 700, color: "var(--tx2)" }}>
-          <div style={{ flex: 1 }}>학생</div>
-          <div style={{ width: 70, textAlign: "center" }}>1회차</div>
-          <div style={{ width: 70, textAlign: "center" }}>2회차</div>
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
         {filtered.map(function(s) {
           var d1 = r1[s.id] ? true : false;
           var d2 = r2[s.id] ? true : false;
           return (
-            <div key={s.id} style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #f3f4f6" }}>
-              <span style={{ fontSize: 16, marginRight: 8 }}>{s.avatar}</span>
-              <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{s.name}</div><div style={{ fontSize: 10, color: "var(--tx2)" }}>{s.classId}</div></div>
-              <div style={{ width: 70, textAlign: "center" }}>
-                <div onClick={function() { checkStudent(s.id, 1); }} style={{ width: 30, height: 30, borderRadius: 8, border: d1 ? "2px solid var(--ok)" : "2px solid #d1d5db", background: d1 ? "var(--ok)" : "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{d1 && <span style={{ color: "#fff", fontSize: 15, fontWeight: 800 }}>✓</span>}</div>
-              </div>
-              <div style={{ width: 70, textAlign: "center" }}>
-                <div onClick={function() { checkStudent(s.id, 2); }} style={{ width: 30, height: 30, borderRadius: 8, border: d2 ? "2px solid var(--ok)" : "2px solid #d1d5db", background: d2 ? "var(--ok)" : "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{d2 && <span style={{ color: "#fff", fontSize: 15, fontWeight: 800 }}>✓</span>}</div>
+            <div key={s.id} style={{ padding: "10px 6px", borderRadius: 10, border: "1px solid var(--bdr)", background: "#fff", textAlign: "center" }}>
+              <div style={{ fontSize: 20 }}>{stuAvatar(s)}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+              <div style={{ fontSize: 9, color: "var(--tx2)", marginBottom: 6 }}>{s.classId}</div>
+              <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
+                <div onClick={function() { checkStudent(s.id, 1); }} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: d1 ? "2px solid var(--ok)" : "1px solid #d1d5db", background: d1 ? "#f0fdf4" : "#fff", cursor: "pointer", fontSize: 10, fontWeight: 700, color: d1 ? "var(--ok)" : "var(--tx2)" }}>{d1 ? "✓ " : ""}1회</div>
+                <div onClick={function() { checkStudent(s.id, 2); }} style={{ flex: 1, padding: "6px 0", borderRadius: 8, border: d2 ? "2px solid var(--ok)" : "1px solid #d1d5db", background: d2 ? "#f0fdf4" : "#fff", cursor: "pointer", fontSize: 10, fontWeight: 700, color: d2 ? "var(--ok)" : "var(--tx2)" }}>{d2 ? "✓ " : ""}2회</div>
               </div>
             </div>
           );
@@ -2291,8 +3832,17 @@ function StudentOhdap({ user, ohdap, setOhdap, onBack }) {
 function AdminParents({ users, setUsers, forceSave }) {
   var [show, setShow] = useState(false);
   var [nm, setNm] = useState(""); var [pw, setPw] = useState("1234"); var [childId, setChildId] = useState("");
+  var [stuSearch, setStuSearch] = useState(""); var [stuClassF, setStuClassF] = useState("all");
   var parents = users.filter(function(u) { return u.role === "parent"; });
   var students = users.filter(function(u) { return u.role === "student"; });
+  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort(classCmp);
+  var q = stuSearch.trim().toLowerCase();
+  var matched = students.filter(function(s) {
+    if (stuClassF !== "all" && s.classId !== stuClassF) return false;
+    if (!q) return true;
+    return (s.name || "").toLowerCase().indexOf(q) >= 0 || (s.classId || "").toLowerCase().indexOf(q) >= 0;
+  });
+  var openAdd = function() { setNm(""); setPw("1234"); setChildId(""); setStuSearch(""); setStuClassF("all"); setShow(true); };
 
   var add = function() {
     if (!nm.trim() || !childId) return;
@@ -2306,7 +3856,7 @@ function AdminParents({ users, setUsers, forceSave }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <h3 style={{ fontSize: 15, fontWeight: 700 }}>👨‍👩‍👧 학부모 계정 ({parents.length}명)</h3>
-        <button className="btn btn-p btn-s" onClick={function() { setShow(true); }}>+ 학부모 추가</button>
+        <button className="btn btn-p btn-s" onClick={openAdd}>+ 학부모 추가</button>
       </div>
       {parents.length === 0 ? <div className="empty"><p>등록된 학부모가 없습니다</p></div> :
         <div>{parents.map(function(p) {
@@ -2318,7 +3868,7 @@ function AdminParents({ users, setUsers, forceSave }) {
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 700 }}>{p.name}</div>
                   <div style={{ fontSize: 10, color: "var(--tx2)" }}>비밀번호: {p.password}</div>
-                  <div style={{ fontSize: 11, marginTop: 2 }}>자녀: <span style={{ fontWeight: 700, color: "var(--pri)" }}>{ch ? ch.avatar + " " + ch.name + " (" + ch.classId + ")" : "미연결"}</span></div>
+                  <div style={{ fontSize: 11, marginTop: 2 }}>자녀: <span style={{ fontWeight: 700, color: "var(--pri)" }}>{ch ? stuAvatar(ch) + " " + ch.name + " (" + ch.classId + ")" : "미연결"}</span></div>
                 </div>
                 <button className="btn-d" onClick={function() { del(p.id); }}>✕</button>
               </div>
@@ -2329,11 +3879,25 @@ function AdminParents({ users, setUsers, forceSave }) {
         <h3>학부모 추가</h3>
         <div className="fg"><label>학부모 이름</label><input value={nm} onChange={function(e) { setNm(e.target.value); }} placeholder="학부모 이름" /></div>
         <div className="fg"><label>비밀번호</label><input value={pw} onChange={function(e) { setPw(e.target.value); }} /></div>
-        <div className="fg"><label>자녀 선택</label>
-          <select value={childId} onChange={function(e) { setChildId(e.target.value); }} style={{ width: "100%", padding: "8px", border: "1px solid var(--bdr)", borderRadius: "var(--rs)", fontSize: 12, fontFamily: "Noto Sans KR" }}>
-            <option value="">-- 자녀를 선택하세요 --</option>
-            {students.map(function(s) { return <option key={s.id} value={s.id}>{s.name} ({s.classId})</option>; })}
-          </select>
+        <div className="fg"><label>자녀 선택 (이름·반으로 조회)</label>
+          <input value={stuSearch} onChange={function(e) { setStuSearch(e.target.value); }} placeholder="🔍 학생 이름 또는 반 검색" style={{ width: "100%", padding: "8px", border: "1px solid var(--bdr)", borderRadius: "var(--rs)", fontSize: 12, fontFamily: "Noto Sans KR", boxSizing: "border-box" }} />
+          {classes.length > 1 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", margin: "6px 0" }}>
+            <button className={cn("fc", stuClassF === "all" && "on")} onClick={function() { setStuClassF("all"); }}>전체</button>
+            {classes.map(function(c) { return <button key={c} className={cn("fc", stuClassF === c && "on")} onClick={function() { setStuClassF(c); }}>{c}</button>; })}
+          </div>}
+          {childId && (function() { var cs = getChild(childId); return cs ? <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", background: "var(--prib)", border: "1px solid var(--pri)", borderRadius: 8, margin: "6px 0", fontSize: 12 }}><span style={{ fontSize: 16 }}>{stuAvatar(cs)}</span><span style={{ fontWeight: 700 }}>선택됨: {cs.name} ({cs.classId})</span><button className="btn btn-g btn-s" style={{ marginLeft: "auto" }} onClick={function() { setChildId(""); }}>변경</button></div> : null; })()}
+          <div style={{ maxHeight: 210, overflowY: "auto", border: "1px solid var(--bdr)", borderRadius: 8, marginTop: 4 }}>
+            {matched.length === 0 ? <div style={{ padding: 16, textAlign: "center", color: "var(--tx2)", fontSize: 12 }}>{students.length === 0 ? "등록된 학생이 없습니다" : "검색 결과가 없습니다"}</div> :
+              matched.map(function(s) {
+                var on = childId === s.id;
+                return <div key={s.id} onClick={function() { setChildId(s.id); }} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 10px", borderBottom: "1px solid #f3f4f6", cursor: "pointer", background: on ? "var(--prib)" : "#fff" }}>
+                  <span style={{ fontSize: 16 }}>{stuAvatar(s)}</span>
+                  <span style={{ fontSize: 13, fontWeight: 600, flex: 1 }}>{s.name}</span>
+                  <span style={{ fontSize: 10, color: "var(--tx2)" }}>{s.classId}</span>
+                  {on && <span style={{ color: "var(--pri)", fontWeight: 800 }}>✓</span>}
+                </div>;
+              })}
+          </div>
         </div>
         <div className="br"><button className="btn btn-g" onClick={function() { setShow(false); }}>취소</button><button className="btn btn-p" onClick={add}>추가</button></div>
       </div></div>}
@@ -2342,7 +3906,7 @@ function AdminParents({ users, setUsers, forceSave }) {
   );
 }
 
-function ParentDashboard({ user, users, allA, sp, attendance, messages, onSend }) {
+function ParentDashboard({ user, users, allA, sp, attendance, scores, makeups, holidays, messages, onSend }) {
   var students = users.filter(function(u) { return u.role === "student"; });
   var child = students.find(function(s) { return s.id === user.childId; });
   var today = td();
@@ -2375,6 +3939,49 @@ function ParentDashboard({ user, users, allA, sp, attendance, messages, onSend }
   var totalPct = assignmentList.length === 0 ? 0 : Math.round(assignmentList.reduce(function(s, a) { return s + a.pct; }, 0) / assignmentList.length);
   var completed = assignmentList.filter(function(a) { return a.pct === 100; }).length;
 
+  // 과제 수행률 (오늘까지 배정된 과제 중 완료)
+  var dueA = myA.filter(function(a) { return a.date && a.date <= today; });
+  var dueDone = dueA.filter(function(a) { return getPct(sp, child.id, a.id, a.items) === 100; }).length;
+  var taskRate = dueA.length === 0 ? 0 : Math.round(dueDone / dueA.length * 100);
+
+  // 이번 달 출결 (반 요일 스케줄 기준)
+  var monthStat = (function() {
+    var ls = _readLateSettings();
+    var now = new Date(); now.setHours(0, 0, 0, 0);
+    var ms = new Date(now.getFullYear(), now.getMonth(), 1);
+    var sched = classScheduleDows(child.classId);
+    var present = 0, late = 0, absent = 0;
+    if (sched) {
+      for (var d = new Date(ms); d <= now; d.setDate(d.getDate() + 1)) {
+        if (sched.indexOf(d.getDay()) >= 0) {
+          if (holidays && holidays[_dateKey(d)]) continue;
+          var rec = attendance[_dateKey(d)] && attendance[_dateKey(d)][child.id];
+          if (rec) { present++; var lt = _lateTimeFor(ls, child, d.getDay()); if (lt && rec.replace("(자가)", "") > lt) late++; }
+          else absent++;
+        }
+      }
+    } else {
+      var mk = _dateKey(ms);
+      Object.keys(attendance).forEach(function(k) { if (k >= mk && attendance[k][child.id]) present++; });
+    }
+    return { present: present, late: late, absent: absent, hasSched: !!sched };
+  })();
+
+  // 최근 성적 (수학 원점수 우선)
+  var childExams = (scores && scores[child.id] && scores[child.id].exams) || [];
+  var examScoreOf = function(e) {
+    if (!e || !e.subjects) return "";
+    var f = function(name, v, sn) { if (!v) return ""; if (v.score != null && v.score !== "") return (sn ? name + " " : "") + v.score + "점"; if (v.grade != null && v.grade !== "") return (sn ? name + " " : "") + v.grade + "등급"; return ""; };
+    var m = f("수학", e.subjects["수학"], false); if (m) return m;
+    var ks = Object.keys(e.subjects); for (var i = 0; i < ks.length; i++) { var r = f(ks[i], e.subjects[ks[i]], true); if (r) return r; } return "";
+  };
+  var recentExams = childExams.slice().sort(function(a, b) { return (b.date || "") + ("0" + (b.month || 0)).slice(-2) < (a.date || "") + ("0" + (a.month || 0)).slice(-2) ? -1 : 1; });
+  var latestExam = recentExams[0] || null;
+
+  // 주의 알림 (연속 지각 / 당월 결석 / 미보충)
+  var childAlerts = computeAttnAlerts([child], attendance, makeups);
+  var childReasons = childAlerts.length ? childAlerts[0].reasons : [];
+
   return (
     <div>
       <div className="ph"><h2>👨‍👩‍👧 {child.name}의 학습 현황</h2><p>{child.classId} · {user.name} 학부모님</p></div>
@@ -2386,11 +3993,45 @@ function ParentDashboard({ user, users, allA, sp, attendance, messages, onSend }
         </div>
       </div>
 
-      <div className="sg">
-        <div className="sc"><div className="sl">과제 완료율</div><div className="sv a">{totalPct}%</div></div>
-        <div className="sc"><div className="sl">완료 과제</div><div className="sv g">{completed}/{assignmentList.length}</div></div>
-        <div className="sc"><div className="sl">2주 출석</div><div className="sv b">{attendDays}일</div></div>
+      {childReasons.length > 0 && <div style={{ background: "#fff", border: "1px solid #fecaca", borderRadius: 12, padding: "10px 14px", marginBottom: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: "#dc2626", marginBottom: 6 }}>🔔 확인이 필요해요</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {childReasons.map(function(r, i) { var col = r.type === "late" ? { c: "#b45309", b: "#fef3c7", i: "⏰ " } : r.type === "absent" ? { c: "#dc2626", b: "#fee2e2", i: "🚫 " } : { c: "#9333ea", b: "#f3e8ff", i: "🩹 " }; return <span key={i} style={{ fontSize: 11, fontWeight: 700, color: col.c, background: col.b, borderRadius: 8, padding: "3px 10px" }}>{col.i}{r.text}</span>; })}
+        </div>
+      </div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginBottom: 16 }}>
+        <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
+          <div style={{ fontSize: 20 }}>📚</div>
+          <div style={{ fontSize: 10, color: "var(--tx2)", fontWeight: 600, margin: "4px 0 6px" }}>과제 수행률</div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: taskRate >= 80 ? "var(--ok)" : taskRate >= 50 ? "#d97706" : "var(--pri)" }}>{taskRate}%</div>
+          <div style={{ fontSize: 9, color: "var(--tx2)", marginTop: 2 }}>{dueDone}/{dueA.length} 완료</div>
+        </div>
+        <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
+          <div style={{ fontSize: 20 }}>📋</div>
+          <div style={{ fontSize: 10, color: "var(--tx2)", fontWeight: 600, margin: "4px 0 6px" }}>이번 달 출결</div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 6, fontSize: 12, fontWeight: 800 }}>
+            <span style={{ color: "var(--ok)" }}>출석 {monthStat.present}</span>
+          </div>
+          <div style={{ fontSize: 9, color: "var(--tx2)", marginTop: 3 }}>지각 {monthStat.late}{monthStat.hasSched ? " · 결석 " + monthStat.absent : ""}</div>
+        </div>
+        <div style={{ background: "#fff", border: "1px solid var(--bdr)", borderRadius: 14, padding: "14px 10px", textAlign: "center" }}>
+          <div style={{ fontSize: 20 }}>📝</div>
+          <div style={{ fontSize: 10, color: "var(--tx2)", fontWeight: 600, margin: "4px 0 6px" }}>최근 성적</div>
+          {latestExam ? <><div style={{ fontSize: 15, fontWeight: 800, color: "#e94560" }}>{examScoreOf(latestExam) || "-"}</div><div style={{ fontSize: 9, color: "var(--tx2)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{latestExam.title || latestExam.type}</div></> : <div style={{ fontSize: 12, color: "var(--tx2)", marginTop: 8 }}>기록 없음</div>}
+        </div>
       </div>
+
+      {recentExams.length > 0 && <div style={{ marginBottom: 16 }}>
+        <div style={{ marginBottom: 8 }}><h3 style={{ fontSize: 14, fontWeight: 700 }}>📝 최근 성적</h3></div>
+        {recentExams.slice(0, 4).map(function(e, i) {
+          return <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: "1px solid #f3f4f6" }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--pri)", background: "var(--prib)", borderRadius: 8, padding: "2px 8px", whiteSpace: "nowrap" }}>{e.type || "시험"}</span>
+            <div style={{ flex: 1, minWidth: 0 }}><div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.title || e.type}</div><div style={{ fontSize: 9, color: "var(--tx2)" }}>{e.date || ""}</div></div>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#e94560" }}>{examScoreOf(e) || "-"}</span>
+          </div>;
+        })}
+      </div>}
 
       <div style={{ padding: 10, borderRadius: 10, marginTop: 12, marginBottom: 4, fontSize: 11, background: "Notification" in window && Notification.permission === "granted" ? "#eff6ff" : "#fef3c7", border: "1px solid " + ("Notification" in window && Notification.permission === "granted" ? "#bfdbfe" : "#fde68a") }}>
         {"Notification" in window && Notification.permission === "granted" ? <span>🔔 출석 알림 활성화됨 — 자녀 출석 시 알림이 자동으로 옵니다</span>
@@ -2463,7 +4104,7 @@ function AdminScores({ users, scores, setScores, forceSave, cur, counsels, setCo
   var [dlExams, setDlExams] = useState([]);
   var [addMonth, setAddMonth] = useState(new Date().getMonth() + 1);
   var students = users.filter(function(u) { return u.role === "student"; });
-  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
+  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort(classCmp);
   var filtered = cf === "all" ? students : students.filter(function(s) { return s.classId === cf; });
 
   var 내신과목 = ["수학", "과학"];
@@ -2546,6 +4187,31 @@ function AdminScores({ users, scores, setScores, forceSave, cur, counsels, setCo
   var getStudentScores = function(sid) { return scores[sid] || { exams: [], memo: "" }; };
   var getExams = function(sid, type) { var s = getStudentScores(sid); return (s.exams || []).filter(function(e) { return e.type === type && e.date && e.date.substring(0, 4) === String(selYear); }); };
   var getExamCount = function(sid) { var s = getStudentScores(sid); return (s.exams || []).filter(function(e) { return e.date && e.date.substring(0, 4) === String(selYear); }).length; };
+  var latestExam = function(sid, type) {
+    var arr = getExams(sid, type);
+    if (!arr.length) return null;
+    var best = null, bestKey = "";
+    arr.forEach(function(e) {
+      var key = (e.date || "") + ("0" + (e.month || 0)).slice(-2);
+      if (best === null || key >= bestKey) { best = e; bestKey = key; }
+    });
+    return best;
+  };
+  var examScore = function(e) {
+    if (!e || !e.subjects) return "";
+    var subs = e.subjects;
+    var fmt = function(name, v, showName) {
+      if (!v) return "";
+      if (v.score != null && v.score !== "") return (showName ? name + " " : "") + v.score + "점";
+      if (v.grade != null && v.grade !== "") return (showName ? name + " " : "") + v.grade + "등급";
+      return "";
+    };
+    var m = fmt("수학", subs["수학"], false);
+    if (m) return m;
+    var keys = Object.keys(subs);
+    for (var i = 0; i < keys.length; i++) { var r = fmt(keys[i], subs[keys[i]], true); if (r) return r; }
+    return "";
+  };
   var yearOptions = [];
   for (var yi = 2024; yi <= new Date().getFullYear() + 1; yi++) yearOptions.push(yi);
   var fmtDate = function(d, type) { if (!d) return ""; var parts = d.split("-"); if (type === "내신") return parts[0] + "년"; return parts[0] + "년 " + Number(parts[1]) + "월"; };
@@ -2665,20 +4331,29 @@ function AdminScores({ users, scores, setScores, forceSave, cur, counsels, setCo
           <button className={cn("fc", cf === "all" && "on")} onClick={function() { setCf("all"); }}>전체</button>
           {classes.map(function(c) { return <button key={c} className={cn("fc", cf === c && "on")} onClick={function() { setCf(c); }}>{c}</button>; })}
         </div>
-        {filtered.map(function(s) {
-          var sd = getStudentScores(s.id);
-          var examCount = getExamCount(s.id);
-          var hasMemo = sd.memo ? true : false;
-          return (
-            <div key={s.id} onClick={function() { setSelStu(s.id); }} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderBottom: "1px solid #f3f4f6", cursor: "pointer" }}>
-              <span style={{ fontSize: 18 }}>{s.avatar}</span>
-              <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{s.name}</div><div style={{ fontSize: 10, color: "var(--tx2)" }}>{s.classId}</div></div>
-              {examCount > 0 && <span style={{ fontSize: 10, padding: "2px 8px", background: "#eff6ff", borderRadius: 10, color: "#1e40af", fontWeight: 600 }}>시험 {examCount}건</span>}
-              {hasMemo && <span style={{ fontSize: 10 }}>📝</span>}
-              <span style={{ color: "var(--tx2)", fontSize: 12 }}>▶</span>
-            </div>
-          );
-        })}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+          {filtered.map(function(s) {
+            var sd = getStudentScores(s.id);
+            var examCount = getExamCount(s.id);
+            var hasMemo = sd.memo ? true : false;
+            return (
+              <div key={s.id} onClick={function() { setSelStu(s.id); }} style={{ padding: "10px 6px", borderRadius: 10, border: "1px solid var(--bdr)", background: "#fff", cursor: "pointer", textAlign: "center" }}>
+                <div style={{ fontSize: 20 }}>{stuAvatar(s)}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}{hasMemo && <span style={{ fontSize: 10 }}> 📝</span>}</div>
+                <div style={{ fontSize: 9, color: "var(--tx2)", marginBottom: 6 }}>{s.classId}</div>
+                {examCount > 0
+                  ? <div style={{ fontSize: 9, textAlign: "left", padding: "0 6px", lineHeight: 1.6 }}>
+                      {[["내신", "내신"], ["모의고사", "모의"], ["학력평가", "학평"]].map(function(p) {
+                        var e = latestExam(s.id, p[0]);
+                        var sc = e ? examScore(e) : "";
+                        return <div key={p[0]} style={{ color: e ? "var(--tx)" : "#c9ced4", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}><b style={{ color: e ? "#1e40af" : "#c9ced4" }}>{p[1]}</b> {e ? <span>{sc && <b style={{ color: "#e94560" }}>{sc}</b>} <span style={{ color: "var(--tx2)" }}>{e.title}</span></span> : "—"}</div>;
+                      })}
+                    </div>
+                  : <span style={{ fontSize: 10, color: "var(--tx2)" }}>기록 없음</span>}
+              </div>
+            );
+          })}
+        </div>
 
         {showDownload && <div className="mo" onClick={function() { setShowDownload(false); }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 500, maxHeight: "80vh", overflow: "auto" }}>
           <h3>📥 성적 데이터 다운로드</h3>
@@ -2762,7 +4437,7 @@ function AdminScores({ users, scores, setScores, forceSave, cur, counsels, setCo
   return (
     <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
-          <div><h3 style={{ fontSize: 15, fontWeight: 700 }}>{stu.avatar} {stu.name}의 성적</h3><div style={{ fontSize: 11, color: "var(--tx2)" }}>{stu.classId}</div></div>
+          <div><h3 style={{ fontSize: 15, fontWeight: 700 }}>{stuAvatar(stu)} {stu.name}의 성적</h3><div style={{ fontSize: 11, color: "var(--tx2)" }}>{stu.classId}</div></div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>{yearSelector()}<button className="btn btn-p btn-s" onClick={function() { setShowAdd(true); setAddGrades({}); setAddTitle(""); }}>+ 시험 추가</button><button className="btn btn-g btn-s" onClick={function() { setSelStu(null); }}>← 목록</button></div>
         </div>
 
@@ -2858,16 +4533,20 @@ function AdminScores({ users, scores, setScores, forceSave, cur, counsels, setCo
 }
 
 
-function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCodes, setSelfCodes }) {
-  var todayCode = (selfCodes && selfCodes[td()]) || "";
+function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCodes, setSelfCodes, makeups, setMakeups, holidays }) {
+  var _selfNow = _activeSelfCode(selfCodes, td());
+  var todayCode = _selfNow.code;
   var regenCode = function() {
-    if (!window.confirm("오늘의 자가출석 코드를 새로 발급할까요?\n기존 코드는 더 이상 사용할 수 없게 됩니다.")) return;
     var t = td();
-    setSelfCodes(function(prev) {
-      var next = Object.assign({}, prev || {});
-      next[t] = genCode();
-      return next;
-    });
+    var active = _selfNow.time; // 화면·학생이 읽는 활성 교시 키와 동일하게
+    if (!active) {
+      var times = _todayPeriodTimes();
+      var now = new Date().toTimeString().slice(0, 5);
+      times.forEach(function(x) { if (x <= now) active = x; });
+      if (!active) active = "00:00";
+    }
+    if (!window.confirm("현재 교시(" + (active === "00:00" ? "상시" : active) + ") 자가출석 코드를 새로 발급할까요?\n기존 코드는 더 이상 사용할 수 없게 됩니다.")) return;
+    setSelfCodes(function(prev) { var np = Object.assign({}, prev || {}); var d = np[t]; d = (d && typeof d === "object") ? Object.assign({}, d) : {}; d[active] = genCode(); np[t] = d; return np; });
     forceSave();
   };
   var [cf, setCf] = useState("all");
@@ -2881,6 +4560,13 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
   var [showLateSetting, setShowLateSetting] = useState(false);
   var saveLateTime = function(t) { setLateTime(t); try { localStorage.setItem("rt_lateTime", t); } catch(e) {} };
   var saveLateSettings = function(s) { setLateSettings(s); try { localStorage.setItem("rt_lateSettings", JSON.stringify(s)); } catch(e) {} };
+  var ATT_TYPES = ["정규", "특강", "텐투텐", "러닝"];
+  var getStuSlots = function(ss) {
+    if (!ss) return [];
+    if (ss.slots && ss.slots.length) return ss.slots;
+    if (ss.time) return [{ time: ss.time, type: "정규" }];
+    return [];
+  };
   var dayLabels = ["일","월","화","수","목","금","토"];
   var todayDow = new Date().getDay();
 
@@ -2889,7 +4575,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
     var dow = todayDow;
     // Check student-specific
     var stu = lateSettings.students && lateSettings.students[student.id];
-    if (stu) { if (stu.days && stu.days[dow]) return stu.days[dow]; if (stu.time) return stu.time; }
+    if (stu) { if (stu.days && stu.days[dow]) return stu.days[dow]; var sl = getStuSlots(stu); if (sl.length) { var times = sl.map(function(x) { return x.time; }).filter(Boolean).sort(); if (times.length) return times[0]; } if (stu.time) return stu.time; }
     // Check class-specific
     var cls = lateSettings.classes && lateSettings.classes[student.classId];
     if (cls) { if (cls.days && cls.days[dow]) return cls.days[dow]; if (cls.time) return cls.time; }
@@ -2917,7 +4603,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
     return true;
   };
   var students = users.filter(function(u) { return u.role === "student"; });
-  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort();
+  var classes = []; students.forEach(function(s) { if (classes.indexOf(s.classId) === -1) classes.push(s.classId); }); classes.sort(classCmp);
   var filtered = cf === "all" ? students : students.filter(function(s) { return s.classId === cf; });
   var todayFiltered = filtered.filter(function(s) { return hasClassToday(s); });
   var selDayData = attendance[selDate] || {};
@@ -2941,7 +4627,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
     var today = td();
     var alreadyDone = attendance[today] && attendance[today][student.id];
     if (alreadyDone) {
-      setKioskMsg({ type: "already", text: student.name + " (" + student.classId + ")", sub: "이미 출석했습니다 (" + alreadyDone + ")", avatar: student.avatar });
+      setKioskMsg({ type: "already", text: student.name + " (" + student.classId + ")", sub: "이미 출석했습니다 (" + alreadyDone + ")", avatar: stuAvatar(student) });
     } else {
       var now = new Date().toTimeString().slice(0, 5);
       var late = isLate(now, student);
@@ -2952,7 +4638,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
         return next;
       });
       forceSave();
-      setKioskMsg({ type: late ? "late" : "ok", text: student.name + " (" + student.classId + ")", sub: late ? "지각 출석! (" + now + ")" : "출석 완료! (" + now + ")", avatar: student.avatar });
+      setKioskMsg({ type: late ? "late" : "ok", text: student.name + " (" + student.classId + ")", sub: late ? "지각 출석! (" + now + ")" : "출석 완료! (" + now + ")", avatar: stuAvatar(student) });
     }
     setKioskPin("");
     setKioskChoices(null);
@@ -2998,7 +4684,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
             <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 20 }}>이름을 선택하세요</div>
             <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
               {kioskChoices.map(function(s) {
-                return <button key={s.id} onClick={function() { doKioskCheckIn(s); }} style={{ padding: "20px 28px", borderRadius: 16, border: "2px solid var(--bdr)", background: "var(--card)", fontSize: 18, fontWeight: 700, cursor: "pointer", fontFamily: "Noto Sans KR" }}>{s.avatar} {s.name}<br /><span style={{ fontSize: 13, color: "var(--tx2)" }}>{s.classId}</span></button>;
+                return <button key={s.id} onClick={function() { doKioskCheckIn(s); }} style={{ padding: "20px 28px", borderRadius: 16, border: "2px solid var(--bdr)", background: "var(--card)", fontSize: 18, fontWeight: 700, cursor: "pointer", fontFamily: "Noto Sans KR" }}>{stuAvatar(s)} {s.name}<br /><span style={{ fontSize: 13, color: "var(--tx2)" }}>{s.classId}</span></button>;
               })}
             </div>
             <button className="btn btn-g" style={{ marginTop: 20 }} onClick={function() { setKioskChoices(null); setKioskPin(""); }}>취소</button>
@@ -3033,6 +4719,8 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
 
   return (
     <div>
+      <ByTeacherAlerts title="출석 주의 알림" icon="🔔" students={students} users={users} countFn={function(ss) { return computeAttnAlerts(ss, attendance, makeups, holidays).length; }} renderFn={function(ss) { return <AttnAlerts students={ss} attendance={attendance} makeups={makeups} holidays={holidays} bare={true} />; }} />
+      <ByTeacherAlerts title="결석 · 보충 관리" icon="🩹" students={students} users={users} countFn={function(ss) { return computeAbsences(ss, attendance, makeups, 30, holidays).length; }} renderFn={function(ss) { return <AbsenceMakeup students={ss} attendance={attendance} makeups={makeups} setMakeups={setMakeups} forceSave={forceSave} holidays={holidays} bare={true} />; }} />
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <div><h3 style={{ fontSize: 15, fontWeight: 700 }}>📋 출석 관리</h3></div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -3048,7 +4736,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ fontSize: 22 }}>📱</span>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#6d28d9" }}>오늘의 자가출석 코드</div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#6d28d9" }}>자가출석 코드{_selfNow.time ? " · " + _selfNow.time + " 교시" : ""}</div>
             <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: 6, color: "#5b21b6", fontFamily: "'Noto Sans KR'" }}>{todayCode || "----"}</div>
           </div>
         </div>
@@ -3059,7 +4747,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
       </div>
 
       {showLateSetting && <div className="mo" onClick={function() { setShowLateSetting(false); }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 600, maxHeight: "80vh", overflow: "auto" }}>
-        <h3>⚙ 등원마감 상세 설정</h3>
+        <h3>⚙ 출석 시간·등원마감 설정</h3>
         <p style={{ fontSize: 11, color: "var(--tx2)", marginBottom: 12 }}>우선순위: 학생별 설정 → 반별 설정 → 기본 마감시간</p>
 
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 8 }}>🏫 반별 등원마감</div>
@@ -3092,28 +4780,56 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
           );
         })}
 
-        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 16, marginBottom: 8 }}>🎒 학생별 등원마감 (개별 설정)</div>
-        <div style={{ fontSize: 10, color: "var(--tx2)", marginBottom: 8 }}>특정 학생만 다른 마감시간이 필요할 때 설정합니다.</div>
+        <div style={{ fontSize: 13, fontWeight: 700, marginTop: 16, marginBottom: 4 }}>🎒 학생별 출석 시간</div>
+        <div style={{ fontSize: 10, color: "var(--tx2)", marginBottom: 8 }}>학생마다 출석 시간을 여러 개 설정하고, 각 시간의 종류(정규/특강/텐투텐/러닝)를 선택합니다.</div>
         {(function() {
           var setStudents = Object.keys(lateSettings.students || {});
-          return setStudents.length === 0 ? <div style={{ fontSize: 11, color: "var(--tx2)", padding: 8 }}>개별 설정된 학생이 없습니다</div> :
+          return setStudents.length === 0 ? <div style={{ fontSize: 11, color: "var(--tx2)", padding: 8 }}>설정된 학생이 없습니다</div> :
             setStudents.map(function(sid) {
               var stu = students.find(function(s) { return s.id === sid; });
-              var ss = lateSettings.students[sid] || {};
+              var slots = getStuSlots(lateSettings.students[sid]);
               return (
-                <div key={sid} style={{ marginBottom: 8, padding: 8, background: "#eff6ff", borderRadius: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 12, fontWeight: 700 }}>{stu ? stu.name : sid}</span>
-                  <input type="time" value={ss.time || ""} onChange={function(e) {
+                <div key={sid} style={{ marginBottom: 10, padding: 10, background: "#eff6ff", borderRadius: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, flex: 1 }}>{stu ? stu.name : sid}{stu ? " (" + stu.classId + ")" : ""}</span>
+                    <button onClick={function() { var next = JSON.parse(JSON.stringify(lateSettings)); delete next.students[sid]; saveLateSettings(next); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 11 }}>✕ 학생 삭제</button>
+                  </div>
+                  {slots.map(function(sl, idx) {
+                    return (
+                      <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                        <input type="time" value={sl.time || ""} onChange={function(e) {
+                          var next = JSON.parse(JSON.stringify(lateSettings));
+                          var arr = getStuSlots(next.students[sid]).slice();
+                          arr[idx] = Object.assign({}, arr[idx], { time: e.target.value });
+                          next.students[sid] = { slots: arr };
+                          saveLateSettings(next);
+                        }} style={{ width: 90, padding: "4px", border: "1px solid var(--bdr)", borderRadius: 6, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />
+                        <select value={sl.type || "정규"} onChange={function(e) {
+                          var next = JSON.parse(JSON.stringify(lateSettings));
+                          var arr = getStuSlots(next.students[sid]).slice();
+                          arr[idx] = Object.assign({}, arr[idx], { type: e.target.value });
+                          next.students[sid] = { slots: arr };
+                          saveLateSettings(next);
+                        }} style={{ flex: 1, padding: "5px", border: "1px solid var(--bdr)", borderRadius: 6, fontSize: 11, fontFamily: "'Noto Sans KR'" }}>
+                          {ATT_TYPES.map(function(t) { return <option key={t} value={t}>{t}</option>; })}
+                        </select>
+                        <button onClick={function() {
+                          var next = JSON.parse(JSON.stringify(lateSettings));
+                          var arr = getStuSlots(next.students[sid]).slice();
+                          arr.splice(idx, 1);
+                          next.students[sid] = { slots: arr };
+                          saveLateSettings(next);
+                        }} style={{ background: "none", border: "none", cursor: "pointer", color: "#9ca3af", fontSize: 13 }}>✕</button>
+                      </div>
+                    );
+                  })}
+                  <button className="btn btn-g btn-s" onClick={function() {
                     var next = JSON.parse(JSON.stringify(lateSettings));
-                    if (!next.students[sid]) next.students[sid] = {};
-                    next.students[sid].time = e.target.value;
+                    var arr = getStuSlots(next.students[sid]).slice();
+                    arr.push({ time: "16:00", type: "정규" });
+                    next.students[sid] = { slots: arr };
                     saveLateSettings(next);
-                  }} style={{ width: 80, padding: "3px", border: "1px solid var(--bdr)", borderRadius: 4, fontSize: 11, fontFamily: "'Noto Sans KR'" }} />
-                  <button onClick={function() {
-                    var next = JSON.parse(JSON.stringify(lateSettings));
-                    delete next.students[sid];
-                    saveLateSettings(next);
-                  }} style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", fontSize: 11 }}>✕ 삭제</button>
+                  }}>+ 시간 추가</button>
                 </div>
               );
             });
@@ -3128,7 +4844,7 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
             if (!sel.value) return;
             var next = JSON.parse(JSON.stringify(lateSettings));
             if (!next.students) next.students = {};
-            next.students[sel.value] = { time: lateTime || "16:00" };
+            next.students[sel.value] = { slots: [{ time: lateTime || "16:00", type: "정규" }] };
             saveLateSettings(next);
             sel.value = "";
           }}>+ 추가</button>
@@ -3156,23 +4872,19 @@ function AdminAttendance({ users, attendance, setAttendance, forceSave, selfCode
         {classes.map(function(c) { return <button key={c} className={cn("fc", cf === c && "on")} onClick={function() { setCf(c); }}>{c}</button>; })}
       </div>
 
-      <div className="card">
-        <div style={{ display: "flex", padding: "8px 4px", borderBottom: "2px solid var(--bdr)", fontSize: 10, fontWeight: 700, color: "var(--tx2)" }}>
-          <div style={{ flex: 1 }}>학생</div>
-          <div style={{ width: 60, textAlign: "center" }}>상태</div>
-          <div style={{ width: 50, textAlign: "center" }}>시간</div>
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
         {todayFiltered.map(function(s) {
           var isPresent = selDayData[s.id] ? true : false;
           var checkTime = selDayData[s.id] || "";
+          var late = isPresent && isLate(checkTime, s);
           return (
-            <div key={s.id} style={{ display: "flex", alignItems: "center", padding: "10px 4px", borderBottom: "1px solid #f3f4f6" }}>
-              <span style={{ fontSize: 16, marginRight: 8 }}>{s.avatar}</span>
-              <div style={{ flex: 1 }}><div style={{ fontSize: 13, fontWeight: 700 }}>{s.name}</div><div style={{ fontSize: 10, color: "var(--tx2)" }}>{s.classId}</div></div>
-              <div style={{ width: 60, textAlign: "center" }}>
-                <div onClick={function() { toggleAttend(s.id); }} style={{ width: 30, height: 30, borderRadius: 8, border: isPresent ? "2px solid var(--ok)" : "2px solid #d1d5db", background: isPresent ? "var(--ok)" : "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>{isPresent && <span style={{ color: "#fff", fontSize: 15, fontWeight: 800 }}>✓</span>}</div>
-              </div>
-              <div style={{ width: 80, textAlign: "center", fontSize: 10, fontWeight: 600 }}>{isPresent ? (<span>{isLate(checkTime, s) ? <span style={{ color: "#dc2626" }}>⏰ {pureTime(checkTime)}</span> : <span style={{ color: "var(--ok)" }}>{pureTime(checkTime)}</span>}{isSelf(checkTime) && <span style={{ fontSize: 8, color: "#7c3aed", marginLeft: 2 }}>📱자가</span>}</span>) : <span style={{ color: "var(--tx2)" }}>-</span>}</div>
+            <div key={s.id} onClick={function() { toggleAttend(s.id); }} style={{ padding: "10px 6px", borderRadius: 10, border: isPresent ? "2px solid var(--ok)" : "1px solid var(--bdr)", background: isPresent ? "#f0fdf4" : "#fff", cursor: "pointer", textAlign: "center" }}>
+              <div style={{ fontSize: 20 }}>{stuAvatar(s)}</div>
+              <div style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</div>
+              <div style={{ fontSize: 9, color: "var(--tx2)", marginBottom: 6 }}>{s.classId}</div>
+              {isPresent
+                ? <div><div style={{ fontSize: 12, fontWeight: 800, color: "var(--ok)" }}>✓ 출석</div><div style={{ fontSize: 10, fontWeight: 600 }}>{late ? <span style={{ color: "#dc2626" }}>⏰ {pureTime(checkTime)}</span> : <span style={{ color: "var(--ok)" }}>{pureTime(checkTime)}</span>}{isSelf(checkTime) && <span style={{ fontSize: 8, color: "#7c3aed" }}> 📱</span>}</div></div>
+                : <div style={{ fontSize: 11, color: "var(--tx2)", fontWeight: 600 }}>미출석</div>}
             </div>
           );
         })}
@@ -3211,9 +4923,9 @@ function StudentAttendance({ user, attendance, setAttendance, forceSave, selfCod
   var selfAllowed = !scheduledTime || now >= scheduledTime;
 
   var doCheckIn = function() {
-    var todayCode = (selfCodes && selfCodes[today]) || "";
-    if (!todayCode) { setMsg("❌ 오늘의 코드가 아직 발급되지 않았습니다. 데스크에 문의하세요"); setPin(""); return; }
-    if (pin !== todayCode) { setMsg("❌ 코드가 일치하지 않습니다"); setPin(""); return; }
+    var active = _activeSelfCode(selfCodes, today);
+    if (!active.code) { setMsg("❌ 지금은 자가출석 코드가 활성화되지 않았습니다. 교시 시작 후 다시 시도하거나 데스크에 문의하세요"); setPin(""); return; }
+    if (pin !== active.code) { setMsg("❌ 코드가 일치하지 않습니다 (이전 교시 코드는 사용할 수 없어요)"); setPin(""); return; }
     setAttendance(function(prev) {
       var next = JSON.parse(JSON.stringify(prev));
       if (!next[today]) next[today] = {};
@@ -3283,7 +4995,79 @@ function StudentAttendance({ user, attendance, setAttendance, forceSave, selfCod
   );
 }
 
+// ── 관리에 관한 약정 (과제앱: 학생 개인정보·성적·과제 데이터 취급) ──
+var RT_AGREEMENT = [
+  "학원의 학생 정보·성적·통계 등 과제앱의 모든 데이터를 외부에 유출하거나 개인적인 일에 이용하지 않습니다.",
+  "과제앱의 내용·구성·기능 등 일체는 학원의 자산으로, 무단 반출·복제·모방하여 외부에 제공하지 않습니다.",
+  "학생 개인정보(연락처·성적·출결 등)는 업무 목적으로만 열람하며, 캡처·저장·전달 등 외부 반출을 하지 않습니다.",
+  "학원 내규집의 내용을 숙지하였으며, 업무 수행 시 이를 준수하겠습니다.",
+  "본 약정의 내용은 재직 중 효력을 가지며, 학생 개인정보 보호 등 성질상 존속이 필요한 조항은 퇴직 후에도 유지됩니다.",
+  "약정 내용에 대한 이견이나 문의는 재직 중 언제든지 원장 또는 행정팀에 제기할 수 있습니다.",
+  "재직 중 이의를 제기하지 않고 매월 확인을 계속한 경우, 퇴직 후 \"내용을 알지 못했다\" 또는 \"준수할 의무가 없다\"는 주장은 인정되기 어려울 수 있습니다.",
+  "위 사항을 위반할 경우 즉시, 관리자·강사로서 자격이 박탈되는 사유가 될 수 있습니다."
+];
+var _monthKey = function(d) { d = d || new Date(); return d.getFullYear() + "-" + _pad2(d.getMonth() + 1); };
+// 확인 기록: agreements[uid] = { date:"YYYY-MM-DD", ip:"..." } (레거시: 문자열 날짜)
+function _agreeInfo(agreements, uid) {
+  var rec = agreements && agreements[uid];
+  if (!rec) return null;
+  if (typeof rec === "string") return { date: rec, ip: "" };
+  return { date: rec.date || "", ip: rec.ip || "" };
+}
+function _agreedThisMonth(agreements, uid) {
+  var info = _agreeInfo(agreements, uid);
+  if (!info || !info.date) return false;
+  return String(info.date).slice(0, 7) === _monthKey();
+}
+function AgreementModal({ user, agreements, onConfirm, onClose, readOnly }) {
+  var info = _agreeInfo(agreements, user.id);
+  return (
+    <div className="mo" style={{ zIndex: 10000 }}>
+      <div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 460, maxHeight: "86vh", overflowY: "auto", textAlign: "left" }}>
+        <div style={{ fontSize: 16, fontWeight: 800, color: "var(--pri)", marginBottom: 4 }}>📜 관리에 관한 약정 {readOnly ? "" : "(월 1회 확인)"}</div>
+        <div style={{ fontSize: 11, color: "var(--tx2)", marginBottom: 12 }}>{readOnly ? (info ? "이번 달 확인 완료 · " + info.date + (info.ip ? " · " + info.ip : "") : "아직 확인하지 않았습니다") : _monthKey().replace("-", "년 ") + "월 확인이 필요합니다. 아래 내용을 확인하신 뒤 동의해 주세요." + (info ? "  · 지난 확인일: " + info.date : "")}</div>
+        <ol style={{ margin: 0, paddingLeft: 18 }}>
+          {RT_AGREEMENT.map(function(t, i) { return <li key={i} style={{ fontSize: 12.5, lineHeight: 1.7, marginBottom: 7, color: "#374151" }}>{t}</li>; })}
+        </ol>
+        <div style={{ fontSize: 11, color: "var(--tx2)", background: "#f9fafb", border: "1px solid var(--bdr)", borderRadius: 8, padding: "9px 11px", margin: "12px 0", lineHeight: 1.6 }}>＊ 내규집은 행정팀에 요청하시면 제공되며, 이해되지 않는 부분은 원장 또는 행정팀에 문의해 주세요. 확인하지 않아 발생하는 불이익은 본인에게 책임이 있을 수 있습니다.</div>
+        {readOnly
+          ? <div style={{ textAlign: "right" }}><button className="btn btn-g" onClick={onClose}>닫기</button></div>
+          : <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}><span style={{ fontSize: 12, color: "#374151", flex: 1 }}>위 약정 내용을 모두 확인하였으며 준수할 것을 서약합니다.</span><button className="btn btn-p" onClick={function() { onConfirm(user.id); }}>✔ 확인 · 동의</button></div>}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  // ── 자동 업데이트: 새 버전 배포 감지 시 새로고침 안내 ──
+  useEffect(function() {
+    var current = null;
+    var checking = false;
+    function currentBundle() {
+      var el = [].slice.call(document.querySelectorAll('script[src]')).map(function(s) { return s.src; }).find(function(u) { return /\/static\/js\/main\.[a-f0-9]+\.js/.test(u); });
+      var m = el && el.match(/main\.[a-f0-9]+\.js/);
+      return m ? m[0] : null;
+    }
+    function deployedBundle() {
+      return fetch(window.location.pathname + "?_=" + Date.now(), { cache: "no-store" }).then(function(r) { return r.text(); }).then(function(html) {
+        var m = html.match(/main\.[a-f0-9]+\.js/);
+        return m ? m[0] : null;
+      }).catch(function() { return null; });
+    }
+    current = currentBundle();
+    var iv = setInterval(function() {
+      if (checking || document.hidden) return;
+      checking = true;
+      deployedBundle().then(function(latest) {
+        checking = false;
+        if (latest && current && latest !== current) {
+          clearInterval(iv);
+          if (window.confirm("새 버전이 있어요! 지금 새로고침할까요?")) { window.location.reload(true); }
+        }
+      });
+    }, 60000);
+    return function() { clearInterval(iv); };
+  }, []);
   var [users, setUsers] = useState(INIT_USERS);
   var [textbooks, setTextbooks] = useState(INIT_TB);
   var [curriculum, setCurriculum] = useState(INIT_CUR);
@@ -3296,6 +5080,14 @@ export default function App() {
   var [withdrawals, setWithdrawals] = useState([]);
   var [counsels, setCounsels] = useState([]);
   var [accessLogs, setAccessLogs] = useState([]);
+  var [videos, setVideos] = useState([]);
+  var [activityLogs, setActivityLogs] = useState([]);
+  var [makeups, setMakeups] = useState({});
+  var [progressReqs, setProgressReqs] = useState([]);
+  var [collections, setCollections] = useState({});
+  var [diagnostics, setDiagnostics] = useState({});
+  var [holidays, setHolidays] = useState({});
+  var [agreements, setAgreements] = useState({});
   var [classList, setClassList] = useState(["A반", "B반"]);
   var [cur, setCurState] = useState(function() {
     try { var saved = localStorage.getItem("rt_user"); return saved ? JSON.parse(saved) : null; } catch(e) { return null; }
@@ -3313,15 +5105,33 @@ export default function App() {
   var saveTimer = useRef(null);
   var justSaved = useRef(false);
   var pendingChanges = useRef(false);
-  var dataRef = useRef({ users: INIT_USERS, textbooks: INIT_TB, curriculum: INIT_CUR, sp: INIT_SP, classList: ["A반", "B반"], ohdap: { active: 0, activeMonth: "", months: {} }, attendance: {}, scores: {}, selfCodes: {}, messages: [], withdrawals: [], counsels: [], accessLogs: [] });
+  var dataRef = useRef({ users: INIT_USERS, textbooks: INIT_TB, curriculum: INIT_CUR, sp: INIT_SP, classList: ["A반", "B반"], ohdap: { active: 0, activeMonth: "", months: {} }, attendance: {}, scores: {}, selfCodes: {}, messages: [], withdrawals: [], counsels: [], accessLogs: [], videos: [], activityLogs: [], makeups: {}, collections: {}, diagnostics: {}, holidays: {}, agreements: {}, progressReqs: [] });
   var allA = useMemo(function() { return buildAssignments(textbooks, curriculum); }, [textbooks, curriculum]);
 
-  useEffect(function() { dataRef.current = { users: users, textbooks: textbooks, curriculum: curriculum, sp: sp, classList: classList, ohdap: ohdap, attendance: attendance, scores: scores, selfCodes: selfCodes, messages: messages, withdrawals: withdrawals, counsels: counsels, accessLogs: accessLogs }; }, [users, textbooks, curriculum, sp, classList, ohdap, attendance, scores, selfCodes, messages, withdrawals, counsels, accessLogs]);
+  useEffect(function() { dataRef.current = { users: users, textbooks: textbooks, curriculum: curriculum, sp: sp, classList: classList, ohdap: ohdap, attendance: attendance, scores: scores, selfCodes: selfCodes, messages: messages, withdrawals: withdrawals, counsels: counsels, accessLogs: accessLogs, videos: videos, activityLogs: activityLogs, makeups: makeups, collections: collections, diagnostics: diagnostics, holidays: holidays, agreements: agreements, progressReqs: progressReqs }; }, [users, textbooks, curriculum, sp, classList, ohdap, attendance, scores, selfCodes, messages, withdrawals, counsels, accessLogs, videos, activityLogs, makeups, collections, diagnostics, holidays, agreements, progressReqs]);
+
+  // 자가출석 코드: 교시 시작 시각이 되면 그 교시 코드 자동 생성 (전체 공통, 교시 시각을 키로)
+  useEffect(function() {
+    var gen = function() {
+      var times = _todayPeriodTimes();
+      if (!times.length) return; // 이 기기에 출석시간 설정 없음 → 생성 안 함
+      var now = new Date().toTimeString().slice(0, 5);
+      var active = ""; times.forEach(function(x) { if (x <= now) active = x; });
+      if (!active) return; // 첫 교시 시작 전
+      var t = td();
+      var day = dataRef.current && dataRef.current.selfCodes && dataRef.current.selfCodes[t];
+      if (day && typeof day === "object" && day[active]) return; // 이미 있음
+      localSetSelfCodes(function(prev) { var np = Object.assign({}, prev || {}); var d = np[t]; d = (d && typeof d === "object") ? Object.assign({}, d) : {}; if (d[active]) return prev; d[active] = genCode(); np[t] = d; return np; });
+    };
+    gen();
+    var iv = setInterval(gen, 60000);
+    return function() { clearInterval(iv); };
+  }, []);
 
   var localSetUsers = useCallback(function(fn) { setUsers(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetTextbooks = useCallback(function(fn) { setTextbooks(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetCurriculum = useCallback(function(fn) { setCurriculum(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
-  var localSetSp = useCallback(function(fn) { setSp(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetSp = useCallback(function(fn) { setSp(function(prev) { var next = fn(prev); try { dataRef.current = Object.assign({}, dataRef.current, { sp: next }); } catch (e) {} return next; }); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetClassList = useCallback(function(fn) { setClassList(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetOhdap = useCallback(function(fn) { setOhdap(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetAttendance = useCallback(function(fn) { setAttendance(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
@@ -3331,6 +5141,38 @@ export default function App() {
   var localSetWithdrawals = useCallback(function(fn) { setWithdrawals(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetCounsels = useCallback(function(fn) { setCounsels(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
   var localSetAccessLogs = useCallback(function(fn) { setAccessLogs(fn); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetVideos = useCallback(function(fn) { setVideos(function(prev) { var next = fn(prev); try { dataRef.current = Object.assign({}, dataRef.current, { videos: next }); } catch (e) {} return next; }); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetMakeups = useCallback(function(fn) { setMakeups(function(prev) { var next = fn(prev); try { dataRef.current = Object.assign({}, dataRef.current, { makeups: next }); } catch (e) {} return next; }); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetProgressReqs = useCallback(function(fn) { setProgressReqs(function(prev) { var next = fn(prev); try { dataRef.current = Object.assign({}, dataRef.current, { progressReqs: next }); } catch (e) {} return next; }); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetCollections = useCallback(function(fn) { setCollections(function(prev) { var next = fn(prev); try { dataRef.current = Object.assign({}, dataRef.current, { collections: next }); } catch (e) {} return next; }); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetDiagnostics = useCallback(function(fn) { setDiagnostics(function(prev) { var next = fn(prev); try { dataRef.current = Object.assign({}, dataRef.current, { diagnostics: next }); } catch (e) {} return next; }); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var localSetAgreements = useCallback(function(fn) { setAgreements(function(prev) { var next = fn(prev); try { dataRef.current = Object.assign({}, dataRef.current, { agreements: next }); } catch (e) {} return next; }); setSaveVersion(function(v) { return v + 1; }); }, []);
+  var logActivity = function(user, action, detail) {
+    if (!user) return;
+    var rec = { id: "act_" + mkid(), userId: user.id, userName: user.name, role: user.role, classId: user.classId || "", action: action, detail: detail || "", time: new Date().toISOString() };
+    setActivityLogs(function(p) {
+      var arr = (p || []).concat([rec]);
+      if (arr.length > 1000) {
+        var overflow = arr.slice(0, arr.length - 1000);
+        arr = arr.slice(arr.length - 1000);
+        archiveActivity(overflow); // 넘치는(오래된) 기록을 월별 아카이브로 이관
+      }
+      try { dataRef.current = Object.assign({}, dataRef.current, { activityLogs: arr }); } catch (e) {}
+      return arr;
+    });
+    setSaveVersion(function(v) { return v + 1; });
+    if (forceSave) forceSave();
+  };
+  function archiveActivity(records) {
+    if (!records || !records.length) return;
+    var byMonth = {};
+    records.forEach(function(r) { var m = (r.time || "").slice(0, 7) || "unknown"; (byMonth[m] = byMonth[m] || []).push(r); });
+    Object.keys(byMonth).forEach(function(m) {
+      try {
+        setDoc(doc(db, "appData", "arch_" + m), { month: m, logs: arrayUnion.apply(null, byMonth[m]) }, { merge: true });
+      } catch (e) {}
+    });
+  }
   var sendMessage = useCallback(function(studentId, text) {
     if (!studentId || !text || !text.trim() || !cur) return;
     var msg = { id: "m_" + mkid(), studentId: studentId, fromId: cur.id, fromRole: cur.role, fromName: cur.name, text: text.trim(), ts: Date.now() };
@@ -3348,7 +5190,7 @@ export default function App() {
       setSyncStatus("saving");
       setDoc(doc(db, "appData", "main"), {
         users: d.users, textbooks: d.textbooks, curriculum: d.curriculum,
-        studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], counsels: d.counsels || [], accessLogs: d.accessLogs || [], lastUpdated: new Date().toISOString()
+        studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], counsels: d.counsels || [], accessLogs: d.accessLogs || [], videos: d.videos || [], activityLogs: d.activityLogs || [], makeups: d.makeups || {}, collections: d.collections || {}, diagnostics: d.diagnostics || {}, holidays: d.holidays || {}, agreements: d.agreements || {}, progressReqs: d.progressReqs || [], lastUpdated: new Date().toISOString()
       }).then(function() {
         setSyncStatus("synced");
         pendingChanges.current = false;
@@ -3395,6 +5237,9 @@ export default function App() {
           if (!loadedUsers.some(function(u) { return u.role === "manager"; })) {
             loadedUsers = loadedUsers.concat([{ id: "mgr1", name: "매니저", role: "manager", password: "1234", avatar: "👔" }]);
           }
+          if (!loadedUsers.some(function(u) { return u.role === "staff"; })) {
+            loadedUsers = loadedUsers.concat([{ id: "stf1", name: "행정팀", role: "staff", password: "1234", avatar: "🏢" }]);
+          }
           setUsers(loadedUsers);
           if (d.textbooks) setTextbooks(d.textbooks);
           if (d.curriculum) setCurriculum(d.curriculum);
@@ -3408,6 +5253,14 @@ export default function App() {
           if (d.withdrawals) setWithdrawals(d.withdrawals);
           if (d.counsels) setCounsels(d.counsels);
           if (d.accessLogs) setAccessLogs(d.accessLogs);
+          if (d.videos) setVideos(d.videos);
+          if (d.activityLogs) setActivityLogs(d.activityLogs);
+          if (d.makeups) setMakeups(d.makeups);
+          if (d.progressReqs) setProgressReqs(d.progressReqs);
+          if (d.collections) setCollections(d.collections);
+          if (d.diagnostics) setDiagnostics(d.diagnostics);
+          if (d.holidays) setHolidays(d.holidays);
+          if (d.agreements) setAgreements(d.agreements);
         } else {
           await setDoc(ref, { users: INIT_USERS, textbooks: INIT_TB, curriculum: INIT_CUR, studentProgress: INIT_SP, classList: ["A반", "B반"], ohdap: { active: 0, activeMonth: "", months: {} } });
         }
@@ -3434,6 +5287,9 @@ export default function App() {
         if (!syncUsers.some(function(u) { return u.role === "manager"; })) {
           syncUsers = syncUsers.concat([{ id: "mgr1", name: "매니저", role: "manager", password: "1234", avatar: "👔" }]);
         }
+        if (!syncUsers.some(function(u) { return u.role === "staff"; })) {
+          syncUsers = syncUsers.concat([{ id: "stf1", name: "행정팀", role: "staff", password: "1234", avatar: "🏢" }]);
+        }
         setUsers(syncUsers);
       }
       if (d.textbooks) setTextbooks(d.textbooks);
@@ -3448,6 +5304,14 @@ export default function App() {
           if (d.withdrawals) setWithdrawals(d.withdrawals);
           if (d.counsels) setCounsels(d.counsels);
           if (d.accessLogs) setAccessLogs(d.accessLogs);
+          if (d.videos) setVideos(d.videos);
+          if (d.activityLogs) setActivityLogs(d.activityLogs);
+          if (d.makeups) setMakeups(d.makeups);
+          if (d.progressReqs) setProgressReqs(d.progressReqs);
+          if (d.collections) setCollections(d.collections);
+          if (d.diagnostics) setDiagnostics(d.diagnostics);
+          if (d.holidays) setHolidays(d.holidays);
+          if (d.agreements) setAgreements(d.agreements);
     }, function(e) { console.error("Sync error:", e); setSyncStatus("error"); });
     return function() { unsub(); };
   }, [dataLoaded]);
@@ -3463,7 +5327,7 @@ export default function App() {
         justSaved.current = true;
         await setDoc(doc(db, "appData", "main"), {
           users: d.users, textbooks: d.textbooks, curriculum: d.curriculum,
-          studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], counsels: d.counsels || [], accessLogs: d.accessLogs || [], lastUpdated: new Date().toISOString()
+          studentProgress: d.sp, classList: d.classList, ohdap: d.ohdap, attendance: d.attendance, scores: d.scores, selfCodes: d.selfCodes, messages: d.messages, withdrawals: d.withdrawals || [], counsels: d.counsels || [], accessLogs: d.accessLogs || [], videos: d.videos || [], activityLogs: d.activityLogs || [], makeups: d.makeups || {}, collections: d.collections || {}, diagnostics: d.diagnostics || {}, holidays: d.holidays || {}, agreements: d.agreements || {}, progressReqs: d.progressReqs || [], lastUpdated: new Date().toISOString()
         });
         setSyncStatus("synced");
         pendingChanges.current = false;
@@ -3481,11 +5345,11 @@ export default function App() {
   useEffect(function() {
     if (!cur) { accessLogged.current = false; return; }
     if (!dataLoaded) return;
-    if (cur.role !== "admin" && cur.role !== "manager" && cur.role !== "instructor") return;
+    if (cur.role !== "admin" && cur.role !== "manager" && cur.role !== "staff" && cur.role !== "instructor" && cur.role !== "student") return;
     if (accessLogged.current) return;
     accessLogged.current = true;
     fetchClientIP(function(ip) {
-      var rec = { id: "al_" + mkid(), userId: cur.id, userName: cur.name, role: cur.role, time: new Date().toISOString(), ip: ip || "확인불가" };
+      var rec = { id: "al_" + mkid(), userId: cur.id, userName: cur.name, role: cur.role, classId: cur.classId || "", time: new Date().toISOString(), ip: ip || "확인불가" };
       setAccessLogs(function(p) {
         var arr = (p || []).concat([rec]);
         if (arr.length > 500) arr = arr.slice(arr.length - 500);
@@ -3501,7 +5365,7 @@ export default function App() {
   var codeGenGuard = useRef("");
   useEffect(function() {
     if (!dataLoaded || !cur) return;
-    if (cur.role !== "admin" && cur.role !== "manager" && cur.role !== "instructor") return;
+    if (cur.role !== "admin" && cur.role !== "manager" && cur.role !== "staff" && cur.role !== "instructor") return;
     var today = td();
     if (codeGenGuard.current === today) return;
     codeGenGuard.current = today;
@@ -3643,26 +5507,28 @@ export default function App() {
   }, [cur, messages, users]);
   if (!cur) return (<><style>{CSS}</style><Login users={users} onLogin={loginWithLog} onParent={function() { setParentMode(true); }} /><SyncBadge status={syncStatus} /></>);
   var rl = { admin: "관리자", manager: "매니저", instructor: "강사", student: "학생", parent: "학부모" };
-  var sideIcon = cur.role === "admin" ? "🛡️" : cur.role === "manager" ? "👔" : cur.role === "instructor" ? "📊" : cur.role === "parent" ? "👨‍👩‍👧" : "📋";
-  var sideLabel = cur.role === "admin" ? "관리 패널" : cur.role === "manager" ? "매니저 패널" : cur.role === "instructor" ? "과제 현황" : cur.role === "parent" ? "학부모" : "전체";
+  var sideIcon = cur.role === "admin" ? "🛡️" : cur.role === "manager" ? "👔" : cur.role === "staff" ? "🏢" : cur.role === "instructor" ? "📊" : cur.role === "parent" ? "👨‍👩‍👧" : "📋";
+  var sideLabel = cur.role === "admin" ? "관리 패널" : cur.role === "manager" ? "매니저 패널" : cur.role === "staff" ? "행정팀 패널" : cur.role === "instructor" ? "과제 현황" : cur.role === "parent" ? "학부모" : "전체";
   return (
     <><style>{CSS}</style><div className="app notranslate" translate="no">
       <div className="side notranslate" translate="no"><div className="sbr"><div className="sbr-i">📋</div><span>ROUTETOP</span></div>
         <div className="snav"><button className="si on"><span className="ic">{sideIcon}</span>{sideLabel}</button></div>
-        <div className="su"><div className="su-a">{cur.avatar}</div><div style={{ flex: 1 }}><div className="su-n">{cur.name}</div><div className="su-r">{rl[cur.role]}</div></div><button className="lo" onClick={function() { setCur(null); }}>⏻ 로그아웃</button></div></div>
+        <div className="su"><div className="su-a">{stuAvatar(cur)}</div><div style={{ flex: 1 }}><div className="su-n">{cur.name}</div><div className="su-r">{rl[cur.role]}</div></div><button className="lo" onClick={function() { setCur(null); }}>⏻ 로그아웃</button></div></div>
       <div className="main">
         <div className="mob-hd">
-          <span style={{ fontSize: 18 }}>{cur.avatar}</span>
+          <span style={{ fontSize: 18 }}>{stuAvatar(cur)}</span>
           <div className="mob-name">{cur.name}<div className="mob-role">{rl[cur.role]}</div></div>
           <button className="mob-lo" onClick={function() { setCur(null); }}>⏻ 로그아웃</button>
         </div>
-        {cur.role === "admin" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} />}
-        {cur.role === "manager" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} hideCount={true} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} />}
-        {cur.role === "instructor" && <InstructorPage user={cur} users={users} allA={allA} sp={sp} selfCodes={selfCodes} messages={messages} onSend={sendMessage} attendance={attendance} scores={scores} classList={classList} forceSave={forceSave} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} />}
-        {cur.role === "student" && <StudentPage user={cur} allA={allA} sp={sp} setSp={localSetSp} ohdap={ohdap} setOhdap={localSetOhdap} attendance={attendance} setAttendance={localSetAttendance} forceSave={forceSave} selfCodes={selfCodes} />}
-        {cur.role === "parent" && <ParentDashboard user={cur} users={users} allA={allA} sp={sp} attendance={attendance} messages={messages} onSend={sendMessage} />}
+        {cur.role === "admin" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} videos={videos} setVideos={localSetVideos} activityLogs={activityLogs} setActivityLogs={setActivityLogs} makeups={makeups} setMakeups={localSetMakeups} collections={collections} setCollections={localSetCollections} diagnostics={diagnostics} setDiagnostics={localSetDiagnostics} progressReqs={progressReqs} setProgressReqs={localSetProgressReqs} holidays={holidays} agreements={agreements} />}
+        {cur.role === "manager" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} hideCount={true} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} videos={videos} setVideos={localSetVideos} activityLogs={activityLogs} setActivityLogs={setActivityLogs} makeups={makeups} setMakeups={localSetMakeups} collections={collections} setCollections={localSetCollections} diagnostics={diagnostics} setDiagnostics={localSetDiagnostics} progressReqs={progressReqs} setProgressReqs={localSetProgressReqs} holidays={holidays} agreements={agreements} />}
+        {cur.role === "staff" && <AdminPage users={users} setUsers={localSetUsers} textbooks={textbooks} setTextbooks={localSetTextbooks} curriculum={curriculum} setCurriculum={localSetCurriculum} allA={allA} sp={sp} classList={classList} setClassList={localSetClassList} hideCount={true} ohdap={ohdap} setOhdap={localSetOhdap} forceSave={forceSave} attendance={attendance} setAttendance={localSetAttendance} scores={scores} setScores={localSetScores} selfCodes={selfCodes} setSelfCodes={localSetSelfCodes} messages={messages} cur={cur} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} videos={videos} setVideos={localSetVideos} activityLogs={activityLogs} setActivityLogs={setActivityLogs} makeups={makeups} setMakeups={localSetMakeups} collections={collections} setCollections={localSetCollections} diagnostics={diagnostics} setDiagnostics={localSetDiagnostics} progressReqs={progressReqs} setProgressReqs={localSetProgressReqs} holidays={holidays} agreements={agreements} />}
+        {cur.role === "instructor" && <InstructorPage user={cur} users={users} allA={allA} sp={sp} selfCodes={selfCodes} messages={messages} onSend={sendMessage} attendance={attendance} scores={scores} classList={classList} forceSave={forceSave} withdrawals={withdrawals} setWithdrawals={localSetWithdrawals} counsels={counsels} setCounsels={localSetCounsels} accessLogs={accessLogs} setAccessLogs={localSetAccessLogs} videos={videos} makeups={makeups} setMakeups={localSetMakeups} collections={collections} setCollections={localSetCollections} textbooks={textbooks} curriculum={curriculum} progressReqs={progressReqs} setProgressReqs={localSetProgressReqs} diagnostics={diagnostics} setDiagnostics={localSetDiagnostics} holidays={holidays} agreements={agreements} />}
+        {cur.role === "student" && <StudentPage user={cur} allA={allA} sp={sp} setSp={localSetSp} ohdap={ohdap} setOhdap={localSetOhdap} attendance={attendance} setAttendance={localSetAttendance} forceSave={forceSave} selfCodes={selfCodes} videos={videos} logAct={function(action, detail) { logActivity(cur, action, detail); }} />}
+        {cur.role === "parent" && <ParentDashboard user={cur} users={users} allA={allA} sp={sp} attendance={attendance} scores={scores} makeups={makeups} holidays={holidays} messages={messages} onSend={sendMessage} />}
       </div>
     </div>
+    {cur && (cur.role === "instructor" || cur.role === "manager" || cur.role === "staff") && !_agreedThisMonth(agreements, cur.id) && <AgreementModal user={cur} agreements={agreements} onConfirm={function(uid) { fetchClientIP(function(ip) { localSetAgreements(function(prev) { var np = Object.assign({}, prev || {}); np[uid] = { date: _dateKey(new Date()), ip: ip || "확인불가" }; return np; }); forceSave(); }); }} />}
     {popupMsg && <div className="mo" onClick={function() { setPopupMsg(null); }} style={{ zIndex: 9999 }}><div className="md" onClick={function(e) { e.stopPropagation(); }} style={{ maxWidth: 360, textAlign: "center" }}>
       <div style={{ fontSize: 38, marginBottom: 6 }}>💬</div>
       <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 2 }}>{popupMsg.fromName}{popupMsg.fromRole === "instructor" ? " 선생님" : " 학부모님"}</div>
