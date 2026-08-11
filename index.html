@@ -4130,6 +4130,21 @@ function hwSchedHTML(s, gi){
   }
   return h;
 }
+// 강사별 진도 수정 요청 건수 및 순위 (적을수록 상위 · 0건이면 공동 1위)
+function progReqCount(teacherName){
+  var n=0;
+  DB.subj.forEach(function(s){ if(s.teacher===teacherName && Array.isArray(s.progReqs)) n+=s.progReqs.length; });
+  return n;
+}
+function progReqRank(myName){
+  var T=(DB.cfg&&DB.cfg.teachers)||[];
+  if(!T.length) return null;
+  var counts=T.map(function(t){ return {name:t.name, n:progReqCount(t.name)}; });
+  var mine=counts.find(function(c){ return c.name===myName; });
+  if(!mine) return null;
+  var rank=1+counts.filter(function(c){ return c.n<mine.n; }).length; // 같은 건수는 공동 순위
+  return {count:mine.n, rank:rank, total:T.length};
+}
 function openProgReq(gi){
   var s=DB.subj[gi]; if(!s) return;
   var ex=document.getElementById('ov-progreq'); if(ex) ex.remove();
@@ -6160,6 +6175,18 @@ function renderTeacherHome() {
   }
 
 
+
+  // 진도 수정 요청 건수·순위
+  var prq = progReqRank(ME.name);
+  if (prq) {
+    var prCol = prq.count===0 ? 'var(--g)' : (prq.rank<=Math.ceil(prq.total/2) ? 'var(--am)' : 'var(--rd)');
+    h += '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:11px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:8px">'
+       + '<div><div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:2px">📝 진도 수정 요청</div>'
+       + '<div style="font-size:13px;font-weight:800;color:'+prCol+'">'+prq.count+'건'+(prq.count===0?' · 없음 👍':'')+'</div></div>'
+       + '<div style="text-align:right"><div style="font-size:11px;color:var(--t2);font-weight:600;margin-bottom:2px">수정 적은 순위</div>'
+       + '<div style="font-size:15px;font-weight:800;color:'+prCol+';font-family:DM Mono,monospace">'+prq.rank+'위 <span style="font-size:11px;color:var(--t2);font-weight:600">/ '+prq.total+'명</span></div></div>'
+       + '</div>';
+  }
 
   // 관리에 관한 약정 (접힘 · 펼치면 전문 · 관리자와 동일 내용)
   h += '<div onclick="togglePledgeFull(\'plg-full-t\',\'plg-arrow-t\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:12px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-t" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
