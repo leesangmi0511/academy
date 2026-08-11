@@ -4044,6 +4044,119 @@ function calcHwProgress(className){
   return { done: doneCount, total: totalLessons, lastPage: lastLessonPage };
 }
 
+// 과제앱 → 반별 날짜별 차시 진도 목록 [{date,name,pages,tb,done}] (없으면 null)
+function hwLessonSchedule(className){
+  if(!hwData||!hwData.fields||!className) return null;
+  var cur = hwData.fields.curriculum && hwData.fields.curriculum.arrayValue && hwData.fields.curriculum.arrayValue.values || [];
+  var sp = hwData.fields.studentProgress && hwData.fields.studentProgress.mapValue && hwData.fields.studentProgress.mapValue.fields || {};
+  var tbs = hwData.fields.textbooks && hwData.fields.textbooks.arrayValue && hwData.fields.textbooks.arrayValue.values || [];
+  var matched = cur.filter(function(c){
+    var key = c.mapValue.fields.key.stringValue || '';
+    var parts = key.split('__');
+    return parts.length>=2 && parts[1] === className;
+  });
+  if(!matched.length) return null;
+  var out=[];
+  matched.forEach(function(c){
+    var cf=c.mapValue.fields;
+    var curKey=cf.key.stringValue;
+    var tbId=curKey.split('__')[2]||'';
+    var nameMap={}, tbName='';
+    var tb=tbs.find(function(t){ return t.mapValue.fields.id && t.mapValue.fields.id.stringValue===tbId; });
+    if(tb){
+      tbName = tb.mapValue.fields.name ? tb.mapValue.fields.name.stringValue : '';
+      var chapters=(tb.mapValue.fields.chapters && tb.mapValue.fields.chapters.arrayValue.values)||[];
+      chapters.forEach(function(ch,ci){
+        var chId='ch'+(ci+1);
+        var lessonsArr=(ch.mapValue.fields.lessons && ch.mapValue.fields.lessons.arrayValue.values)||[];
+        lessonsArr.forEach(function(ls){
+          var lf=ls.mapValue.fields;
+          var lsId=lf.id?lf.id.stringValue:'';
+          nameMap[chId+'__'+lsId]={ name:(lf.name?lf.name.stringValue:''), pages:(lf.pages?lf.pages.stringValue:'') };
+        });
+      });
+    }
+    var lessons=(cf.lessons && cf.lessons.arrayValue.values)||[];
+    lessons.forEach(function(l){
+      var lf=l.mapValue.fields;
+      var lessonId=lf.lessonId?lf.lessonId.stringValue:'';
+      var date=lf.date?lf.date.stringValue:'';
+      var taskKey=curKey+'__'+lessonId;
+      var done=Object.keys(sp).some(function(stuId){
+        var tasks=sp[stuId].mapValue?sp[stuId].mapValue.fields:{};
+        return tasks[taskKey]!==undefined;
+      });
+      var info=nameMap[lessonId]||{};
+      out.push({date:date, name:(info.name||lessonId), pages:(info.pages||''), tb:tbName, done:done});
+    });
+  });
+  out.sort(function(a,b){ return (a.date||'')<(b.date||'')?-1:1; });
+  return out;
+}
+// 진도 탭 펼침 패널: 날짜별 진도 + 진도 수정 요청
+function hwSchedHTML(s, gi){
+  var h='<div style="font-size:11.5px;color:var(--te);font-weight:700;margin-bottom:6px">📅 날짜별 진도 (과제앱 연동)</div>';
+  var sched = hwData ? hwLessonSchedule(s.name) : undefined;
+  if(sched===undefined){
+    h+='<div style="font-size:11.5px;color:var(--t3);padding:6px 0 10px">과제앱 진도 불러오는 중…</div>';
+  } else if(!sched || !sched.length){
+    h+='<div style="font-size:11.5px;color:var(--t3);padding:6px 0 10px">과제앱에 이 반으로 배정된 차시가 없어요 (과제앱 커리큘럼에서 반 이름을 동일하게 설정하세요)</div>';
+  } else {
+    var td=today();
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);max-height:220px;overflow:auto;margin-bottom:10px">';
+    sched.forEach(function(l){
+      var st, col, bg;
+      if(l.done){ st='✓ 완료'; col='var(--g)'; }
+      else if(l.date && l.date<td){ st='⚠ 미완료'; col='var(--rd)'; }
+      else { st='예정'; col='var(--t3)'; }
+      h+='<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--s2)">'
+        +'<span style="font-size:10.5px;color:var(--t2);font-weight:700;flex-shrink:0;font-family:DM Mono,monospace">'+(l.date?l.date.slice(5).replace('-','/'):'—')+'</span>'
+        +'<span style="flex:1;min-width:0;font-size:11.5px;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(l.name)+(l.pages?' <span style="color:var(--t3);font-size:10px">p.'+dEsc(l.pages)+'</span>':'')+'</span>'
+        +'<span style="font-size:10px;font-weight:700;color:'+col+';flex-shrink:0">'+st+'</span>'
+        +'</div>';
+    });
+    h+='</div>';
+  }
+  h+='<button class="btn sm" style="width:100%;margin-bottom:8px;background:var(--am);color:#fff" onclick="openProgReq('+gi+')">📝 진도 수정 요청 (늦어진 사유·추가 학습)</button>';
+  if(Array.isArray(s.progReqs) && s.progReqs.length){
+    h+='<div style="font-size:11px;color:var(--te);font-weight:700;margin:2px 0 4px">요청 내역</div>';
+    s.progReqs.slice(-3).reverse().forEach(function(q){
+      h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:7px 10px;margin-bottom:5px;font-size:11px;line-height:1.5">'
+        +'<div style="color:var(--t2);font-weight:700">'+dEsc(q.date||'')+' · '+dEsc(q.by||'')+'</div>'
+        +(q.reason?'<div style="color:var(--te)">늦어진 사유: '+dEsc(q.reason)+'</div>':'')
+        +(q.extra?'<div style="color:var(--te)">더 시킨 학습: '+dEsc(q.extra)+'</div>':'')
+        +'</div>';
+    });
+  }
+  return h;
+}
+function openProgReq(gi){
+  var s=DB.subj[gi]; if(!s) return;
+  var ex=document.getElementById('ov-progreq'); if(ex) ex.remove();
+  var h='<div class="ov" id="ov-progreq" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">📝 진도 수정 요청 — '+dEsc(s.name)+'</div>'
+    +'<label class="fl">진도가 늦어진 사유</label>'
+    +'<textarea class="fi" id="pr-reason" rows="3" placeholder="예: 시험 대비로 복습 위주 진행, 결석 학생 보충 등"></textarea>'
+    +'<label class="fl">더 시킨 학습 (추가 진행 내용)</label>'
+    +'<textarea class="fi" id="pr-extra" rows="3" placeholder="예: 오답노트 2회, 심화 프린트 3장 추가 진행"></textarea>'
+    +'<button class="btn" onclick="saveProgReq('+gi+')">요청 저장</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-progreq\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function saveProgReq(gi){
+  var s=DB.subj[gi]; if(!s) return;
+  var reason=(document.getElementById('pr-reason').value||'').trim();
+  var extra=(document.getElementById('pr-extra').value||'').trim();
+  if(!reason && !extra){ toast('사유 또는 추가 학습 내용을 입력하세요','var(--rd)'); return; }
+  if(!Array.isArray(s.progReqs)) s.progReqs=[];
+  s.progReqs.push({date:today(), by:(ME?ME.name:''), reason:reason, extra:extra, ts:Date.now()});
+  saveAll();
+  try{ logChange('진도 수정 요청', s.name+(reason?' · '+reason.slice(0,30):'')); }catch(e){}
+  var m=document.getElementById('ov-progreq'); if(m) m.remove();
+  toast('진도 수정 요청이 저장됐어요 ✓','var(--g)');
+  renderProgress();
+}
 // 과제앱 진도를 학원앱 과목(subj)에 동기화
 function syncHwProgressToSubj(){
   if(!hwData||!hwData.fields) return 0;
@@ -6153,11 +6266,11 @@ function renderProgress() {
       // 펼쳐진 경우
       if (isExp) {
         h += '<div style="padding:10px 10px 12px;background:var(--acc-l);border-radius:0 0 var(--r) var(--r);border:1px solid var(--s3);border-top:none">';
-        if (ME.role !== 'admin') {
-          h += '<button class="btn sm" style="margin-bottom:10px;width:100%" onclick="openProgInput('+gi+')">✏️ 진도 입력</button>';
-        } else {
+        if (ME.role === 'admin') {
           h += '<button class="btn sm" style="margin-bottom:10px;width:100%;background:var(--s2);color:var(--te)" onclick="openEditSubj('+gi+')">⚙️ 과목 수정</button>';
         }
+        // 날짜별 진도 (과제앱 연동) + 진도 수정 요청 — 수동 진도 입력 대체
+        h += hwSchedHTML(s, gi);
         if (!subjStu.length) {
           h += '<div style="font-size:12px;color:var(--t2);text-align:center;padding:6px 0">학생이 없어요. 학생 등록 시 "반"을 과목명과 동일하게 입력해 주세요.</div>';
         } else {
