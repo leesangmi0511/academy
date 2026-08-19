@@ -5937,7 +5937,9 @@ function renderAdminHome() {
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button></div>'
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button>'
+     + (isOwnerLevel()?'<button onclick="dlStuRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 학생 명단 (엑셀)</button><button onclick="dlStaffRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 직원 명단 (엑셀)</button>':'')
+     + '</div>'
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openPromote()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🎓 학년 일괄 승급</button></div>':'');
 
   // 알림 센터
@@ -7380,6 +7382,36 @@ function ackPledge(){
   try{ if(curTab==='home') renderHome(); }catch(e){}  // 확인 완료 배지 즉시 갱신
 }
 // 원장: 약정 확인 기록 열람
+// 엑셀(CSV·한글 호환)로 내려받기
+function dlCSV(filename, rows){
+  var csv='﻿'+rows.map(function(r){ return r.map(function(c){ return '"'+String(c==null?'':c).replace(/"/g,'""')+'"'; }).join(','); }).join('\r\n');
+  var blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob); a.download=filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ try{ URL.revokeObjectURL(a.href); }catch(e){} }, 3000);
+}
+function dlStuRoster(){
+  if(!isOwnerLevel()){ toast('원장·행정팀만 내려받을 수 있어요','var(--rd)'); return; }
+  var list=DB.stu.slice().sort(sortStuByClass);
+  if(!list.length){ toast('등록된 학생이 없어요','var(--rd)'); return; }
+  var rows=[['이름','반','담당 강사']];
+  list.forEach(function(s){ rows.push([s.name, s.class||'', s.teacher||'']); });
+  dlCSV('학생명단_'+today()+'.csv', rows);
+  try{ logChange('학생 명단 내려받기', list.length+'명'); }catch(e){}
+  toast('학생 명단 '+list.length+'명 저장됨 ✓ (엑셀에서 열림)','var(--g)');
+}
+function dlStaffRoster(){
+  if(!isOwnerLevel()){ toast('원장·행정팀만 내려받을 수 있어요','var(--rd)'); return; }
+  var rows=[['구분','이름','연락처']];
+  ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(s){ rows.push(['행정팀', s.name, s.phone||'']); });
+  ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ rows.push(['관리자', a.name, a.phone||'']); });
+  ((DB.cfg&&DB.cfg.teachers)||[]).forEach(function(t){ rows.push(['강사', t.name, t.phone||'']); });
+  if(rows.length===1){ toast('등록된 직원이 없어요','var(--rd)'); return; }
+  dlCSV('직원명단_'+today()+'.csv', rows);
+  try{ logChange('직원 명단 내려받기', (rows.length-1)+'명'); }catch(e){}
+  toast('직원 명단 '+(rows.length-1)+'명 저장됨 ✓ (엑셀에서 열림)','var(--g)');
+}
 function downloadLogo(){
   try{
     var img=document.getElementById('rt-logo');
