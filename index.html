@@ -28,7 +28,7 @@ var url = URL.createObjectURL(blob);
 document.getElementById('pwa-manifest').href = url;
 </script>
 <title>ROUTETOP 학원관리</title>
-<meta name="app-version" content="v2026.08.04-1">
+<meta name="app-version" content="v2026.08.19-1">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 // Service Worker 등록 (실제 배포 도메인에서만 — 미리보기 환경 404 경고 방지)
@@ -86,7 +86,7 @@ var _FS = {
   get: function(path) {
     return _auth.token().then(function(tok){
       var h = tok ? {Authorization:'Bearer '+tok} : {};
-      return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey, {headers:h})
+      return fetch(_FB.baseUrl + '/' + path + '?key=' + _FB.apiKey, {headers:h, cache:'no-store'})
         .then(function(r){ return r.json(); });
     });
   },
@@ -396,7 +396,7 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <button id="btn-reset" style="display:none;background:none;border:none;color:var(--rd);font-size:12px;cursor:pointer;font-family:'Noto Sans KR',sans-serif" onclick="doReset()">⚠ 데이터 초기화 (관리자 전용)</button>
   </div>
   <div id="fb-status" style="margin-top:16px;font-size:11px;color:var(--t3);text-align:center">연결 중...</div>
-  <div style="margin-top:4px;font-size:10px;color:var(--t3);text-align:center">버전 v2026.08.04-1</div>
+  <div style="margin-top:4px;font-size:10px;color:var(--t3);text-align:center">버전 v2026.08.19-1</div>
 </div>
 
 <!-- 로딩 -->
@@ -1135,7 +1135,7 @@ var _fbFailNotified = false;
 var _saveRetries = 0;
 var _tbLoadedVer = 0;
 var _tbReady = false;              // 유형은행 초기 로드 완료 전에는 저장 시 유형은행을 건드리지 않음 (빈 값 덮어쓰기 방지)
-var _srvTbMeta = {n:0, ver:0};     // 서버의 조각 개수·버전 (로드 전 저장 시 그대로 보존)
+var _srvTbMeta = {n:0, ver:0, cnt:0}; // 서버의 조각 개수·버전·유형 개수 (로드 전 저장 시 그대로 보존)
 // 유형 은행 조각 저장/로드 (Firestore 문서 1MB 한도 회피 — 조각당 최대 400개)
 // 저장 압축: 긴 필드(중복 title, 빈 url, path) 제거 + 짧은 키 → 용량 대폭 축소
 function _tbCompact(items){ return (items||[]).map(function(e){ var o={i:e.id,s:e.subject,t:e.type,l:e.level}; if(e.title&&e.title!==e.type)o.n=e.title; if(e.url)o.u=e.url; return o; }); }
@@ -1280,7 +1280,7 @@ function saveAll() {
     }
     // 유형은행 로드 전이면 조각 저장을 건너뛰고 서버의 기존 조각 정보를 그대로 유지 (빈 값 덮어쓰기 방지)
     (_tbReady ? _tbChunkSave() : Promise.resolve(_srvTbMeta.n))
-      .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: (_tbReady ? _ver : _srvTbMeta.ver)}); })
+      .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: (_tbReady ? _ver : _srvTbMeta.ver), tbCount: (_tbReady ? (DB.typeBank||[]).length : (_srvTbMeta.cnt||0))}); })
       .then(function(){ _saving = false; _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = (_tbReady ? _ver : _srvTbMeta.ver); _lastLocalSave = Date.now(); })
       .catch(function(e) {
         _saving = false; _saveFailed = true; window._lastSaveErr = (e && (e.message||e.status||e.code)) ? ((e.status?('HTTP '+e.status+' '):'')+(e.message||e.code||'')) : String(e); console.warn('FB save error:', e, window._lastSaveErr);
@@ -6123,6 +6123,65 @@ function calcMyRank(myName) {
   return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0, bookRate:myScore?myScore.bookRate:null, bookProg:myScore?myScore.bookProg:null, diagRate:myScore?myScore.diagRate:null};
 }
 
+// 강사 본인 점수 상세 계산 내역 모달
+function openMyScoreDetail(){
+  if(!ME) return;
+  var T = DB.cfg.teachers||[];
+  var t = T.find(function(x){ return x.name===ME.name; });
+  if(!t){ toast('강사 정보를 찾을 수 없어요','var(--rd)'); return; }
+  // calcMyRank과 동일한 방식으로 본인 구성요소 계산
+  var tS = DB.subj.filter(function(s){ return s.teacher===ME.name; });
+  var tSt = DB.stu.filter(function(s){ return s.teacher===ME.name; });
+  var tR = tS.map(calcRate);
+  var progressAvg = tR.length ? tR.reduce(function(a,b){return a+b;},0)/tR.length : 0;
+  var consultDone = tSt.filter(function(s){ return cSt(s).lv==='ok'; }).length;
+  var consultRate = tSt.length ? consultDone/tSt.length*100 : 0;
+  var maxStu = Math.max.apply(null, T.map(function(x){ return DB.stu.filter(function(s){return s.teacher===x.name;}).length; }).concat([1]));
+  var stuScore = tSt.length / maxStu * 100;
+  var hwRate = (typeof calcHwRate==='function') ? calcHwRate(ME.name, tSt) : 0;
+  var bookSc = (typeof calcBookScore==='function') ? calcBookScore(tSt) : null;
+  var diagR = (typeof calcDiagRate==='function') ? calcDiagRate(tSt) : null;
+  var evalSc = (typeof getEvalScore==='function') ? (getEvalScore(ME.name)||0) : 0;
+  var hasBook = bookSc!==null && bookSc!==undefined;
+  var hasDiag = diagR!==null && diagR!==undefined;
+  var wsum = 4.5 + (hasBook?1.5:0) + (hasDiag?1:0);
+  var wsumTxt = '4.5'+(hasBook?' + 1.5':'')+(hasDiag?' + 1':'')+' = '+wsum;
+  var weighted = progressAvg*1 + consultRate*1 + stuScore*1.5 + hwRate*1 + (hasBook?bookSc.score*1.5:0) + (hasDiag?diagR*1:0);
+  var baseScore = weighted / wsum;
+  var total = (baseScore*2 + evalSc*0.5) / 2.5;
+  var rk = calcMyRank(ME.name);
+  function row(icon, label, val, w, contrib, note){
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--s2)">'
+      +'<span style="flex:1;font-size:12.5px;color:var(--te);font-weight:600">'+icon+' '+label+(note?'<div style="font-size:10px;color:var(--t3);font-weight:500;margin-top:1px">'+note+'</div>':'')+'</span>'
+      +'<span style="font-size:12.5px;color:var(--te);font-weight:700;font-family:DM Mono,monospace">'+val+'</span>'
+      +'<span style="font-size:10.5px;color:var(--t3);width:34px;text-align:center">×'+w+'</span>'
+      +'<span style="font-size:12px;color:var(--acc);font-weight:700;width:48px;text-align:right;font-family:DM Mono,monospace">'+contrib.toFixed(1)+'</span>'
+      +'</div>';
+  }
+  var ex=document.getElementById('ov-myscore'); if(ex) ex.remove();
+  var h='<div class="ov" id="ov-myscore" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🧮 내 점수 상세 계산 — '+dEsc(ME.name)+'</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:4px 14px;margin-bottom:12px">'
+    +'<div style="display:flex;gap:8px;padding:7px 0;border-bottom:1.5px solid var(--s3);font-size:10px;color:var(--t3);font-weight:700"><span style="flex:1">항목</span><span>내 값</span><span style="width:34px;text-align:center">가중치</span><span style="width:48px;text-align:right">기여점수</span></div>'
+    +row('📈','진도율', Math.round(progressAvg)+'%', 1, progressAvg*1, '담당 과목 '+tS.length+'개 진도율 평균')
+    +row('💬','상담 완료율', Math.round(consultRate)+'%', 1, consultRate*1, '담당 학생 '+tSt.length+'명 중 상담 완료 '+consultDone+'명')
+    +row('👥','담당 학생', Math.round(stuScore)+'점', '1.5', stuScore*1.5, '내 학생 '+tSt.length+'명 ÷ 최다 강사 '+maxStu+'명 × 100')
+    +row('📝','과제 수행률', Math.round(hwRate)+'%', 1, hwRate*1, '과제앱 연동')
+    +(hasBook ? row('📦','교재 걷기', Math.round(bookSc.score)+'점', '1.5', bookSc.score*1.5, '회수율 '+bookSc.rate+'% + 진도점수 '+(bookSc.prog>0?'+':'')+bookSc.prog) : '')
+    +(hasDiag ? row('🩺','진단지 기한', Math.round(diagR)+'%', 1, diagR*1, '기한 내 발송률') : '')
+    +'<div style="display:flex;justify-content:space-between;padding:9px 0;font-size:12.5px;font-weight:800;color:var(--te)"><span>합계 ÷ 가중치합 ('+wsumTxt+')</span><span style="font-family:DM Mono,monospace">'+weighted.toFixed(1)+' ÷ '+wsum+' = '+baseScore.toFixed(1)+'</span></div>'
+    +'</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:11px 14px;margin-bottom:12px;font-size:12.5px;line-height:1.8">'
+    +'<div style="display:flex;justify-content:space-between"><span style="color:var(--te);font-weight:600">기본 점수 ×2</span><span style="font-weight:700;font-family:DM Mono,monospace">'+(baseScore*2).toFixed(1)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between"><span style="color:var(--te);font-weight:600">관리자 평가 '+Math.round(evalSc)+'점 ×0.5</span><span style="font-weight:700;font-family:DM Mono,monospace">'+(evalSc*0.5).toFixed(1)+'</span></div>'
+    +'<div style="display:flex;justify-content:space-between;border-top:1.5px solid var(--s3);margin-top:4px;padding-top:6px"><span style="color:var(--te);font-weight:800">종합점수 (÷2.5)</span><span style="font-weight:800;color:var(--acc);font-size:15px;font-family:DM Mono,monospace">'+Math.round(total)+'점</span></div>'
+    +(rk?'<div style="text-align:center;font-size:11.5px;color:var(--t2);margin-top:6px">전체 '+rk.total+'명 중 <b style="color:var(--te)">'+rk.rank+'위</b> (상위 '+rk.pct+'%)</div>':'')
+    +'</div>'
+    +'<div style="font-size:10px;color:var(--t3);margin:-4px 0 10px;text-align:center;line-height:1.5">＊ 교재·진단지 항목은 과제앱 데이터가 있을 때만 반영됩니다</div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-myscore\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
 function renderTeacherHome() {
   var mySu = mySubj(), mySt = myStu();
   var rates = mySu.map(calcRate);
@@ -6176,6 +6235,7 @@ function renderTeacherHome() {
        + '<div style="font-size:10px;color:var(--t3);margin-top:6px;text-align:center">종합점수 ×2 + 관리자평가 ×0.5</div>'
        + (rankInfo.bookRate!=null ? '<div style="font-size:10px;margin-top:6px;text-align:center;color:var(--te)">📦 교재 회수 '+rankInfo.bookRate+'% · 진도점수 '+(rankInfo.bookProg>0?'+':'')+rankInfo.bookProg+'%</div>' : '')
        + (rankInfo.diagRate!=null ? '<div style="font-size:10px;margin-top:4px;text-align:center;color:var(--te)">🩺 진단지 기한 내 발송 '+rankInfo.diagRate+'%</div>' : '')
+       + '<button onclick="openMyScoreDetail()" style="width:100%;margin-top:9px;font-size:12px;font-weight:700;color:var(--acc);background:var(--s2);border:1px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer">🧮 내 점수 상세 계산 보기</button>'
        + '</div>';
   }
 
@@ -8026,13 +8086,15 @@ _loadFirebase().then(function() {
     applyDB(d);
     // 유형 은행: 조각 문서에서 로드(용량 분리) + 옛 단일문서/로컬 복구
     var _nch=(d && d.tbChunks) ? d.tbChunks : 0;
-    _srvTbMeta={n:_nch, ver:(d && d.tbVer)||0};  // 로드 완료 전 저장 시 이 값을 그대로 보존
+    _srvTbMeta={n:_nch, ver:(d && d.tbVer)||0, cnt:(d && d.tbCount)||0};  // 로드 완료 전 저장 시 이 값을 그대로 보존
     var _tbTry=0;
     (function _tbInit(){
       (_nch>0 ? _tbChunkLoad(_nch) : _FS.get('academy/typebank').then(function(td){ var o=_FS.docToObj(td); return (o&&o.items)?o.items:null; }))
         .then(function(items){
           var srvVer = (d && d.tbVer) || 0; _tbLoadedVer = srvVer;
           var srvLen = items?items.length:0;
+          // 서버 기록 개수보다 적게 받아졌으면(조각 저장 중이던 순간 등) 다시 시도
+          if(_nch>0 && d && d.tbCount && srvLen && srvLen < d.tbCount && _tbTry<5){ _tbTry++; setTimeout(_tbInit, 2500); return; }
           var local=[]; try{ local=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]')); }catch(_e){}
           if(srvLen){ DB.typeBank=items; }                        // 서버가 원본
           if(local.length && !srvLen){ DB.typeBank=local; }       // 서버가 완전히 비었을 때만 로컬
@@ -8070,8 +8132,11 @@ _loadFirebase().then(function() {
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
-      if(_pnch>0){ _srvTbMeta={n:_pnch, ver:_pver}; }  // 서버 최신 조각 정보 추적 (로드 전 저장 보존용)
-      if(_pnch>0 && _pver!==_tbLoadedVer){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; _tbLoadedVer=_pver; if(items && items.length){ DB.typeBank=items; _tbHashSync(); if(!_tbReady) _tbReady=true; if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
+      var _pcnt=(d2 && d2.tbCount) ? d2.tbCount : 0;
+      if(_pnch>0){ _srvTbMeta={n:_pnch, ver:_pver, cnt:_pcnt}; }  // 서버 최신 조각 정보 추적 (로드 전 저장 보존용)
+      // 버전이 바뀌었거나, 서버 개수와 내 개수가 다르면(일부만 보이는 상태) 자동으로 전체 재로드
+      var _tbNeed = _pnch>0 && ( _pver!==_tbLoadedVer || (_pcnt && (DB.typeBank||[]).length!==_pcnt) || !(DB.typeBank||[]).length );
+      if(_tbNeed){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; _tbLoadedVer=_pver; if(items && items.length){ DB.typeBank=items; _tbHashSync(); if(!_tbReady) _tbReady=true; if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
