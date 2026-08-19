@@ -1134,6 +1134,8 @@ var _saveFailed = false; // 마지막 클라우드 저장 실패 여부
 var _fbFailNotified = false;
 var _saveRetries = 0;
 var _tbLoadedVer = 0;
+var _tbReady = false;              // 유형은행 초기 로드 완료 전에는 저장 시 유형은행을 건드리지 않음 (빈 값 덮어쓰기 방지)
+var _srvTbMeta = {n:0, ver:0};     // 서버의 조각 개수·버전 (로드 전 저장 시 그대로 보존)
 // 유형 은행 조각 저장/로드 (Firestore 문서 1MB 한도 회피 — 조각당 최대 400개)
 // 저장 압축: 긴 필드(중복 title, 빈 url, path) 제거 + 짧은 키 → 용량 대폭 축소
 function _tbCompact(items){ return (items||[]).map(function(e){ var o={i:e.id,s:e.subject,t:e.type,l:e.level}; if(e.title&&e.title!==e.type)o.n=e.title; if(e.url)o.u=e.url; return o; }); }
@@ -1271,12 +1273,15 @@ function saveAll() {
     try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu)); }catch(_e){}
     try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
     var _ver = Date.now();
-    _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
-    if((DB.typeBank||[]).length <= 4000){ try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank))); }catch(_e){} } // 큰 데이터는 localStorage 생략(IndexedDB가 백업)
-    try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
-    _tbChunkSave()
-      .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: _ver}); })
-      .then(function(){ _saving = false; _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = _ver; _lastLocalSave = Date.now(); })
+    if(_tbReady){
+      _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
+      if((DB.typeBank||[]).length <= 4000){ try{ localStorage.setItem('ac_typeBank', JSON.stringify(_tbCompact(DB.typeBank))); }catch(_e){} } // 큰 데이터는 localStorage 생략(IndexedDB가 백업)
+      try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
+    }
+    // 유형은행 로드 전이면 조각 저장을 건너뛰고 서버의 기존 조각 정보를 그대로 유지 (빈 값 덮어쓰기 방지)
+    (_tbReady ? _tbChunkSave() : Promise.resolve(_srvTbMeta.n))
+      .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: (_tbReady ? _ver : _srvTbMeta.ver)}); })
+      .then(function(){ _saving = false; _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = (_tbReady ? _ver : _srvTbMeta.ver); _lastLocalSave = Date.now(); })
       .catch(function(e) {
         _saving = false; _saveFailed = true; window._lastSaveErr = (e && (e.message||e.status||e.code)) ? ((e.status?('HTTP '+e.status+' '):'')+(e.message||e.code||'')) : String(e); console.warn('FB save error:', e, window._lastSaveErr);
         if(!_fbFailNotified && typeof toast==='function'){
@@ -8007,6 +8012,8 @@ _loadFirebase().then(function() {
       DB.typeBank=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]'));
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
       DB.stu=JSON.parse(localStorage.getItem('ac_stu')||'[]');
+      // 오프라인: 기기 백업(IndexedDB)이 더 크면 그걸로 복구 후 저장 허용
+      _idbGet('tb', function(idb){ if(idb && idb.items && idb.items.length > (DB.typeBank||[]).length){ DB.typeBank = idb.items; } _tbReady = true; if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } });
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
     }
     document.getElementById('loading').style.display='none';
@@ -8019,23 +8026,32 @@ _loadFirebase().then(function() {
     applyDB(d);
     // 유형 은행: 조각 문서에서 로드(용량 분리) + 옛 단일문서/로컬 복구
     var _nch=(d && d.tbChunks) ? d.tbChunks : 0;
-    (_nch>0 ? _tbChunkLoad(_nch) : _FS.get('academy/typebank').then(function(td){ var o=_FS.docToObj(td); return (o&&o.items)?o.items:null; }))
-      .then(function(items){
-        var srvVer = (d && d.tbVer) || 0; _tbLoadedVer = srvVer;
-        var srvLen = items?items.length:0;
-        var local=[]; try{ local=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]')); }catch(_e){}
-        if(srvLen){ DB.typeBank=items; }                        // 서버가 원본
-        if(local.length && !srvLen){ DB.typeBank=local; }       // 서버가 완전히 비었을 때만 로컬
-        // IndexedDB 백업이 서버보다 최신이면(서버 저장이 덜 끝남) 그걸로 복구
-        _idbGet('tb', function(idb){
-          var idbLen = (idb && idb.items) ? idb.items.length : 0;
-          var idbVer = (idb && idb.ver) ? idb.ver : 0;
-          if(idbLen && idbVer > srvVer){ DB.typeBank = idb.items; } // 백업이 더 최신 → 복구
-          if((DB.typeBank||[]).length && (idbVer > srvVer || !srvLen || !_nch)){ _tbChunkHash={}; saveAll(); } // 복구/이관 시 서버에 전체 재저장
-          else { _tbHashSync(); }
-          if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
+    _srvTbMeta={n:_nch, ver:(d && d.tbVer)||0};  // 로드 완료 전 저장 시 이 값을 그대로 보존
+    var _tbTry=0;
+    (function _tbInit(){
+      (_nch>0 ? _tbChunkLoad(_nch) : _FS.get('academy/typebank').then(function(td){ var o=_FS.docToObj(td); return (o&&o.items)?o.items:null; }))
+        .then(function(items){
+          var srvVer = (d && d.tbVer) || 0; _tbLoadedVer = srvVer;
+          var srvLen = items?items.length:0;
+          var local=[]; try{ local=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]')); }catch(_e){}
+          if(srvLen){ DB.typeBank=items; }                        // 서버가 원본
+          if(local.length && !srvLen){ DB.typeBank=local; }       // 서버가 완전히 비었을 때만 로컬
+          // IndexedDB 백업이 서버보다 최신이면(서버 저장이 덜 끝남) 그걸로 복구
+          _idbGet('tb', function(idb){
+            var idbLen = (idb && idb.items) ? idb.items.length : 0;
+            var idbVer = (idb && idb.ver) ? idb.ver : 0;
+            if(idbLen && idbVer > srvVer){ DB.typeBank = idb.items; } // 백업이 더 최신 → 복구
+            _tbReady = true;  // 이제부터 저장 시 유형은행 포함 가능
+            if((DB.typeBank||[]).length && (idbVer > srvVer || !srvLen || !_nch)){ _tbChunkHash={}; saveAll(); } // 복구/이관 시 서버에 전체 재저장
+            else { _tbHashSync(); }
+            if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} }
+          });
+        })
+        .catch(function(){
+          if(++_tbTry<5){ setTimeout(_tbInit, 3000); }  // 로드 실패 시 자동 재시도 (실패 동안 저장은 유형은행을 건드리지 않음)
+          else { try{ toast('유형 강의 은행 불러오기 실패 — 인터넷 확인 후 새로고침하세요','var(--rd)'); }catch(_e){} }
         });
-      }).catch(function(){});
+    })();
     // 데이터 로드 후 자동 로그인 시도
     if(!tryAutoLogin()){ var _ap0=document.getElementById('app'); if(_ap0) _ap0.style.display='none'; }
     // 자동 백업: 로드 15초 후(유형은행 로드 대기) 1회 + 1시간마다 확인(하루 1회만 저장됨)
@@ -8054,7 +8070,8 @@ _loadFirebase().then(function() {
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
-      if(_pnch>0 && _pver!==_tbLoadedVer){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; _tbLoadedVer=_pver; if(items && items.length){ DB.typeBank=items; _tbHashSync(); if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
+      if(_pnch>0){ _srvTbMeta={n:_pnch, ver:_pver}; }  // 서버 최신 조각 정보 추적 (로드 전 저장 보존용)
+      if(_pnch>0 && _pver!==_tbLoadedVer){ _tbChunkLoad(_pnch).then(function(items){ if(_saveDirty||_saveFailed) return; _tbLoadedVer=_pver; if(items && items.length){ DB.typeBank=items; _tbHashSync(); if(!_tbReady) _tbReady=true; if(ME&&curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } } }).catch(function(){}); }
       if(ME){
         if(curTab==='home') renderHome();
         else if(curTab==='progress') renderProgress();
