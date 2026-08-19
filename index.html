@@ -1041,6 +1041,10 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
       <div style="font-size:12px;color:var(--t2);margin-bottom:8px">동기화 대상 (학원 앱 기준)</div>
       <div style="display:flex;gap:16px">
         <div style="text-align:center">
+          <div style="font-size:22px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace" id="sync-staff-count">0</div>
+          <div style="font-size:11px;color:var(--t2)">🗂️ 직원</div>
+        </div>
+        <div style="text-align:center">
           <div style="font-size:22px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace" id="sync-tea-count">0</div>
           <div style="font-size:11px;color:var(--t2)">👩‍🏫 강사</div>
         </div>
@@ -4344,100 +4348,86 @@ function fetchHwMain(cb) {
     .catch(function(e){ cb(e, null); });
 }
 
-// 과제앱에 학생+강사 명단 동기화
+// 과제앱에 직원(행정팀·관리자)+강사+학생 명단 동기화
 function syncMembersToHwApp(cb) {
   fetchHwMain(function(err, doc) {
-    if (err || !doc.fields) {
-      if (cb) cb(false, '과제 앱 연결 실패');
-      return;
-    }
-
-    // 기존 데이터 보존
-    var existing = doc.fields;
-
-    // 학원앱 학생 → 과제앱 student 형식 변환
-    var hwStudents = DB.stu.map(function(s) {
-      // 기존 과제앱 ID 보존 (있으면) or 새로 생성
+    if (err || !doc || !doc.fields) { if (cb) cb(false, '과제 앱 연결 실패 — 인터넷을 확인하세요'); return; }
+    try {
+      var existing = doc.fields;
       var existingUsers = existing.users && existing.users.arrayValue && existing.users.arrayValue.values || [];
-      var found = existingUsers.find(function(u) {
-        var f = u.mapValue && u.mapValue.fields;
-        return f && f.name && f.name.stringValue === s.name && f.role && f.role.stringValue === 'student';
+      function uf(u){ return (u && u.mapValue && u.mapValue.fields) || {}; }
+      function us(u,k){ var f=uf(u)[k]; return (f && f.stringValue) || ''; }
+      function findU(name, role){ return existingUsers.find(function(u){ return us(u,'name')===name && us(u,'role')===role; }); }
+      var _seq=0;
+      function newId(pfx,name){ return pfx+'_'+String(name).replace(/\s/g,'')+'_'+Date.now().toString(36)+(_seq++); }
+
+      // 학생 → student (기존 ID·비밀번호 보존)
+      var hwStudents = DB.stu.filter(function(s){ return s && s.name; }).map(function(s, i) {
+        var found = findU(s.name,'student');
+        return { mapValue:{ fields:{
+          id:{stringValue: us(found,'id') || newId('stu', s.name)},
+          name:{stringValue: s.name}, role:{stringValue:'student'},
+          password:{stringValue: us(found,'password') || '1234'},
+          classId:{stringValue: s.class || ''},
+          avatar:{stringValue: ['🎒','🎓','📝','✏️','📚','🖊️','📓','📗'][i % 8]} } } };
       });
-      var stuId = found ? found.mapValue.fields.id.stringValue : 'stu_' + s.name.replace(/\s/g,'') + '_' + Date.now().toString(36);
-      var avatar = ['🎒','🎓','📝','✏️','📚','🖊️','📓','📗'][DB.stu.indexOf(s) % 8];
-      return {
-        mapValue: { fields: {
-          id: { stringValue: stuId },
-          name: { stringValue: s.name },
-          role: { stringValue: 'student' },
-          password: { stringValue: (found && found.mapValue.fields.password ? found.mapValue.fields.password.stringValue : '1234') },
-          classId: { stringValue: s.class || '' },
-          avatar: { stringValue: avatar }
-        }}
-      };
-    });
-
-    // 학원앱 강사 → 과제앱 instructor 형식 변환
-    var hwTeachers = DB.cfg.teachers.map(function(t) {
-      var existingUsers = existing.users && existing.users.arrayValue && existing.users.arrayValue.values || [];
-      var found = existingUsers.find(function(u) {
-        var f = u.mapValue && u.mapValue.fields;
-        return f && f.name && f.name.stringValue === t.name && f.role && f.role.stringValue === 'instructor';
+      // 강사 → instructor
+      var hwTeachers = ((DB.cfg&&DB.cfg.teachers)||[]).filter(function(t){ return t && t.name; }).map(function(t) {
+        var found = findU(t.name,'instructor');
+        return { mapValue:{ fields:{
+          id:{stringValue: us(found,'id') || newId('inst', t.name)},
+          name:{stringValue: t.name}, role:{stringValue:'instructor'},
+          password:{stringValue: t.pw || us(found,'password') || '1234'},
+          avatar:{stringValue:'📚'} } } };
       });
-      var instId = found ? found.mapValue.fields.id.stringValue : 'inst_' + t.name.replace(/\s/g,'') + '_' + Date.now().toString(36);
-      return {
-        mapValue: { fields: {
-          id: { stringValue: instId },
-          name: { stringValue: t.name },
-          role: { stringValue: 'instructor' },
-          password: { stringValue: t.pw || '1234' },
-          avatar: { stringValue: '📚' }
-        }}
-      };
-    });
+      // 직원(행정팀·관리자) → manager
+      var staffSrc=[];
+      ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(s){ if(s&&s.name) staffSrc.push({name:s.name, pw:s.pw}); });
+      ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(a&&a.name && !staffSrc.some(function(x){return x.name===a.name;})) staffSrc.push({name:a.name, pw:a.pw}); });
+      var hwManagers = staffSrc.map(function(m){
+        var found = findU(m.name,'manager');
+        return { mapValue:{ fields:{
+          id:{stringValue: us(found,'id') || newId('mgr', m.name)},
+          name:{stringValue: m.name}, role:{stringValue:'manager'},
+          password:{stringValue: m.pw || us(found,'password') || '1234'},
+          avatar:{stringValue:'🗂️'} } } };
+      });
+      // 기존 admin 계정 전체 + 학원앱 명단에 없는 기존 manager는 보존
+      var keep = existingUsers.filter(function(u){
+        var role = us(u,'role');
+        if (role==='admin') return true;
+        if (role==='manager') return !staffSrc.some(function(x){ return x.name===us(u,'name'); });
+        return false;
+      });
+      var allUsers = keep.concat(hwManagers).concat(hwTeachers).concat(hwStudents);
+      // classList 병합 (학원앱 과목명 = 반 이름)
+      var classNames = DB.subj.map(function(s){ return s.name; }).filter(Boolean);
+      var existingClassList = existing.classList && existing.classList.arrayValue && existing.classList.arrayValue.values || [];
+      var existingClasses = existingClassList.map(function(c){ return c.stringValue; }).filter(Boolean);
+      classNames.forEach(function(cn){ if (existingClasses.indexOf(cn)===-1) existingClasses.push(cn); });
 
-    // 기존 admin/manager 계정은 보존
-    var existingUsers = existing.users && existing.users.arrayValue && existing.users.arrayValue.values || [];
-    var adminsAndMgrs = existingUsers.filter(function(u) {
-      var role = u.mapValue && u.mapValue.fields && u.mapValue.fields.role && u.mapValue.fields.role.stringValue;
-      return role === 'admin' || role === 'manager';
-    });
-
-    // 최종 users 배열 = admin/manager + 강사 + 학생
-    var allUsers = adminsAndMgrs.concat(hwTeachers).concat(hwStudents);
-
-    // classList 도 업데이트 (학원앱 과목명 = 반 이름)
-    var classNames = DB.subj.map(function(s){ return s.name; });
-    var existingClassList = existing.classList && existing.classList.arrayValue && existing.classList.arrayValue.values || [];
-    var existingClasses = existingClassList.map(function(c){ return c.stringValue; });
-    // 기존 반 + 새 반 합치기
-    classNames.forEach(function(cn) {
-      if (existingClasses.indexOf(cn) === -1) existingClasses.push(cn);
-    });
-    var newClassList = existingClasses.map(function(c){ return { stringValue: c }; });
-
-    // body 구성 (기존 필드 모두 유지 + users/classList 업데이트)
-    var body = { fields: {} };
-    Object.keys(existing).forEach(function(k){ body.fields[k] = existing[k]; });
-    body.fields.users = { arrayValue: { values: allUsers } };
-    body.fields.classList = { arrayValue: { values: newClassList } };
-    body.fields.lastUpdated = { stringValue: new Date().toISOString() };
-
-    // PATCH
-    fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-    .then(function(r){ return r.json(); })
-    .then(function(d){
-      if (d.name) {
-        if (cb) cb(true, '강사 ' + hwTeachers.length + '명, 학생 ' + hwStudents.length + '명 동기화됨');
-      } else {
-        if (cb) cb(false, JSON.stringify(d).slice(0,100));
-      }
-    })
-    .catch(function(e){ if (cb) cb(false, e.toString()); });
+      var body = { fields: {
+        users: { arrayValue: { values: allUsers } },
+        classList: { arrayValue: { values: existingClasses.map(function(c){ return {stringValue:c}; }) } },
+        lastUpdated: { stringValue: new Date().toISOString() }
+      }};
+      // 바뀐 필드만 갱신(updateMask) → 과제앱의 진도·진단지·교재 등 다른 데이터는 절대 건드리지 않음
+      fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY + '&updateMask.fieldPaths=users&updateMask.fieldPaths=classList&updateMask.fieldPaths=lastUpdated', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.name) {
+          if (cb) cb(true, '직원 ' + hwManagers.length + '명, 강사 ' + hwTeachers.length + '명, 학생 ' + hwStudents.length + '명 동기화됨');
+        } else {
+          var m = (d && d.error && d.error.message) ? d.error.message.slice(0,90) : JSON.stringify(d).slice(0,90);
+          if (cb) cb(false, '과제앱 저장 거부: ' + m);
+        }
+      })
+      .catch(function(e){ if (cb) cb(false, '전송 실패: ' + e); });
+    } catch(ex){ if (cb) cb(false, '동기화 오류: ' + (ex && ex.message ? ex.message : ex)); }
   });
 }
 
@@ -4746,6 +4736,8 @@ function openSyncModal() {
   // 현재 학원앱 인원 표시
   document.getElementById('sync-stu-count').textContent = DB.stu.length;
   document.getElementById('sync-tea-count').textContent = DB.cfg.teachers.length;
+  var _stf={}; ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(s){ if(s&&s.name)_stf[s.name]=1; }); ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(a&&a.name)_stf[a.name]=1; });
+  var _sc=document.getElementById('sync-staff-count'); if(_sc) _sc.textContent = Object.keys(_stf).length;
 }
 
 // 동기화 실행
@@ -5935,7 +5927,7 @@ function renderAdminHome() {
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button></div>'
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button>'
      + (isOwnerLevel()?'<button onclick="dlStuRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 학생 명단 (엑셀)</button><button onclick="dlStaffRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 직원 명단 (엑셀)</button>':'')
@@ -6121,14 +6113,73 @@ function calcMyRank(myName) {
     s.total = (baseScore*2 + (s.evalScore||0)*0.5) / 2.5;
   });
   scores.sort(function(a,b){ return b.total - a.total; });
+  // 매월 1~20일: 이달 점수 스냅샷 저장 (반기·연간 합산용 · 21일부터는 동결)
+  try{
+    if(new Date().getDate()<=20){
+      var _ym=getYearMonth();
+      if(!DB.evalHistory) DB.evalHistory={};
+      if(!DB.evalHistory[_ym]) DB.evalHistory[_ym]={};
+      var _snap={}; scores.forEach(function(s){ _snap[s.name]=Math.round(s.total); });
+      if(JSON.stringify(DB.evalHistory[_ym].tScores||{})!==JSON.stringify(_snap)){ DB.evalHistory[_ym].tScores=_snap; saveAll(); }
+    }
+  }catch(e){}
   var myRank = scores.findIndex(function(s){ return s.name===myName; }) + 1;
   var myScore = scores.find(function(s){ return s.name===myName; });
   return {rank:myRank, total:scores.length, pct:Math.round(myRank/scores.length*100), score:myScore?Math.round(myScore.total):0, bookRate:myScore?myScore.bookRate:null, bookProg:myScore?myScore.bookProg:null, diagRate:myScore?myScore.diagRate:null};
+}
+// 강사 순위 반기·연간 합산 (관리자 이상)
+var _rkYear=null;
+function openRankSummary(){
+  if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
+  var ex=document.getElementById('ov-rksum'); if(ex) ex.remove();
+  var year=_rkYear||new Date().getFullYear();
+  var names={};
+  ((DB.cfg&&DB.cfg.teachers)||[]).forEach(function(t){ if(t&&t.name) names[t.name]=1; });
+  for(var m=1;m<=12;m++){
+    var ym=year+'-'+('0'+m).slice(-2);
+    var sc=(DB.evalHistory&&DB.evalHistory[ym]&&DB.evalHistory[ym].tScores)||{};
+    Object.keys(sc).forEach(function(n){ names[n]=1; });
+  }
+  var rows=Object.keys(names).map(function(n){
+    var h1=0,c1=0,h2=0,c2=0;
+    for(var m=1;m<=12;m++){
+      var ym=year+'-'+('0'+m).slice(-2);
+      var sc=(DB.evalHistory&&DB.evalHistory[ym]&&DB.evalHistory[ym].tScores)||{};
+      if(sc[n]!==undefined){ if(m<=6){h1+=sc[n];c1++;} else {h2+=sc[n];c2++;} }
+    }
+    return {name:n, h1:h1, c1:c1, h2:h2, c2:c2, yr:h1+h2, cy:c1+c2};
+  }).filter(function(r){ return r.cy>0 || names[r.name]; });
+  rows.sort(function(a,b){ return b.yr-a.yr; });
+  var _hasAny=rows.some(function(r){ return r.cy>0; });
+  var body=(rows.length&&_hasAny)?rows.map(function(r,i){
+    var medal=i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)+'.';
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--s2);font-size:12.5px">'
+      +'<span style="width:26px;flex-shrink:0;font-weight:700">'+medal+'</span>'
+      +'<span style="flex:1;font-weight:700;color:var(--te)">'+dEsc(r.name)+'</span>'
+      +'<span style="width:74px;text-align:right;font-family:DM Mono,monospace">'+r.h1+'<span style="font-size:9.5px;color:var(--t3)"> /'+r.c1+'개월</span></span>'
+      +'<span style="width:74px;text-align:right;font-family:DM Mono,monospace">'+r.h2+'<span style="font-size:9.5px;color:var(--t3)"> /'+r.c2+'개월</span></span>'
+      +'<span style="width:60px;text-align:right;font-weight:800;color:var(--acc);font-family:DM Mono,monospace">'+r.yr+'</span>'
+      +'</div>';
+  }).join(''):'<div style="padding:16px;text-align:center;color:var(--t3);font-size:12px">'+year+'년 기록이 없어요 (매월 1~20일에 점수가 자동 기록됩니다)</div>';
+  var h='<div class="ov" id="ov-rksum" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🏆 강사 순위 합산</div>'
+    +'<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:10px">'
+      +'<button onclick="_rkYear='+(year-1)+';document.getElementById(\'ov-rksum\').remove();openRankSummary()" style="background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:5px 12px;cursor:pointer;font-weight:700">◀</button>'
+      +'<span style="font-size:15px;font-weight:800">'+year+'년</span>'
+      +'<button onclick="_rkYear='+(year+1)+';document.getElementById(\'ov-rksum\').remove();openRankSummary()" style="background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:5px 12px;cursor:pointer;font-weight:700">▶</button>'
+    +'</div>'
+    +'<div style="display:flex;gap:8px;padding:0 2px 6px;font-size:10px;color:var(--t3);font-weight:700"><span style="width:26px"></span><span style="flex:1">강사</span><span style="width:74px;text-align:right">상반기(1~6월)</span><span style="width:74px;text-align:right">하반기(7~12월)</span><span style="width:60px;text-align:right">연간 합산</span></div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:10px;max-height:340px;overflow:auto">'+body+'</div>'
+    +'<div style="font-size:10px;color:var(--t3);margin-bottom:10px;text-align:center;line-height:1.5">＊ 매월 1~20일의 종합점수가 그 달 점수로 기록되며, 21일부터 강사에게는 비공개됩니다. 다음 달 1일에 새로 계산돼요.</div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-rksum\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
 }
 
 // 강사 본인 점수 상세 계산 내역 모달
 function openMyScoreDetail(){
   if(!ME) return;
+  if(ME.role==='teacher' && new Date().getDate()>20){ toast('순위·점수는 매월 1~20일에만 공개돼요 · 다음 달 1일에 새로 계산됩니다','var(--am)'); return; }
   var T = DB.cfg.teachers||[];
   var t = T.find(function(x){ return x.name===ME.name; });
   if(!t){ toast('강사 정보를 찾을 수 없어요','var(--rd)'); return; }
@@ -6207,7 +6258,14 @@ function renderTeacherHome() {
      + '</div>';
   // 종합 순위 카드
   var rankInfo = calcMyRank(ME.name);
-  if (rankInfo && rankInfo.total >= 2) {
+  var _rkOpen = new Date().getDate() <= 20;  // 순위 공개: 매월 1~20일
+  if (rankInfo && rankInfo.total >= 2 && !_rkOpen) {
+    h += '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:12px 16px;margin-bottom:12px;text-align:center">'
+       + '<div style="font-size:12px;font-weight:700;color:var(--t2)">🏆 강사 순위는 매월 1~20일에만 공개됩니다</div>'
+       + '<div style="font-size:11px;color:var(--t3);margin-top:3px">다음 달 1일에 새로운 계산으로 다시 공개돼요</div>'
+       + '</div>';
+  }
+  else if (rankInfo && rankInfo.total >= 2) {
     var rColor = rankInfo.rank===1?'#c07800':rankInfo.rank===2?'#3a6a8a':rankInfo.rank===3?'#c09060':'var(--acc)';
     var rEmoji = rankInfo.rank===1?'🥇':rankInfo.rank===2?'🥈':rankInfo.rank===3?'🥉':'🏅';
     var pctLabel = '상위 '+rankInfo.pct+'%';
