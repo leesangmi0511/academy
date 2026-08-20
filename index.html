@@ -5928,6 +5928,7 @@ function renderAdminHome() {
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button></div>'
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMetricRank()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 항목별 순위 (상담·퇴원율 등)</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button>'
      + (isOwnerLevel()?'<button onclick="dlStuRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 학생 명단 (엑셀)</button><button onclick="dlStaffRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 직원 명단 (엑셀)</button>':'')
@@ -7760,6 +7761,75 @@ function dlRankReport(){
     try{ logChange('강사 순위 성적표 PDF', rows.length+'명 '+getYearMonth()); }catch(e){}
     toast('강사 순위 성적표 PDF 저장됨 ✓ ('+rows.length+'명)','var(--g)');
   }catch(e){ toast('생성 실패: '+(e&&e.message?e.message:e),'var(--rd)'); }
+}
+// ═══ 항목별 순위 조회 ═══
+var _mrKey='consult';
+var METRIC_DEFS=[
+  {k:'total',    label:'종합점수',   unit:'점', asc:false},
+  {k:'progress', label:'진도율',     unit:'%',  asc:false},
+  {k:'consult',  label:'상담 완료율', unit:'%',  asc:false},
+  {k:'students', label:'담당 학생',   unit:'명', asc:false},
+  {k:'hw',       label:'과제 완료율', unit:'%',  asc:false},
+  {k:'wd',       label:'퇴원율',     unit:'%',  asc:true},
+  {k:'eval',     label:'관리자 평가', unit:'점', asc:false},
+  {k:'textbook', label:'교재 진도율', unit:'%',  asc:false},
+  {k:'ohdap',    label:'오답데이',   unit:'%',  asc:false},
+  {k:'video',    label:'수업 영상',   unit:'%',  asc:false},
+  {k:'diag',     label:'진단지 기한', unit:'%',  asc:false},
+  {k:'progreq',  label:'진도 수정 요청', unit:'건', asc:true}
+];
+function _metricValue(k, m){
+  var tSt=DB.stu.filter(function(s){ return s.teacher===m.name; });
+  switch(k){
+    case 'total':    return Math.round(_teacherScoreParts(m.name).total);
+    case 'progress': return m.progressAvg;
+    case 'consult':  return m.consultRate;
+    case 'students': return m.studentCount;
+    case 'hw':       return m.hwRate;
+    case 'wd':       return m.wdRate;
+    case 'eval':     return Math.round(m.evalScore);
+    case 'textbook': return m.textbookScore;
+    case 'ohdap':    return m.ohdapScore;
+    case 'video':    return m.videoScore;
+    case 'diag':     return (typeof calcDiagRate==='function')?calcDiagRate(tSt):null;
+    case 'progreq':  return (typeof progReqCount==='function')?progReqCount(m.name):0;
+  }
+  return null;
+}
+function openMetricRank(){
+  if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
+  var ex=document.getElementById('ov-mrank'); if(ex) ex.remove();
+  var def=METRIC_DEFS.find(function(d){ return d.k===_mrKey; })||METRIC_DEFS[0];
+  var ms=computeAllTeacherMetrics();
+  var withVal=[], noVal=[];
+  ms.forEach(function(m){
+    var v=_metricValue(def.k, m);
+    if(v===null||v===undefined) noVal.push(m); else withVal.push({name:m.name, v:v, extra:(def.k==='wd'?('퇴원 '+m.wdCount+'명'):def.k==='consult'?(m.consultDone+'/'+m.studentCount+'명'):'')});
+  });
+  withVal.sort(function(a,b){ return def.asc ? a.v-b.v : b.v-a.v; });
+  // 공동 순위 (같은 값 = 같은 순위)
+  withVal.forEach(function(r,i){ r.rank = (i>0 && withVal[i-1].v===r.v) ? withVal[i-1].rank : i+1; });
+  var chips=METRIC_DEFS.map(function(d){
+    var on=d.k===def.k;
+    return '<button onclick="_mrKey=\''+d.k+'\';document.getElementById(\'ov-mrank\').remove();openMetricRank()" style="font-size:11.5px;font-weight:700;padding:7px 12px;border-radius:14px;cursor:pointer;margin:0 5px 6px 0;'+(on?'background:var(--acc);color:#fff;border:1px solid var(--acc)':'background:var(--s2);color:var(--t2);border:1px solid var(--s3)')+'">'+d.label+'</button>';
+  }).join('');
+  var rows=withVal.length?withVal.map(function(r){
+    var medal=r.rank===1?'🥇':r.rank===2?'🥈':r.rank===3?'🥉':(r.rank+'.');
+    return '<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--s2)">'
+      +'<span style="width:32px;font-weight:800;font-size:14px;flex-shrink:0">'+medal+'</span>'
+      +'<span style="flex:1;font-size:13.5px;font-weight:700;color:var(--te)">'+dEsc(r.name)+(r.extra?' <span style="font-size:10.5px;color:var(--t3);font-weight:500">'+dEsc(r.extra)+'</span>':'')+'</span>'
+      +'<span style="font-size:15px;font-weight:800;color:var(--acc);font-family:DM Mono,monospace">'+r.v+def.unit+'</span>'
+      +'</div>';
+  }).join(''):'<div style="padding:14px;text-align:center;color:var(--t3);font-size:12px">데이터가 없어요</div>';
+  if(noVal.length) rows+='<div style="padding:8px 0;font-size:10.5px;color:var(--t3)">데이터 없음: '+noVal.map(function(m){return dEsc(m.name);}).join(', ')+'</div>';
+  var h='<div class="ov" id="ov-mrank" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🔍 항목별 순위</div>'
+    +'<div style="display:flex;flex-wrap:wrap;margin-bottom:8px">'+chips+'</div>'
+    +'<div style="font-size:11px;color:var(--t3);margin-bottom:6px">'+dEsc(def.label)+' 기준'+(def.asc?' · 낮을수록 상위':' · 높을수록 상위')+' · 같은 값은 공동 순위</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 14px;margin-bottom:12px;max-height:380px;overflow:auto">'+rows+'</div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-mrank\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
 }
 function openTReport(){
   if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
