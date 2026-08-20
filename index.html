@@ -7687,6 +7687,80 @@ function dlAllTeacherReports(){
     toast('강사 '+T.length+'명 성적표 PDF 저장됨 ✓','var(--g)');
   }catch(e){ toast('생성 실패: '+(e&&e.message?e.message:e),'var(--rd)'); }
 }
+// 전체 강사 순위 성적표 (순위표 형식)
+function _drawRankReport(rows, pageNo, totalPages){
+  var W=1240,H=1754, x0=90, x1=W-90;
+  var cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  var ctx=cv.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+  var logo=document.getElementById('rt-logo');
+  try{ ctx.drawImage(logo, x0, 88, 231, 40); }catch(e){}
+  ctx.fillStyle='#08202f'; ctx.textAlign='right';
+  ctx.font='700 34px "Noto Sans KR"'; ctx.fillText('전체 강사 순위 성적표', x1, 106);
+  ctx.font='500 24px "Noto Sans KR"'; ctx.fillStyle='#4f7d94';
+  ctx.fillText(getYearMonth().replace('-','년 ')+'월 · 발행 '+today()+(totalPages>1?' · '+pageNo+'/'+totalPages:''), x1, 142);
+  ctx.strokeStyle='#93bedb'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(x0,170); ctx.lineTo(x1,170); ctx.stroke();
+  var cols=[
+    {t:'순위', x:x0+8,  a:'left'},
+    {t:'강사', x:x0+96, a:'left'},
+    {t:'진도', x:600,  a:'right'},
+    {t:'상담', x:710,  a:'right'},
+    {t:'학생', x:820,  a:'right'},
+    {t:'과제', x:930,  a:'right'},
+    {t:'평가', x:1030, a:'right'},
+    {t:'종합점수', x:x1-6, a:'right'}
+  ];
+  var y=230;
+  ctx.font='700 24px "Noto Sans KR"'; ctx.fillStyle='#4f7d94';
+  cols.forEach(function(c){ ctx.textAlign=c.a; ctx.fillText(c.t, c.x, y); });
+  ctx.strokeStyle='#93bedb'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x0,y+16); ctx.lineTo(x1,y+16); ctx.stroke();
+  y+=24;
+  rows.forEach(function(r){
+    y+=54;
+    var medal=r.rank===1?'1위 🥇':r.rank===2?'2위 🥈':r.rank===3?'3위 🥉':(r.rank+'위');
+    ctx.textAlign='left'; ctx.font='700 27px "Noto Sans KR"'; ctx.fillStyle='#08202f';
+    ctx.fillText(medal, x0+8, y);
+    ctx.fillText(r.name, x0+96, y);
+    ctx.font='600 26px "DM Mono","Noto Sans KR"'; ctx.fillStyle='#28506c'; ctx.textAlign='right';
+    ctx.fillText(Math.round(r.d.progressAvg)+'%', 600, y);
+    ctx.fillText(Math.round(r.d.consultRate)+'%', 710, y);
+    ctx.fillText(String(Math.round(r.d.stuScore)), 820, y);
+    ctx.fillText(Math.round(r.d.hwRate)+'%', 930, y);
+    ctx.fillText(String(Math.round(r.d.evalSc)), 1030, y);
+    ctx.font='800 30px "DM Mono","Noto Sans KR"'; ctx.fillStyle='#125a8f';
+    ctx.fillText(Math.round(r.d.total)+'점', x1-6, y);
+    ctx.strokeStyle='#e8f4fd'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x0,y+16); ctx.lineTo(x1,y+16); ctx.stroke();
+  });
+  ctx.textAlign='left'; ctx.font='500 21px "Noto Sans KR"'; ctx.fillStyle='#4f7d94';
+  ctx.fillText('＊ 학생 = 담당학생 점수(최다 강사 대비 100점 만점) · 종합점수 = (항목 가중평균 ×2 + 관리자평가 ×0.5) ÷ 2.5', x0, y+62);
+  var extra=[];
+  if(rows.some(function(r){return r.d.hasBook;})) extra.push('교재 걷기');
+  if(rows.some(function(r){return r.d.hasDiag;})) extra.push('진단지 기한');
+  if(extra.length) ctx.fillText('＊ '+extra.join('·')+' 항목은 과제앱 데이터가 있는 강사의 종합점수에 가중 반영되어 있습니다', x0, y+96);
+  ctx.strokeStyle='#93bedb'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x0,H-140); ctx.lineTo(x1,H-140); ctx.stroke();
+  ctx.textAlign='center'; ctx.font='500 22px "Noto Sans KR"'; ctx.fillStyle='#4f7d94';
+  ctx.fillText('루트탑 교무실 · 본 성적표는 학원 내부 자료로 외부 반출을 금합니다', W/2, H-96);
+  return cv;
+}
+function dlRankReport(){
+  if(!isAdminLevel()){ toast('관리자 이상만 받을 수 있어요','var(--rd)'); return; }
+  var T=(DB.cfg.teachers||[]).filter(function(t){return t&&t.name;});
+  if(!T.length){ toast('등록된 강사가 없어요','var(--rd)'); return; }
+  try{
+    var rows=T.map(function(t){ return {name:t.name, d:_teacherScoreParts(t.name)}; });
+    rows.sort(function(a,b){ return b.d.total-a.d.total; });
+    rows.forEach(function(r,i){ r.rank=i+1; });
+    var PER=22, pages=[];
+    for(var i=0;i<rows.length;i+=PER) pages.push(rows.slice(i,i+PER));
+    var cvs=pages.map(function(p,i){ return _drawRankReport(p, i+1, pages.length); });
+    var blob=_canvasesToPdfBlob(cvs);
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='강사순위성적표_'+getYearMonth()+'.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    try{ logChange('강사 순위 성적표 PDF', rows.length+'명 '+getYearMonth()); }catch(e){}
+    toast('강사 순위 성적표 PDF 저장됨 ✓ ('+rows.length+'명)','var(--g)');
+  }catch(e){ toast('생성 실패: '+(e&&e.message?e.message:e),'var(--rd)'); }
+}
 function openTReport(){
   if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
   var ex=document.getElementById('ov-treport'); if(ex) ex.remove();
@@ -7699,6 +7773,7 @@ function openTReport(){
     +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">강사를 누르면 해당 강사의 이번 달 성적표가 PDF로 저장됩니다. 매월 20일까지의 점수가 그 달 기준이니 20일 이후 받는 것을 권장해요.</div>'
     +'<div style="display:flex;flex-wrap:wrap;margin-bottom:8px">'+chips+'</div>'
     +(T.length?'<button class="btn" onclick="dlAllTeacherReports()">📄 전체 강사 한 번에 받기 ('+T.length+'명 · 1명 1장)</button>':'')
+    +(T.length?'<button class="btn" style="background:var(--pu)" onclick="dlRankReport()">🏆 전체 강사 순위 성적표 (순위표)</button>':'')
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-treport\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
