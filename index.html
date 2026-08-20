@@ -5927,7 +5927,7 @@ function renderAdminHome() {
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button></div>'
+     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button>'
      + (isOwnerLevel()?'<button onclick="dlStuRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 학생 명단 (엑셀)</button><button onclick="dlStaffRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 직원 명단 (엑셀)</button>':'')
@@ -7521,6 +7521,187 @@ function dlLogoAs(variant, fmt){
     document.body.appendChild(a); a.click(); a.remove();
     toast((LOGO_CROPS[variant].label)+' '+(fmt==='pdf'?'PDF':'PNG')+' 저장됨 ✓','var(--g)');
   }catch(e){ toast('저장 실패: '+(e&&e.message?e.message:e),'var(--rd)'); }
+}
+// ═══ 강사별 월간 성적표 PDF ═══
+// 강사 점수 구성요소 (calcMyRank과 동일 산식)
+function _teacherScoreParts(name){
+  var T=DB.cfg.teachers||[];
+  var tS=DB.subj.filter(function(s){ return s.teacher===name; });
+  var tSt=DB.stu.filter(function(s){ return s.teacher===name; });
+  var tR=tS.map(calcRate);
+  var progressAvg=tR.length?tR.reduce(function(a,b){return a+b;},0)/tR.length:0;
+  var consultDone=tSt.filter(function(s){ return cSt(s).lv==='ok'; }).length;
+  var consultRate=tSt.length?consultDone/tSt.length*100:0;
+  var maxStu=Math.max.apply(null,T.map(function(x){ return DB.stu.filter(function(s){return s.teacher===x.name;}).length; }).concat([1]));
+  var stuScore=tSt.length/maxStu*100;
+  var hwRate=(typeof calcHwRate==='function')?calcHwRate(name,tSt):0;
+  var bookSc=(typeof calcBookScore==='function')?calcBookScore(tSt):null;
+  var diagR=(typeof calcDiagRate==='function')?calcDiagRate(tSt):null;
+  var evalSc=(typeof getEvalScore==='function')?(getEvalScore(name)||0):0;
+  var hasBook=bookSc!==null&&bookSc!==undefined, hasDiag=diagR!==null&&diagR!==undefined;
+  var wsum=4.5+(hasBook?1.5:0)+(hasDiag?1:0);
+  var weighted=progressAvg+consultRate+stuScore*1.5+hwRate+(hasBook?bookSc.score*1.5:0)+(hasDiag?diagR:0);
+  var base=weighted/wsum;
+  var total=(base*2+evalSc*0.5)/2.5;
+  var rk=calcMyRank(name);
+  var prq=(typeof progReqRank==='function')?progReqRank(name):null;
+  return {name:name, subjN:tS.length, stuN:tSt.length, consultDone:consultDone, maxStu:maxStu,
+    progressAvg:progressAvg, consultRate:consultRate, stuScore:stuScore, hwRate:hwRate,
+    bookSc:bookSc, diagR:diagR, evalSc:evalSc, hasBook:hasBook, hasDiag:hasDiag,
+    wsum:wsum, weighted:weighted, base:base, total:total, rk:rk, prq:prq};
+}
+// A4(150dpi) 성적표 캔버스 그리기
+function _drawTeacherReport(name){
+  var d=_teacherScoreParts(name);
+  var W=1240,H=1754;
+  var cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+  var x0=100, x1=W-100;
+  var ctx=cv.getContext('2d');
+  ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+  // 헤더
+  var logo=document.getElementById('rt-logo');
+  try{ ctx.drawImage(logo, x0, 88, 231, 40); }catch(e){}
+  ctx.fillStyle='#08202f'; ctx.textAlign='right';
+  ctx.font='700 34px "Noto Sans KR"'; ctx.fillText('강사 월간 성적표', x1, 106);
+  ctx.font='500 24px "Noto Sans KR"'; ctx.fillStyle='#4f7d94'; ctx.fillText(getYearMonth().replace('-','년 ')+'월 · 발행 '+today(), x1, 142);
+  ctx.strokeStyle='#93bedb'; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(x0,170); ctx.lineTo(x1,170); ctx.stroke();
+  // 이름 + 종합점수
+  ctx.textAlign='left'; ctx.fillStyle='#08202f'; ctx.font='700 56px "Noto Sans KR"';
+  ctx.fillText(name+' 강사', x0, 260);
+  ctx.font='500 26px "Noto Sans KR"'; ctx.fillStyle='#4f7d94';
+  ctx.fillText('담당 과목 '+d.subjN+'개 · 담당 학생 '+d.stuN+'명', x0, 302);
+  // 점수 박스
+  ctx.fillStyle='#e8f4fd'; ctx.strokeStyle='#93bedb'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.roundRect(x1-320, 210, 320, 110, 16); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#125a8f'; ctx.font='800 58px "DM Mono","Noto Sans KR"'; ctx.textAlign='center';
+  ctx.fillText(Math.round(d.total)+'점', x1-160, 278);
+  ctx.font='600 24px "Noto Sans KR"'; ctx.fillStyle='#28506c';
+  ctx.fillText(d.rk?('전체 '+d.rk.total+'명 중 '+d.rk.rank+'위 (상위 '+d.rk.pct+'%)'):'순위 산출 불가(강사 1명)', x1-160, 310);
+  // 표: 항목별
+  var rows=[
+    ['진도율', Math.round(d.progressAvg)+'%', '×1', d.progressAvg, '담당 과목 진도율 평균'],
+    ['상담 완료율', Math.round(d.consultRate)+'%', '×1', d.consultRate, '학생 '+d.stuN+'명 중 완료 '+d.consultDone+'명'],
+    ['담당 학생', Math.round(d.stuScore)+'점', '×1.5', d.stuScore, '학생 '+d.stuN+'명 ÷ 최다 '+d.maxStu+'명 × 100'],
+    ['과제 수행률', Math.round(d.hwRate)+'%', '×1', d.hwRate, '과제앱 연동']
+  ];
+  if(d.hasBook) rows.push(['교재 걷기', Math.round(d.bookSc.score)+'점', '×1.5', d.bookSc.score, '회수율 '+d.bookSc.rate+'% · 진도 '+(d.bookSc.prog>0?'+':'')+d.bookSc.prog]);
+  if(d.hasDiag) rows.push(['진단지 기한', Math.round(d.diagR)+'%', '×1', d.diagR, '기한 내 발송률']);
+  var y=400;
+  ctx.textAlign='left'; ctx.fillStyle='#08202f'; ctx.font='700 30px "Noto Sans KR"';
+  ctx.fillText('항목별 점수', x0, y); y+=26;
+  ctx.strokeStyle='#d2e7f6'; ctx.lineWidth=2;
+  rows.forEach(function(r){
+    y+=78;
+    ctx.fillStyle='#08202f'; ctx.font='600 27px "Noto Sans KR"'; ctx.fillText(r[0], x0, y-26);
+    ctx.fillStyle='#4f7d94'; ctx.font='500 20px "Noto Sans KR"'; ctx.fillText(r[4], x0, y+4);
+    // 막대
+    var bx=x0+340, bw=x1-340-x0-220;
+    ctx.fillStyle='#d2e7f6'; ctx.beginPath(); ctx.roundRect(bx, y-40, bw, 22, 11); ctx.fill();
+    var v=Math.max(0,Math.min(100,r[3]));
+    ctx.fillStyle= v>=70?'#0a7550' : v>=40?'#a36400' : '#b02e20';
+    if(v>0){ ctx.beginPath(); ctx.roundRect(bx, y-40, Math.max(22,bw*v/100), 22, 11); ctx.fill(); }
+    ctx.fillStyle='#08202f'; ctx.font='700 26px "DM Mono","Noto Sans KR"'; ctx.textAlign='right';
+    ctx.fillText(r[1], x1-120, y-20);
+    ctx.fillStyle='#4f7d94'; ctx.font='600 22px "Noto Sans KR"'; ctx.fillText(r[2], x1-40, y-20);
+    ctx.textAlign='left';
+    ctx.beginPath(); ctx.moveTo(x0, y+22); ctx.lineTo(x1, y+22); ctx.strokeStyle='#e8f4fd'; ctx.stroke();
+  });
+  // 계산식
+  y+=110;
+  ctx.fillStyle='#08202f'; ctx.font='700 30px "Noto Sans KR"'; ctx.fillText('종합점수 계산', x0, y);
+  ctx.fillStyle='#f4fafe'; ctx.strokeStyle='#93bedb'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.roundRect(x0, y+20, x1-x0, 170, 14); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#28506c'; ctx.font='500 26px "Noto Sans KR"';
+  ctx.fillText('기본 점수 = 가중 합계 '+d.weighted.toFixed(1)+' ÷ 가중치합 '+d.wsum+' = '+d.base.toFixed(1)+'점', x0+34, y+72);
+  ctx.fillText('종합점수 = (기본 '+d.base.toFixed(1)+' ×2 + 관리자평가 '+Math.round(d.evalSc)+'점 ×0.5) ÷ 2.5', x0+34, y+118);
+  ctx.fillStyle='#125a8f'; ctx.font='800 34px "Noto Sans KR"';
+  ctx.fillText('= '+Math.round(d.total)+'점', x0+34, y+166);
+  // 추가 지표
+  y+=250;
+  ctx.fillStyle='#08202f'; ctx.font='700 30px "Noto Sans KR"'; ctx.fillText('추가 지표', x0, y);
+  ctx.font='500 26px "Noto Sans KR"'; ctx.fillStyle='#28506c';
+  ctx.fillText('관리자 평가: '+Math.round(d.evalSc)+'점', x0, y+50);
+  if(d.prq) ctx.fillText('진도 수정 요청: '+d.prq.count+'건 · 수정 적은 순위 '+d.prq.rank+'위 / '+d.prq.total+'명', x0, y+94);
+  // 푸터
+  ctx.strokeStyle='#93bedb'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x0,H-140); ctx.lineTo(x1,H-140); ctx.stroke();
+  ctx.fillStyle='#4f7d94'; ctx.font='500 22px "Noto Sans KR"'; ctx.textAlign='center';
+  ctx.fillText('루트탑 교무실 · 본 성적표는 학원 내부 자료로 외부 반출을 금합니다', W/2, H-96);
+  return cv;
+}
+// 여러 장 캔버스 → 한 PDF
+function _canvasesToPdfBlob(cvs){
+  var parts=[], pos=0, objOff={};
+  function push(s){ parts.push(s); pos+=s.length; }
+  function obj(n,s){ objOff[n]=pos; push(n+' 0 obj'+s+'endobj\n'); }
+  push('%PDF-1.4\n');
+  var nP=cvs.length, kids=[];
+  for(var i=0;i<nP;i++) kids.push((3+i*3)+' 0 R');
+  obj(1,'<</Type/Catalog/Pages 2 0 R>>');
+  obj(2,'<</Type/Pages/Kids['+kids.join(' ')+']/Count '+nP+'>>');
+  cvs.forEach(function(cv,i){
+    var W=cv.width,H=cv.height;
+    var wpt=(W*72/150).toFixed(2), hpt=(H*72/150).toFixed(2);
+    var pn=3+i*3, cn=4+i*3, xn=5+i*3;
+    obj(pn,'<</Type/Page/Parent 2 0 R/MediaBox[0 0 '+wpt+' '+hpt+']/Resources<</XObject<</Im'+i+' '+xn+' 0 R>>>>/Contents '+cn+' 0 R>>');
+    var stream='q '+wpt+' 0 0 '+hpt+' 0 0 cm /Im'+i+' Do Q';
+    obj(cn,'<</Length '+stream.length+'>>stream\n'+stream+'\nendstream ');
+    var jpeg=atob(cv.toDataURL('image/jpeg',0.92).split(',')[1]);
+    objOff[xn]=pos;
+    push(xn+' 0 obj<</Type/XObject/Subtype/Image/Width '+W+'/Height '+H+'/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length '+jpeg.length+'>>stream\n');
+    push(jpeg);
+    push('\nendstream endobj\n');
+  });
+  var maxObj=2+nP*3, xrefPos=pos;
+  var xref='xref\n0 '+(maxObj+1)+'\n0000000000 65535 f \n';
+  for(var n=1;n<=maxObj;n++){ xref+=('0000000000'+objOff[n]).slice(-10)+' 00000 n \n'; }
+  push(xref);
+  push('trailer<</Size '+(maxObj+1)+'/Root 1 0 R>>\nstartxref\n'+xrefPos+'\n%%EOF');
+  var total=0; parts.forEach(function(s){ total+=s.length; });
+  var bytes=new Uint8Array(total), q=0;
+  parts.forEach(function(s){ for(var i=0;i<s.length;i++) bytes[q++]=s.charCodeAt(i)&0xFF; });
+  return new Blob([bytes],{type:'application/pdf'});
+}
+function dlTeacherReport(nameEnc){
+  if(!isAdminLevel()){ toast('관리자 이상만 받을 수 있어요','var(--rd)'); return; }
+  var name=decodeURIComponent(nameEnc);
+  try{
+    var blob=_canvasesToPdfBlob([_drawTeacherReport(name)]);
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='성적표_'+name+'_'+getYearMonth()+'.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    try{ logChange('강사 성적표 PDF', name+' '+getYearMonth()); }catch(e){}
+    toast(name+' 성적표 PDF 저장됨 ✓','var(--g)');
+  }catch(e){ toast('생성 실패: '+(e&&e.message?e.message:e),'var(--rd)'); }
+}
+function dlAllTeacherReports(){
+  if(!isAdminLevel()){ toast('관리자 이상만 받을 수 있어요','var(--rd)'); return; }
+  var T=(DB.cfg.teachers||[]).filter(function(t){return t&&t.name;});
+  if(!T.length){ toast('등록된 강사가 없어요','var(--rd)'); return; }
+  try{
+    var cvs=T.map(function(t){ return _drawTeacherReport(t.name); });
+    var blob=_canvasesToPdfBlob(cvs);
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download='강사성적표_전체_'+getYearMonth()+'.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    try{ logChange('강사 성적표 PDF', '전체 '+T.length+'명 '+getYearMonth()); }catch(e){}
+    toast('강사 '+T.length+'명 성적표 PDF 저장됨 ✓','var(--g)');
+  }catch(e){ toast('생성 실패: '+(e&&e.message?e.message:e),'var(--rd)'); }
+}
+function openTReport(){
+  if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
+  var ex=document.getElementById('ov-treport'); if(ex) ex.remove();
+  var T=(DB.cfg.teachers||[]).filter(function(t){return t&&t.name;});
+  var chips=T.length?T.map(function(t){
+    return '<button onclick="dlTeacherReport(\''+encodeURIComponent(t.name)+'\')" style="font-size:12.5px;font-weight:700;color:var(--acc);background:var(--s2);border:1px solid var(--acc);border-radius:16px;padding:8px 16px;cursor:pointer;margin:0 6px 8px 0">'+dEsc(t.name)+'</button>';
+  }).join(''):'<div style="font-size:12px;color:var(--t3);padding:8px 0">등록된 강사가 없어요</div>';
+  var h='<div class="ov" id="ov-treport" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">📄 강사 성적표 ('+getYearMonth().replace('-','년 ')+'월)</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">강사를 누르면 해당 강사의 이번 달 성적표가 PDF로 저장됩니다. 매월 20일까지의 점수가 그 달 기준이니 20일 이후 받는 것을 권장해요.</div>'
+    +'<div style="display:flex;flex-wrap:wrap;margin-bottom:8px">'+chips+'</div>'
+    +(T.length?'<button class="btn" onclick="dlAllTeacherReports()">📄 전체 강사 한 번에 받기 ('+T.length+'명 · 1명 1장)</button>':'')
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-treport\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
 }
 function openLogoDl(){
   var ex=document.getElementById('ov-logodl'); if(ex) ex.remove();
