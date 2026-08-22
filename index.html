@@ -3935,6 +3935,31 @@ function loadHwData(cb){if(hwData&&Date.now()-hwDataT<60000){if(cb)cb(hwData);re
 // ── 학부모·강사 메시지 → 문자상담 자동 동기화 (날짜별 1건) ──
 function _msgDateStr(ts){var d=new Date(ts);var p=function(n){return n<10?'0'+n:''+n;};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
 function _msgTimeStr(ts){var d=new Date(ts);var p=function(n){return n<10?'0'+n:''+n;};return p(d.getHours())+':'+p(d.getMinutes());}
+// 날짜 + n개월 (말일 보정)
+function _addMonths(ds, n){
+  var d=new Date(ds+'T00:00:00'); if(isNaN(d)) return ds;
+  var day=d.getDate();
+  d.setMonth(d.getMonth()+n);
+  if(d.getDate()!==day) d.setDate(0); // 말일 넘어가면 그 달 말일로
+  return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2);
+}
+// 과제앱 상담 → 2개월 주기 다음 상담 기한 + 일정 자동 등록
+function syncConsultDue(stu, baseDate){
+  if(!stu || !baseDate) return false;
+  var due=_addMonths(baseDate, 2);
+  if(stu.nextConsultDate && stu.nextConsultDate>=due) return false; // 이미 같거나 더 뒤의 기한이 있음
+  stu.nextConsultDate=due;
+  if(!DB.cfg) DB.cfg={}; if(!Array.isArray(DB.cfg.events)) DB.cfg.events=[];
+  // 학생당 자동 상담 일정은 1개만 유지 (이전 자동 등록분 제거 후 재등록)
+  DB.cfg.events = DB.cfg.events.filter(function(e){ return !(e.auto==='consult' && e.stuName===stu.name); });
+  var ev={ id:'ec'+Date.now()+Math.random().toString(36).slice(2,6), date:due,
+    title:'📞 '+stu.name+' 정기 상담 기한', memo:'과제앱 상담('+baseDate+') 기준 · 2개월 주기 자동 등록',
+    by:'자동', ts:Date.now(), notify:true, auto:'consult', stuName:stu.name };
+  if(stu.teacher) ev.dl={teachers:[stu.teacher], status:{}}; // 담당 강사 기한 체크 대상으로 연결
+  DB.cfg.events.push(ev);
+  try{ logChange('상담 기한 자동 등록', stu.name+' → '+due); }catch(e){}
+  return true;
+}
 function importMsgConsult(){
   loadHwData(function(d){
     if(!d||!d.fields) return;
@@ -3975,8 +4000,20 @@ function importMsgConsult(){
       } else {
         stu.consultHistory.push({date:g.date, counselor:counselor, method:'문자상담', mood:'', risk:'', rstat:'', note:note, msgSync:true});
         changed = true; touched[g.name]=1;
+        // 새 과제앱 상담 → 2개월 뒤 다음 상담 기한 + 일정 알림 자동 등록
+        if(!window._newConsultDates) window._newConsultDates={};
+        if(!window._newConsultDates[g.name] || window._newConsultDates[g.name]<g.date) window._newConsultDates[g.name]=g.date;
       }
     });
+    // 새로 들어온 상담 기준으로 기한·일정 갱신
+    if(window._newConsultDates){
+      Object.keys(window._newConsultDates).forEach(function(nm){
+        var stu=DB.stu.find(function(s){ return s.name===nm; });
+        if(stu) syncConsultDue(stu, window._newConsultDates[nm]);
+      });
+      window._newConsultDates=null;
+      if(typeof curTab!=='undefined' && curTab==='calendar' && typeof renderCal==='function'){ try{ renderCal(); }catch(e){} }
+    }
     if(changed){
       DB.stu.forEach(function(s){ if(touched[s.name] && s.consultHistory) s.consultHistory.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); }); });
       saveAll();
