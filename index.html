@@ -5963,6 +5963,7 @@ function renderAdminHome() {
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
+     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button></div>':'')
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
@@ -7571,6 +7572,158 @@ function dlLogoAs(variant, fmt){
     document.body.appendChild(a); a.click(); a.remove();
     toast((LOGO_CROPS[variant].label)+' '+(fmt==='pdf'?'PDF':'PNG')+' 저장됨 ✓','var(--g)');
   }catch(e){ toast('저장 실패: '+(e&&e.message?e.message:e),'var(--rd)'); }
+}
+// ═══ 인사 관리: 입사일·이메일·급여명세서·연차 메일 (원장·행정팀) ═══
+function hrPeople(){
+  var out=[];
+  ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(p){ if(p&&p.name) out.push({role:'staff', lb:'행정팀', p:p}); });
+  ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(p){ if(p&&p.name) out.push({role:'admin', lb:'관리자', p:p}); });
+  ((DB.cfg&&DB.cfg.teachers)||[]).forEach(function(p){ if(p&&p.name) out.push({role:'teacher', lb:'강사', p:p}); });
+  return out;
+}
+function hrFind(role,name){
+  var list = role==='staff'?(DB.cfg.staff||[]) : role==='admin'?(DB.cfg.admins||[]) : (DB.cfg.teachers||[]);
+  return list.find(function(x){ return x && x.name===name; });
+}
+// 근속 계산: {years, totalMonths, next(다가올 주년 N), nextDate, daysLeft}
+function hrTenure(hd){
+  if(!hd) return null;
+  var s=new Date(hd+'T00:00:00'); if(isNaN(s)) return null;
+  var now=new Date(); now.setHours(0,0,0,0);
+  if(s>now) return null;
+  var years=now.getFullYear()-s.getFullYear();
+  var a=new Date(s); a.setFullYear(s.getFullYear()+years);
+  if(a>now) years--;
+  var next=years+1;
+  var nd=new Date(s); nd.setFullYear(s.getFullYear()+next);
+  var daysLeft=Math.round((nd-now)/864e5);
+  var months=(now.getFullYear()-s.getFullYear())*12+(now.getMonth()-s.getMonth());
+  if(now.getDate()<s.getDate()) months--;
+  return {years:years, totalMonths:months, next:next,
+    nextDate:nd.getFullYear()+'-'+('0'+(nd.getMonth()+1)).slice(-2)+'-'+('0'+nd.getDate()).slice(-2), daysLeft:daysLeft};
+}
+function hrSet(role,nameEnc,field,val){
+  var p=hrFind(role,decodeURIComponent(nameEnc)); if(!p) return;
+  p[field]=(val||'').trim();
+  saveAll();
+  try{ logChange('인사 정보 수정', p.name+' '+(field==='hireDate'?'입사일':'이메일')); }catch(e){}
+  if(field==='hireDate') openHRModal();  // 근속 표시 갱신
+}
+function _openMail(url){ try{ location.href=url; }catch(e){} }
+function _won(n){ n=Number(n)||0; return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+function openHRModal(){
+  if(!isOwnerLevel()){ toast('원장·행정팀만 이용할 수 있어요','var(--rd)'); return; }
+  var ex=document.getElementById('ov-hr'); if(ex) ex.remove();
+  var rows=hrPeople().map(function(o){
+    var p=o.p, ne=encodeURIComponent(p.name);
+    var t=hrTenure(p.hireDate);
+    var tenTxt='', due=false;
+    if(t){
+      due = t.daysLeft<=60;
+      tenTxt='근속 '+(t.years>0?t.years+'년 ':'')+(t.totalMonths%12)+'개월 · '+t.next+'주년 '+t.nextDate+' (D-'+t.daysLeft+')';
+    }
+    return '<div style="padding:11px 0;border-bottom:1px solid var(--s2)">'
+      +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'
+        +'<span style="font-size:13.5px;font-weight:800;color:var(--te)">'+dEsc(p.name)+' <span style="font-size:10.5px;color:var(--t3);font-weight:600">'+o.lb+'</span></span>'
+        +(due?'<span style="font-size:10px;font-weight:800;color:#fff;background:var(--am);padding:2px 8px;border-radius:10px">🎉 '+t.next+'주년 D-'+t.daysLeft+' · 연차 정리 필요</span>':'')
+      +'</div>'
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:5px">'
+        +'<input type="date" value="'+dEsc(p.hireDate||'')+'" onchange="hrSet(\''+o.role+'\',\''+ne+'\',\'hireDate\',this.value)" style="font-size:12px;padding:6px 8px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--te)" title="입사일">'
+        +'<input type="email" placeholder="이메일 주소" value="'+dEsc(p.email||'')+'" onchange="hrSet(\''+o.role+'\',\''+ne+'\',\'email\',this.value)" style="flex:1;min-width:150px;font-size:12px;padding:6px 8px;border:1px solid var(--s3);border-radius:8px;background:var(--s1);color:var(--te)">'
+      +'</div>'
+      +(tenTxt?'<div style="font-size:11px;color:'+(due?'var(--am)':'var(--t2)')+';font-weight:600;margin-bottom:6px">'+tenTxt+'</div>':'<div style="font-size:11px;color:var(--t3);margin-bottom:6px">입사일을 입력하면 근속·주년이 자동 계산됩니다</div>')
+      +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+        +'<button onclick="openPayslip(\''+o.role+'\',\''+ne+'\')" style="font-size:11.5px;font-weight:700;color:var(--g);background:var(--s2);border:1px solid var(--g);border-radius:8px;padding:6px 12px;cursor:pointer">💰 급여명세서 메일</button>'
+        +'<button onclick="hrAnnivMail(\''+o.role+'\',\''+ne+'\')" style="font-size:11.5px;font-weight:700;color:'+(due?'#fff':'var(--am)')+';background:'+(due?'var(--am)':'var(--s2)')+';border:1px solid var(--am);border-radius:8px;padding:6px 12px;cursor:pointer">📧 연차·추가근로 정리 메일</button>'
+      +'</div>'
+      +'</div>';
+  }).join('');
+  var h='<div class="ov" id="ov-hr" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">👥 인사 관리</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.5">입사일·이메일을 입력하면 자동 저장됩니다. 주년 두 달 전부터 연차 정리 알림이 표시되고, 메일 버튼을 누르면 내용이 완성된 메일이 자동 작성됩니다.</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 14px;margin-bottom:12px;max-height:420px;overflow:auto">'
+    +(rows||'<div style="padding:14px;text-align:center;color:var(--t3);font-size:12px">등록된 직원·강사가 없어요</div>')
+    +'</div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-hr\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+// 급여명세서 작성 → 메일 자동 작성
+function openPayslip(role,nameEnc){
+  var p=hrFind(role,decodeURIComponent(nameEnc)); if(!p) return;
+  if(!p.email){ toast('먼저 이메일 주소를 입력하세요','var(--rd)'); return; }
+  var ex=document.getElementById('ov-pay'); if(ex) ex.remove();
+  var pay=p.pay||{};
+  var ym=getYearMonth();
+  var h='<div class="ov" id="ov-pay" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">💰 급여명세서 — '+dEsc(p.name)+'</div>'
+    +'<label class="fl">지급월</label><input class="fi" id="pay-ym" type="month" value="'+ym+'">'
+    +'<label class="fl">기본급 (원)</label><input class="fi" id="pay-base" type="number" value="'+(pay.base||'')+'" placeholder="예: 2500000">'
+    +'<label class="fl">수당 (원)</label><input class="fi" id="pay-allow" type="number" value="'+(pay.allow||'')+'" placeholder="추가 수업·성과 수당 등">'
+    +'<label class="fl">공제 (원)</label><input class="fi" id="pay-deduct" type="number" value="'+(pay.deduct||'')+'" placeholder="4대보험·세금 등">'
+    +'<label class="fl">메모 (선택)</label><textarea class="fi" id="pay-memo" rows="2" placeholder="예: 8월 특강 수당 포함"></textarea>'
+    +'<button class="btn" onclick="sendPayslip(\''+role+'\',\''+nameEnc+'\')">📧 명세서 메일 작성 ('+dEsc(p.email)+')</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-pay\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function sendPayslip(role,nameEnc){
+  var p=hrFind(role,decodeURIComponent(nameEnc)); if(!p||!p.email) return;
+  var ym=document.getElementById('pay-ym').value||getYearMonth();
+  var base=Number(document.getElementById('pay-base').value)||0;
+  var allow=Number(document.getElementById('pay-allow').value)||0;
+  var deduct=Number(document.getElementById('pay-deduct').value)||0;
+  var memo=(document.getElementById('pay-memo').value||'').trim();
+  if(!base && !allow){ toast('기본급 또는 수당을 입력하세요','var(--rd)'); return; }
+  p.pay={base:base, allow:allow, deduct:deduct};  // 다음 달 재사용
+  saveAll();
+  var net=base+allow-deduct;
+  var ymTxt=ym.replace('-','년 ')+'월';
+  var body='[루트탑 교무실] '+ymTxt+' 급여명세서\n\n'
+    +p.name+' 님께\n\n'
+    +'지급월: '+ymTxt+'\n'
+    +'기본급: '+_won(base)+'원\n'
+    +'수당: '+_won(allow)+'원\n'
+    +'공제: '+_won(deduct)+'원\n'
+    +'----------------------\n'
+    +'실지급액: '+_won(net)+'원\n'
+    +(memo?'\n비고: '+memo+'\n':'')
+    +'\n문의는 행정팀으로 회신해 주세요.\n루트탑 교무실 드림';
+  _openMail('mailto:'+encodeURIComponent(p.email)+'?subject='+encodeURIComponent('[루트탑] '+ymTxt+' 급여명세서 — '+p.name)+'&body='+encodeURIComponent(body));
+  try{ logChange('급여명세서 메일', p.name+' '+ym); }catch(e){}
+  var m=document.getElementById('ov-pay'); if(m) m.remove();
+  toast('급여명세서 메일이 작성됐어요 — 메일 앱에서 보내기를 누르세요','var(--g)');
+}
+// 주년 전 연차·추가근로 정리 메일
+function hrAnnivMail(role,nameEnc){
+  var p=hrFind(role,decodeURIComponent(nameEnc)); if(!p) return;
+  if(!p.email){ toast('먼저 이메일 주소를 입력하세요','var(--rd)'); return; }
+  if(!p.hireDate){ toast('먼저 입사일을 입력하세요','var(--rd)'); return; }
+  var t=hrTenure(p.hireDate); if(!t) return;
+  var body='[루트탑 교무실] 근속 '+t.next+'주년 안내 및 연차·추가근로 정리 요청\n\n'
+    +p.name+' 님께\n\n'
+    +'입사일('+p.hireDate+') 기준으로 '+t.nextDate+'에 근속 '+t.next+'주년이 됩니다. (D-'+t.daysLeft+')\n'
+    +'주년 전에 아래 내용을 정리하여 이 메일에 회신해 주세요.\n\n'
+    +'1. 연차\n   - 발생: __일\n   - 사용: __일\n   - 잔여: __일\n\n'
+    +'2. 추가 근로\n   - 총 __시간\n   - 내역: \n\n'
+    +'3. 기타 정리가 필요한 사항:\n\n'
+    +'회신 주시면 행정팀 확인 후 급여·연차에 반영됩니다.\n루트탑 교무실 드림';
+  _openMail('mailto:'+encodeURIComponent(p.email)+'?subject='+encodeURIComponent('[루트탑] 근속 '+t.next+'주년 연차·추가근로 정리 요청 — '+p.name)+'&body='+encodeURIComponent(body));
+  try{ logChange('연차 정리 메일', p.name+' '+t.next+'주년 (D-'+t.daysLeft+')'); }catch(e){}
+  toast('연차·추가근로 정리 메일이 작성됐어요 — 메일 앱에서 보내기를 누르세요','var(--g)');
+}
+// 홈 화면: 주년 60일 전 인사 알림 카드
+function hrDueCardHTML(){
+  try{
+    var due=hrPeople().map(function(o){ var t=hrTenure(o.p.hireDate); return t?{name:o.p.name, t:t}:null; })
+      .filter(function(x){ return x && x.t.daysLeft<=60; })
+      .sort(function(a,b){ return a.t.daysLeft-b.t.daysLeft; });
+    if(!due.length) return '';
+    return '<div onclick="openHRModal()" style="background:var(--aml);border:1.5px solid var(--am);border-radius:var(--r);padding:10px 14px;margin-bottom:10px;cursor:pointer">'
+      +'<div style="font-size:12px;font-weight:800;color:var(--am);margin-bottom:3px">🎉 인사 알림 — 주년 임박 (연차·추가근로 정리)</div>'
+      +'<div style="font-size:11.5px;color:var(--te);line-height:1.6">'+due.map(function(x){ return dEsc(x.name)+' '+x.t.next+'주년 D-'+x.t.daysLeft; }).join(' · ')+'</div>'
+      +'</div>';
+  }catch(e){ return ''; }
 }
 // ═══ 강사별 월간 성적표 PDF ═══
 // 강사 점수 구성요소 (calcMyRank과 동일 산식)
