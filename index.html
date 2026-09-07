@@ -60,6 +60,50 @@ var _FB = {
   projectId: "routetop-app",
   baseUrl: "https://firestore.googleapis.com/v1/projects/routetop-app/databases/(default)/documents"
 };
+function _sha256(s){
+  function rr(n,x){return (x>>>n)|(x<<(32-n));}
+  var K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  var H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  var b=[],i,j;
+  for(i=0;i<s.length;i++){var c=s.charCodeAt(i);
+    if(c<0x80)b.push(c);
+    else if(c<0x800){b.push(0xc0|(c>>6),0x80|(c&63));}
+    else{b.push(0xe0|(c>>12),0x80|((c>>6)&63),0x80|(c&63));}}
+  var bl=b.length*8; b.push(0x80);
+  while(b.length%64!==56)b.push(0);
+  for(i=7;i>=0;i--)b.push((i<4?(bl/Math.pow(2,8*i))&255:0));
+  var W=new Array(64);
+  for(i=0;i<b.length;i+=64){
+    for(j=0;j<16;j++)W[j]=(b[i+j*4]<<24)|(b[i+j*4+1]<<16)|(b[i+j*4+2]<<8)|b[i+j*4+3];
+    for(j=16;j<64;j++){var s0=rr(7,W[j-15])^rr(18,W[j-15])^(W[j-15]>>>3);var s1=rr(17,W[j-2])^rr(19,W[j-2])^(W[j-2]>>>10);W[j]=(W[j-16]+s0+W[j-7]+s1)|0;}
+    var a=H[0],bb=H[1],c2=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+    for(j=0;j<64;j++){
+      var S1=rr(6,e)^rr(11,e)^rr(25,e), ch=(e&f)^((~e)&g), t1=(h+S1+ch+K[j]+W[j])|0;
+      var S0=rr(2,a)^rr(13,a)^rr(22,a), mj=(a&bb)^(a&c2)^(bb&c2), t2=(S0+mj)|0;
+      h=g;g=f;f=e;e=(d+t1)|0;d=c2;c2=bb;bb=a;a=(t1+t2)|0;}
+    H[0]=(H[0]+a)|0;H[1]=(H[1]+bb)|0;H[2]=(H[2]+c2)|0;H[3]=(H[3]+d)|0;H[4]=(H[4]+e)|0;H[5]=(H[5]+f)|0;H[6]=(H[6]+g)|0;H[7]=(H[7]+h)|0;
+  }
+  var o='';for(i=0;i<8;i++)o+=('00000000'+(H[i]>>>0).toString(16)).slice(-8);
+  return o;
+}
+
+// ═══ 비밀번호 해시 (자동 로그인 평문 저장 제거) ═══
+function _pwh(pw){ return 'h1:'+_sha256('RTacademy$v1$'+String(pw==null?'':pw)); }
+function _pwEq(cred, actual){ return !!(cred && cred.pwh && cred.pwh===_pwh(actual)); }
+function _warnDefaultPw(pw){
+  try{
+    if(String(pw)!=='7193455') return;
+    if(document.getElementById('rt-pwwarn')) return;
+    var d=document.createElement('div'); d.id='rt-pwwarn';
+    d.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#dc2626;color:#fff;padding:12px 16px;font-size:13px;line-height:1.5;text-align:center';
+    d.innerHTML='\u26A0\uFE0F 초기 비밀번호(7193455)를 그대로 사용 중입니다. 공개된 값이라 <b>지금 바로 변경</b>해 주세요. <span id="rt-pwwarn-x" style="margin-left:10px;text-decoration:underline;cursor:pointer">닫기</span>';
+    document.body.appendChild(d);
+    var x=document.getElementById('rt-pwwarn-x'); if(x) x.onclick=function(){ try{ d.parentNode.removeChild(d); }catch(e){} };
+  }catch(e){}
+}
+// 예전 버전이 남긴 평문 비밀번호 즉시 삭제
+try{ var _lg=localStorage.getItem('ac_autologin'); if(_lg && JSON.parse(_lg).pw){ localStorage.removeItem('ac_autologin'); } }catch(e){}
+
 window._db = null;
 window._fsUnsubscribe = null;
 
@@ -7344,13 +7388,16 @@ function _doLoginCore() {
     ME={role:'teacher',name:name};
   }
   err.textContent='';
+  try{ var _we=(loginRole==='owner')?document.getElementById('li-opw'):(loginRole==='staff')?document.getElementById('li-spw'):(loginRole==='admin')?document.getElementById('li-apw'):document.getElementById('li-tpw'); _warnDefaultPw(_we?_we.value:''); }catch(e){}
   // 자동 로그인 정보 저장
   var autoChk = document.getElementById('li-autologin');
   if(autoChk && autoChk.checked){
     var cred = {role:ME.role, name:ME.name, ts:Date.now()};
-    if(loginRole==='owner') cred.pw = document.getElementById('li-opw').value;
-    else if(loginRole==='admin') cred.pw = document.getElementById('li-apw').value;
-    else cred.pw = document.getElementById('li-tpw').value;
+    var _pwEl = (loginRole==='owner') ? document.getElementById('li-opw')
+              : (loginRole==='staff') ? document.getElementById('li-spw')
+              : (loginRole==='admin') ? document.getElementById('li-apw')
+              : document.getElementById('li-tpw');
+    cred.pwh = _pwh(_pwEl ? _pwEl.value : '');
     localStorage.setItem('ac_autologin', JSON.stringify(cred));
   } else {
     localStorage.removeItem('ac_autologin');
@@ -8142,32 +8189,35 @@ function tryAutoLogin() {
   var cred;
   try { cred = JSON.parse(saved); } catch(e){ return false; }
   if(!cred || !cred.role) return false;
+  if(cred.pw){ localStorage.removeItem('ac_autologin'); return false; } // 평문 저장분 폐기
+  if(!cred.pwh) return false;
+  if(cred.pwh===_pwh('7193455')) _warnDefaultPw('7193455');
   if(cred.ts && (Date.now()-cred.ts) > 30*24*60*60000){ localStorage.removeItem('ac_autologin'); return false; } // 30일 만료
 
   if(cred.role==='owner'){
     var ownerPw = DB.cfg.ownerPw||'7193455';
-    if(cred.pw !== ownerPw) return false;
+    if(!_pwEq(cred, ownerPw)) return false;
     ME = {role:'owner', name:'원장'};
   } else if(cred.role==='staff'){
     var staffList = DB.cfg.staff||[];
     var fs = staffList.find(function(s){return s.name===cred.name;});
-    if(!fs || fs.pw !== cred.pw) return false;
+    if(!fs || !_pwEq(cred, fs.pw)) return false;
     ME = {role:'staff', name:fs.name};
   } else if(cred.role==='admin'){
     var admins = DB.cfg.admins||[];
     var fa = admins.find(function(a){return a.name===cred.name;});
     if(fa){
-      if(fa.pw !== cred.pw) return false;
+      if(!_pwEq(cred, fa.pw)) return false;
       ME = {role:'admin', name:fa.name};
     } else {
-      if(!DB.cfg.adminPw || cred.pw !== DB.cfg.adminPw) return false;
+      if(!DB.cfg.adminPw || !_pwEq(cred, DB.cfg.adminPw)) return false;
       ME = {role:'admin', name:'관리자'};
     }
   } else if(cred.role==='teacher'){
     var t = (DB.cfg.teachers||[]).find(function(t){return t.name===cred.name;});
     if(!t) return false;
     var tPw = t.pw||'7193455';
-    if(tPw !== cred.pw) return false;
+    if(!_pwEq(cred, tPw)) return false;
     ME = {role:'teacher', name:cred.name};
   } else {
     return false;
