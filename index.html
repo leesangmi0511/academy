@@ -1142,7 +1142,11 @@ svg.ic{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:2;strok
     <label class="fl">납부 예정일 (매월 며칠)</label>
     <input class="fi" id="tset-dueday" type="number" inputmode="numeric" min="1" max="31" placeholder="예: 5">
     <label class="fl">학부모 연락처</label>
-    <input class="fi" id="tset-phone" type="tel" inputmode="numeric" placeholder="예: 01012345678">
+    <div style="display:flex;gap:6px;align-items:stretch">
+      <input class="fi" id="tset-phone" type="tel" inputmode="numeric" placeholder="예: 01012345678" style="flex:1;margin-bottom:0">
+      <button id="tset-phone-reveal" onclick="tsetRevealPhone()" type="button" style="flex-shrink:0;font-size:12px;font-weight:700;color:var(--acc);background:var(--s2);border:1px solid var(--acc);border-radius:var(--rs);padding:0 12px;cursor:pointer">👁 번호 보기</button>
+    </div>
+    <div style="font-size:10px;color:var(--t3);margin:3px 0 8px">＊ 번호 보기를 누르면 열람 기록이 남습니다</div>
     <label class="fl">결제 링크 (선택)</label>
     <input class="fi" id="tset-link" type="url" placeholder="토스/카카오페이 결제 링크 붙여넣기">
     <div style="font-size:11px;color:var(--t3);margin:6px 0 14px;line-height:1.6">
@@ -1322,7 +1326,8 @@ function saveAll() {
     // 무거운 로컬 저장(수만 개 직렬화)을 debounce 안으로 → 등록/편집 클릭이 즉시 반응
     try{ localStorage.setItem('ac_cfg', JSON.stringify(DB.cfg)); }catch(_e){}
     try{ localStorage.setItem('ac_subj', JSON.stringify(DB.subj)); }catch(_e){}
-    try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu)); }catch(_e){}
+    // 보안: 기기 저장 사본에는 학생·학부모 전화번호를 남기지 않음 (서버 원본에는 유지)
+    try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu.map(function(s){ var c=Object.assign({},s); delete c.phone; if(c.tuition){ c.tuition=Object.assign({},c.tuition); delete c.tuition.phone; } return c; }))); }catch(_e){}
     try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
     var _ver = Date.now();
     if(_tbReady){
@@ -3875,15 +3880,31 @@ function toggleTuitionPaid(idx) {
 }
 
 // 수강료 설정 모달
+var _tsetRealPhone='';
+function _maskPhone(p){ p=String(p||''); if(p.length<8) return p?'*'.repeat(p.length):''; return p.slice(0,3)+'*'.repeat(Math.max(0,p.length-7))+p.slice(-4); }
 function openTuitionSet(idx) {
   var s = DB.stu[idx];
   document.getElementById('tset-idx').value = idx;
   document.getElementById('tset-name').textContent = s.name;
   document.getElementById('tset-amount').value = (s.tuition && s.tuition.amount) ? s.tuition.amount : '';
   document.getElementById('tset-dueday').value = (s.tuition && s.tuition.dueDay) ? s.tuition.dueDay : '';
-  document.getElementById('tset-phone').value = (s.tuition && s.tuition.phone) ? s.tuition.phone : (s.phone || '');
+  // 전화번호는 기본 마스킹 표시 — [번호 보기]를 눌러야 실번호가 보이고 열람 기록이 남음
+  _tsetRealPhone = (s.tuition && s.tuition.phone) ? s.tuition.phone : (s.phone || '');
+  var pi=document.getElementById('tset-phone');
+  if(_tsetRealPhone){ pi.value=_maskPhone(_tsetRealPhone); pi.readOnly=true; }
+  else { pi.value=''; pi.readOnly=false; }
+  var rb=document.getElementById('tset-phone-reveal');
+  if(rb) rb.style.display=_tsetRealPhone?'':'none';
   document.getElementById('tset-link').value = (s.tuition && s.tuition.payLink) ? s.tuition.payLink : '';
   openModal('ov-tuition-set');
+}
+function tsetRevealPhone(){
+  var idx=parseInt(document.getElementById('tset-idx').value);
+  var s=DB.stu[idx]; if(!s) return;
+  var pi=document.getElementById('tset-phone');
+  pi.value=_tsetRealPhone; pi.readOnly=false;
+  var rb=document.getElementById('tset-phone-reveal'); if(rb) rb.style.display='none';
+  try{ logChange('학부모 전화 열람', s.name); }catch(e){}
 }
 
 function saveTuitionSet() {
@@ -3893,7 +3914,8 @@ function saveTuitionSet() {
   var dueDay = parseInt(document.getElementById('tset-dueday').value) || 0;
   var link = document.getElementById('tset-link').value.trim();
 
-  var phone = document.getElementById('tset-phone').value.trim().replace(/[^0-9]/g,'');
+  var _pi=document.getElementById('tset-phone');
+  var phone = _pi.readOnly ? _tsetRealPhone : _pi.value.trim().replace(/[^0-9]/g,'');
   if (!s.tuition) s.tuition = { paidMonths: {} };
   s.tuition.amount = amount;
   s.tuition.dueDay = dueDay;
