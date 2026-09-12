@@ -1944,7 +1944,7 @@ function openWdSync(){
   document.getElementById('wds-date').value=today();
   document.getElementById('wds-list').innerHTML='<div class="empty">과제앱 명단 불러오는 중...</div>';
   openModal('ov-wdsync');
-  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY).then(function(r){return r.json();}).then(function(doc){
+  hwFetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY).then(function(r){return r.json();}).then(function(doc){
     var users=(doc.fields&&doc.fields.users&&doc.fields.users.arrayValue&&doc.fields.users.arrayValue.values)||[];
     var active={};
     users.forEach(function(u){var f=u.mapValue&&u.mapValue.fields; if(f&&f.role&&f.role.stringValue==='student'&&f.name) active[f.name.stringValue]=true;});
@@ -1980,7 +1980,7 @@ function confirmWdSync(){
 // 과제앱 명단에서 사라진 학생 = 자동 퇴원 처리 (동기화한 날을 퇴원일로)
 function autoWdSync(){
   toast('과제앱 명단 확인 중...');
-  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY).then(function(r){return r.json();}).then(function(doc){
+  hwFetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY).then(function(r){return r.json();}).then(function(doc){
     var users=(doc.fields&&doc.fields.users&&doc.fields.users.arrayValue&&doc.fields.users.arrayValue.values)||[];
     var active={};
     users.forEach(function(u){var f=u.mapValue&&u.mapValue.fields; if(f&&f.role&&f.role.stringValue==='student'&&f.name) active[f.name.stringValue]=true;});
@@ -2699,7 +2699,7 @@ function examPublish(){
     Object.keys(existing).forEach(function(k){ body.fields[k]=existing[k]; }); // 기존 필드 모두 보존
     body.fields.examShared = _FS._toFS(shared);
     body.fields.lastUpdated = { stringValue:new Date().toISOString() };
-    fetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
+    hwFetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY, { method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) })
       .then(function(r){ return r.json(); })
       .then(function(d){
         if(d && d.name){ if(out) out.innerHTML='<div style="margin-top:10px;padding:10px 12px;background:var(--gl);border-radius:9px;font-size:12.5px;color:var(--g);font-weight:700">✓ '+names.length+'명에게 게시됐어요. 학생·학부모 앱에서 확인할 수 있습니다.</div>'; toast('✓ '+names.length+'명 게시 완료','var(--g)'); }
@@ -3977,7 +3977,7 @@ function setTFilter(name) {
 
 var HW_API='https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(default)/documents/appData/main';
 var HW_KEY='AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
-function loadHwData(cb){if(hwData&&Date.now()-hwDataT<60000){if(cb)cb(hwData);return;}hwDataT=Date.now();fetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
+function loadHwData(cb){if(hwData&&Date.now()-hwDataT<60000){if(cb)cb(hwData);return;}hwDataT=Date.now();hwFetch(HW_API+'?key='+HW_KEY).then(function(r){return r.json();}).then(function(d){hwData=d;if(cb)cb(d);}).catch(function(){if(cb)cb(null);});}
 
 // ── 학부모·강사 메시지 → 문자상담 자동 동기화 (날짜별 1건) ──
 function _msgDateStr(ts){var d=new Date(ts);var p=function(n){return n<10?'0'+n:''+n;};return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
@@ -4422,11 +4422,32 @@ var EVAL_ITEMS = [
 
 // ═══ 과제 앱 학생·강사 명단 동기화 ═══
 var HW_SYNC_BASE = 'https://firestore.googleapis.com/v1/projects/rt-hw-app/databases/(default)/documents';
+// 과제앱 프로젝트용 익명 인증 (보안 규칙이 잠긴 뒤에도 연동이 동작하도록)
+var _hwAuth = { _tok:null, _exp:0, _p:null };
+function _hwToken(){
+  if(_hwAuth._tok && Date.now() < _hwAuth._exp-60000) return Promise.resolve(_hwAuth._tok);
+  if(_hwAuth._p) return _hwAuth._p;
+  _hwAuth._p = fetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+HW_SYNC_KEY,{
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({returnSecureToken:true})
+  }).then(function(r){return r.json();}).then(function(j){
+    if(!j.idToken) throw new Error('no token');
+    _hwAuth._tok=j.idToken; _hwAuth._exp=Date.now()+parseInt(j.expiresIn||'3600',10)*1000; _hwAuth._p=null; return j.idToken;
+  }).catch(function(){ _hwAuth._p=null; return null; });
+  return _hwAuth._p;
+}
+// 과제앱 요청 공통 래퍼: 익명 토큰을 붙여 호출 (토큰 실패 시 무인증으로 시도)
+function hwFetch(url, opts){
+  opts = opts || {};
+  return _hwToken().then(function(tok){
+    if(tok){ opts.headers = Object.assign({}, opts.headers||{}, {Authorization:'Bearer '+tok}); }
+    return fetch(url, opts);
+  });
+}
 var HW_SYNC_KEY = 'AIzaSyBB0bUWR_fUdoLGjcof7nDGocHMzNhTvzU';
 
 // 과제앱 appData/main 전체 가져오기
 function fetchHwMain(cb) {
-  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
+  hwFetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
     .then(function(r){ return r.json(); })
     .then(function(d){ cb(null, d); })
     .catch(function(e){ cb(e, null); });
@@ -4496,7 +4517,7 @@ function syncMembersToHwApp(cb) {
         lastUpdated: { stringValue: new Date().toISOString() }
       }};
       // 바뀐 필드만 갱신(updateMask) → 과제앱의 진도·진단지·교재 등 다른 데이터는 절대 건드리지 않음
-      fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY + '&updateMask.fieldPaths=users&updateMask.fieldPaths=classList&updateMask.fieldPaths=lastUpdated', {
+      hwFetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY + '&updateMask.fieldPaths=users&updateMask.fieldPaths=classList&updateMask.fieldPaths=lastUpdated', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -4620,7 +4641,7 @@ function importFromHwApp() {
   btn.textContent = '불러오는 중...';
   document.getElementById('import-status').style.display = 'none';
 
-  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
+  hwFetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
   .then(function(r){ return r.json(); })
   .then(function(doc){
     if (!doc.fields) throw new Error('데이터 없음');
@@ -4727,7 +4748,7 @@ function openImportModal() {
   openModal('ov-import');
 
   // 과제앱 인원 미리보기
-  fetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
+  hwFetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY)
   .then(function(r){ return r.json(); })
   .then(function(doc){
     var users = (doc.fields && doc.fields.users && doc.fields.users.arrayValue && doc.fields.users.arrayValue.values) || [];
@@ -7094,7 +7115,7 @@ function createHwHoliday(date, on, cb){
   var body={fields:{holidays:{mapValue:{fields:{}}}}};
   body.fields.holidays.mapValue.fields[date]= on ? {booleanValue:true} : {nullValue:null};
   var fp='holidays.`'+date+'`';
-  fetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY+'&updateMask.fieldPaths='+encodeURIComponent(fp), {
+  hwFetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY+'&updateMask.fieldPaths='+encodeURIComponent(fp), {
     method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
   }).then(function(r){return r.json();}).then(function(d){ if(cb) cb(!!d.name, d); }).catch(function(e){ if(cb) cb(false, e); });
 }
@@ -7103,7 +7124,7 @@ function createHwDiagnostic(name, dueDate, cb){
   var diagObj={id:did, name:name, type:'', dueDate:dueDate, createdAt:Date.now(), students:{}};
   var body={fields:{diagnostics:{mapValue:{fields:{}}}}};
   body.fields.diagnostics.mapValue.fields[did]=_FS._toFS(diagObj);
-  fetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY+'&updateMask.fieldPaths=diagnostics.'+did, {
+  hwFetch(HW_SYNC_BASE+'/appData/main?key='+HW_SYNC_KEY+'&updateMask.fieldPaths=diagnostics.'+did, {
     method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
   }).then(function(r){return r.json();}).then(function(d){ if(cb) cb(!!d.name, d); }).catch(function(e){ if(cb) cb(false, e); });
 }
