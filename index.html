@@ -116,17 +116,103 @@ var _auth = {
     if(!_auth.enabled) return Promise.resolve(null);
     if(_auth._tok && Date.now() < _auth._exp-60000) return Promise.resolve(_auth._tok);
     if(_auth._p) return _auth._p;
-    var url, body, ct;
-    if(_auth._refresh){ url='https://securetoken.googleapis.com/v1/token?key='+_FB.apiKey; ct='application/x-www-form-urlencoded'; body='grant_type=refresh_token&refresh_token='+encodeURIComponent(_auth._refresh); }
-    else { url='https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+_FB.apiKey; ct='application/json'; body=JSON.stringify({returnSecureToken:true}); }
+    var rt=_auth._refresh; if(!rt){ try{ rt=localStorage.getItem('ac_fbrt')||null; }catch(e){} }
+    var url, body, ct, mode;
+    if(rt){ mode='refresh'; url='https://securetoken.googleapis.com/v1/token?key='+_FB.apiKey; ct='application/x-www-form-urlencoded'; body='grant_type=refresh_token&refresh_token='+encodeURIComponent(rt); }
+    else if(_secureOn()){ return Promise.resolve(null); } // 보안 잠금: 익명 토큰 발급 안 함 (로그인 시 실계정 토큰 사용)
+    else { mode='anon'; url='https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+_FB.apiKey; ct='application/json'; body=JSON.stringify({returnSecureToken:true}); }
     _auth._p = fetch(url,{method:'POST',headers:{'Content-Type':ct},body:body}).then(function(r){return r.json();}).then(function(j){
-      var tok=j.idToken||j.id_token, rt=j.refreshToken||j.refresh_token, exp=j.expiresIn||j.expires_in||3600;
+      var tok=j.idToken||j.id_token, nrt=j.refreshToken||j.refresh_token, exp=j.expiresIn||j.expires_in||3600;
       if(!tok) throw new Error('no token');
-      _auth._tok=tok; _auth._refresh=rt||_auth._refresh; _auth._exp=Date.now()+parseInt(exp,10)*1000; _auth._p=null; return tok;
-    }).catch(function(){ _auth._p=null; _auth._refresh=null; return null; });
+      _auth._tok=tok; _auth._refresh=nrt||_auth._refresh; _auth._exp=Date.now()+parseInt(exp,10)*1000; _auth._p=null;
+      return tok;
+    }).catch(function(){
+      _auth._p=null; _auth._refresh=null;
+      if(mode==='refresh'){ try{ localStorage.removeItem('ac_fbrt'); }catch(e){} return _auth.token(); } // 만료 토큰 정리 후 1회 재시도
+      return null;
+    });
     return _auth._p;
   }
 };
+
+// ═══ 서버 보안 잠금: 파이어베이스 실계정 연동 ═══
+var FB_SALT='RTFB$v1$';
+function _fbEmail(role,name){ return 'u'+_sha256(FB_SALT+role+'|'+String(name||'')).slice(0,24)+'@rtacad.app'; }
+function _fbPass(pw){ return 'F!'+_sha256(FB_SALT+'pw|'+String(pw==null?'':pw)); }
+function _idk(path, body){ return fetch('https://identitytoolkit.googleapis.com/v1/accounts:'+path+'?key='+_FB.apiKey,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json();}); }
+function _fbSignIn(email,pass){ return _idk('signInWithPassword',{email:email,password:pass,returnSecureToken:true}); }
+function _fbSignUp(email,pass){ return _idk('signUp',{email:email,password:pass,returnSecureToken:true}); }
+function _secureOn(){ try{ if(localStorage.getItem('ac_secure')==='1') return true; }catch(e){} return !!(typeof DB!=='undefined' && DB && DB.cfg && DB.cfg.secureMode); }
+var _reloadedOnce=false;
+function _reloadDataOnce(){
+  if(_reloadedOnce) return;
+  if(typeof DB!=='undefined' && DB && DB.stu && DB.stu.length) return;
+  _reloadedOnce=true;
+  _FS.get('academy/data').then(function(doc){
+    var d=_FS.docToObj(doc);
+    if(d && d.cfg){
+      DB.cfg=d.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[];
+      DB.subj=d.subj||[]; DB.stu=d.stu||[]; DB.evalHistory=d.evalHistory||{}; DB.withdrawn=d.withdrawn||[];
+      try{ if(d.tbChunks){ _srvTbMeta={n:d.tbChunks, ver:d.tbVer||0, cnt:d.tbCount||0}; } }catch(e){}
+      try{ if(ME) renderHome(); }catch(e){}
+      try{ if(DB.cfg.teachers && DB.cfg.teachers.length) refreshTSel(); }catch(e){}
+    }
+  }).catch(function(){});
+}
+// 앱 로그인 성공 시 파이어베이스 실계정으로도 로그인 (토큰 확보)
+function _fbLogin(role,name,rawPw){
+  try{
+    var em=_fbEmail(role,name), ps=_fbPass(rawPw);
+    _fbSignIn(em,ps).then(function(j){
+      if(j && j.idToken){
+        _auth._tok=j.idToken; _auth._refresh=j.refreshToken||null; _auth._exp=Date.now()+parseInt(j.expiresIn||'3600',10)*1000;
+        try{ localStorage.setItem('ac_fbrt', j.refreshToken||''); }catch(e){}
+        _reloadDataOnce();
+        return;
+      }
+      var msg=(j && j.error && j.error.message)||'';
+      if(msg.indexOf('EMAIL_NOT_FOUND')>=0 || msg.indexOf('INVALID_LOGIN_CREDENTIALS')>=0){
+        if(role==='owner'){
+          _fbSignUp(em,ps).then(function(k){ if(k && k.idToken){ _auth._tok=k.idToken; _auth._refresh=k.refreshToken||null; _auth._exp=Date.now()+3600000; try{ localStorage.setItem('ac_fbrt', k.refreshToken||''); }catch(e){} _reloadDataOnce(); } });
+        } else if(_secureOn()){
+          toast('보안 계정 준비가 필요해요 — 원장님께 [서버 보안 잠금 → 1단계 재실행]을 요청하세요','var(--am)');
+        }
+      } else if(msg.indexOf('INVALID_PASSWORD')>=0 && _secureOn()){
+        toast('보안 계정 비밀번호가 어긋났어요 — 원장님께 [서버 보안 잠금 → 1단계 재실행]을 요청하세요','var(--am)');
+      }
+    }).catch(function(){});
+  }catch(e){}
+}
+// 비밀번호 변경 시 파이어베이스 계정 비밀번호도 함께 교체
+function _fbRotate(role,name,oldPw,newPw){
+  try{
+    if(String(oldPw||'')===String(newPw||'')) return;
+    var em=_fbEmail(role,name);
+    _fbSignIn(em,_fbPass(oldPw)).then(function(j){
+      if(!(j && j.idToken)) return null;
+      return _idk('update',{idToken:j.idToken, password:_fbPass(newPw), returnSecureToken:true});
+    }).then(function(k){
+      if(k && k.idToken && ME && ME.name===name){
+        _auth._tok=k.idToken; _auth._refresh=k.refreshToken||_auth._refresh; _auth._exp=Date.now()+3600000;
+        try{ localStorage.setItem('ac_fbrt', k.refreshToken||''); }catch(e){}
+      }
+    }).catch(function(){});
+  }catch(e){}
+}
+// 새 구성원 추가 시 보안 계정 자동 생성 (보안 모드에서)
+function _fbProvisionOne(role,name,pw){
+  try{
+    if(!_secureOn()) return;
+    var em=_fbEmail(role,name), ps=_fbPass(pw||'7193455');
+    _fbSignIn(em,ps).then(function(j){ return (j&&j.idToken)?j:_fbSignUp(em,ps); }).then(function(j){
+      if(!(j && j.localId)) return;
+      return _auth.token().then(function(tok){
+        if(!tok) return;
+        return fetch(_FB.baseUrl+'/authz/'+j.localId+'?key='+_FB.apiKey,{method:'PATCH',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({fields:{name:{stringValue:String(name)},role:{stringValue:role},at:{integerValue:String(Date.now())}}})});
+      });
+    }).catch(function(){});
+  }catch(e){}
+}
 
 // Firestore REST 래퍼
 var _FS = {
@@ -4931,6 +5017,7 @@ function addAdminToList() {
     toast('이미 등록된 이름이에요','var(--rd)'); return;
   }
   DB.cfg.admins.push({name:name, pw:'7193455', date:today()});
+  try{ _fbProvisionOne('admin', name, '7193455'); }catch(e){}
   logChange('관리자 추가', name);
   saveAll();
   renderAdminListBody();
@@ -4953,6 +5040,7 @@ function changeAdminPw(idx) {
   if(!a) return;
   var pw = document.getElementById('admin-pw-'+idx).value;
   if(!pw) {toast('새 비밀번호를 입력하세요','var(--rd)'); return;}
+  try{ _fbRotate('admin', a.name, a.pw, pw); }catch(e){}
   DB.cfg.admins[idx].pw = pw;
   logChange('관리자 수정', a.name+' 비밀번호 변경');
   saveAll();
@@ -5001,6 +5089,7 @@ function addStaffToList() {
     toast('이미 등록된 이름이에요','var(--rd)'); return;
   }
   DB.cfg.staff.push({name:name, pw:'7193455', date:today()});
+  try{ _fbProvisionOne('staff', name, '7193455'); }catch(e){}
   logChange('행정팀 추가', name);
   saveAll();
   renderStaffListBody();
@@ -5023,6 +5112,7 @@ function changeStaffPw(idx) {
   if(!a) return;
   var pw = document.getElementById('staff-pw-'+idx).value;
   if(!pw) {toast('새 비밀번호를 입력하세요','var(--rd)'); return;}
+  try{ _fbRotate('staff', a.name, a.pw, pw); }catch(e){}
   DB.cfg.staff[idx].pw = pw;
   logChange('행정팀 수정', a.name+' 비밀번호 변경');
   saveAll();
@@ -6051,7 +6141,7 @@ function renderAdminHome() {
      + '</div>'
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
@@ -7445,6 +7535,9 @@ function _doLoginCore() {
   } else {
     localStorage.removeItem('ac_autologin');
   }
+  // 파이어베이스 실계정 로그인 (서버 보안 잠금용 토큰 확보)
+  try{ var _fpEl=(loginRole==='owner')?document.getElementById('li-opw'):(loginRole==='staff')?document.getElementById('li-spw'):(loginRole==='admin')?document.getElementById('li-apw'):document.getElementById('li-tpw');
+       if(_fpEl && _fpEl.value) _fbLogin(ME.role, ME.name, _fpEl.value); }catch(e){}
   document.getElementById('login').style.display='none';
   var _apX=document.getElementById('app'); if(_apX) _apX.style.display='';
   if(isAdminLevel()) document.getElementById('btn-reset').style.display='inline';
@@ -7703,6 +7796,125 @@ function hrSet(role,nameEnc,field,val){
 }
 function _openMail(url){ try{ location.href=url; }catch(e){} }
 function _won(n){ n=Number(n)||0; return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g,','); }
+// ═══ 서버 보안 잠금 마법사 (원장 전용) ═══
+function _slLog(t, col){ var el=document.getElementById('sl-log'); if(el){ el.innerHTML+='<div style="color:'+(col||'var(--t2)')+'">'+t+'</div>'; el.scrollTop=el.scrollHeight; } }
+function _slRulesText(uid){
+  return "rules_version = '2';\n"
+    +"service cloud.firestore {\n"
+    +"  match /databases/{database}/documents {\n"
+    +"    function isOwner() {\n"
+    +"      return request.auth != null && request.auth.uid == '"+uid+"';\n"
+    +"    }\n"
+    +"    function isMember() {\n"
+    +"      return request.auth != null &&\n"
+    +"        (request.auth.uid == '"+uid+"' ||\n"
+    +"         exists(/databases/$(database)/documents/authz/$(request.auth.uid)));\n"
+    +"    }\n"
+    +"    match /academy/{doc} {\n"
+    +"      allow read, write: if isMember();\n"
+    +"    }\n"
+    +"    match /authz/{uid} {\n"
+    +"      allow read: if isMember();\n"
+    +"      allow write: if isOwner();\n"
+    +"    }\n"
+    +"  }\n"
+    +"}";
+}
+function openSecureLock(){
+  if(!(ME && ME.role==='owner')){ toast('원장만 실행할 수 있어요','var(--rd)'); return; }
+  if(Date.now()>=_reauthUntil){ requireReauth(function(){ openSecureLock(); }); return; }
+  var ex=document.getElementById('ov-slock'); if(ex) ex.remove();
+  var on=!!(DB.cfg&&DB.cfg.secureMode);
+  var h='<div class="ov" id="ov-slock" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🛡 서버 보안 잠금</div>'
+    +'<div style="font-size:12px;font-weight:700;text-align:center;margin-bottom:10px;color:'+(on?'var(--g)':'var(--am)')+'">'+(on?'✅ 현재 보안 잠금 사용 중':'⚠ 현재 익명 접근이 가능한 상태')+'</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px;line-height:1.6">아래 3단계를 순서대로 진행하면, 허가된 계정(원장·행정팀·관리자·강사)만 서버 데이터를 읽을 수 있게 잠깁니다.</div>'
+    +'<button class="btn" style="margin-bottom:6px" onclick="slProvision()">1단계 — 구성원 보안 계정 만들기</button>'
+    +'<div id="sl-log" style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:8px 10px;font-size:11px;max-height:130px;overflow:auto;margin-bottom:10px;line-height:1.6">대기 중…</div>'
+    +'<div style="font-size:12px;font-weight:700;margin-bottom:4px">2단계 — 아래 규칙을 파이어베이스에 붙여넣기</div>'
+    +'<textarea class="fi" id="sl-rules" rows="5" readonly style="font-family:monospace;font-size:10px" placeholder="1단계를 먼저 실행하면 규칙 텍스트가 여기 생성됩니다"></textarea>'
+    +'<button class="btn ghost" style="margin-bottom:6px" onclick="var t=document.getElementById(\'sl-rules\');t.select();document.execCommand(\'copy\');toast(\'규칙이 복사됐어요 ✓\',\'var(--g)\')">📋 규칙 복사</button>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:10px;line-height:1.6">console.firebase.google.com 접속 → <b>routetop-app</b> 프로젝트 → Firestore Database → <b>규칙</b> 탭 → 기존 내용을 지우고 붙여넣기 → <b>게시</b></div>'
+    +'<button class="btn" style="background:var(--g);margin-bottom:6px" onclick="slVerify()">3단계 — 잠금 확인 및 적용</button>'
+    +'<div id="sl-vres" style="font-size:12px;font-weight:700;text-align:center;min-height:20px;margin-bottom:8px"></div>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-slock\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function slProvision(){
+  var members=[{role:'owner',name:'원장',pw:(DB.cfg.ownerPw||'7193455')}];
+  ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(s){ if(s&&s.name) members.push({role:'staff',name:s.name,pw:s.pw||'7193455'}); });
+  ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(a&&a.name) members.push({role:'admin',name:a.name,pw:a.pw||'7193455'}); });
+  if(DB.cfg&&DB.cfg.adminPw) members.push({role:'admin',name:'관리자',pw:DB.cfg.adminPw});
+  ((DB.cfg&&DB.cfg.teachers)||[]).forEach(function(t){ if(t&&t.name) members.push({role:'teacher',name:t.name,pw:t.pw||'7193455'}); });
+  var el=document.getElementById('sl-log'); if(el) el.innerHTML='';
+  var ownerTok=null, okN=0, failN=0;
+  var p=Promise.resolve();
+  members.forEach(function(m){
+    p=p.then(function(){
+      var em=_fbEmail(m.role,m.name), ps=_fbPass(m.pw);
+      return _fbSignIn(em,ps).then(function(j){
+        if(j && j.idToken) return j;
+        var msg=(j&&j.error&&j.error.message)||'';
+        if(msg.indexOf('EMAIL_NOT_FOUND')>=0 || msg.indexOf('INVALID_LOGIN_CREDENTIALS')>=0) return _fbSignUp(em,ps);
+        return j;
+      }).then(function(j){
+        if(!(j && j.idToken && j.localId)){
+          failN++; _slLog('✗ '+m.name+' ('+m.role+') — 계정 확인 실패','var(--rd)'); return;
+        }
+        if(m.role==='owner'){
+          ownerTok=j.idToken; window._ownerUid=j.localId;
+          _auth._tok=j.idToken; _auth._refresh=j.refreshToken||null; _auth._exp=Date.now()+3600000;
+          try{ localStorage.setItem('ac_fbrt', j.refreshToken||''); }catch(e){}
+          var ta=document.getElementById('sl-rules'); if(ta) ta.value=_slRulesText(j.localId);
+        }
+        var authTok=ownerTok||j.idToken;
+        return fetch(_FB.baseUrl+'/authz/'+j.localId+'?key='+_FB.apiKey,{method:'PATCH',headers:{'Content-Type':'application/json',Authorization:'Bearer '+authTok},body:JSON.stringify({fields:{name:{stringValue:m.name},role:{stringValue:m.role},at:{integerValue:String(Date.now())}}})})
+          .then(function(r){ if(r.ok){ okN++; _slLog('✓ '+m.name+' ('+m.role+')','var(--g)'); } else { failN++; _slLog('✗ '+m.name+' — 승인 기록 실패 ('+r.status+')','var(--rd)'); } });
+      });
+    });
+  });
+  p.then(function(){
+    _slLog('— 완료: 성공 '+okN+'명'+(failN?' · 실패 '+failN+'명':''), failN?'var(--am)':'var(--g)');
+    if(window._ownerUid) _slLog('2단계로 진행하세요 (규칙 텍스트 생성됨)','var(--acc)');
+    try{ logChange('보안 계정 동기화', '성공 '+okN+' · 실패 '+failN); }catch(e){}
+  });
+}
+function slVerify(){
+  var res=document.getElementById('sl-vres');
+  if(res){ res.textContent='확인 중…'; res.style.color='var(--t2)'; }
+  // (1) 익명 토큰으로 읽기 → 거부되어야 함
+  fetch('https://identitytoolkit.googleapis.com/v1/accounts:signUp?key='+_FB.apiKey,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({returnSecureToken:true})})
+    .then(function(r){return r.json();})
+    .then(function(a){
+      var anonTok=a&&a.idToken;
+      var anonRead = anonTok ? fetch(_FB.baseUrl+'/academy/data?key='+_FB.apiKey+'&mask.fieldPaths=tbVer',{headers:{Authorization:'Bearer '+anonTok}}).then(function(r){return r.status;}) : Promise.resolve(0);
+      return anonRead;
+    })
+    .then(function(anonStatus){
+      // (2) 원장 실계정 토큰으로 읽기 → 되어야 함
+      return _auth.token().then(function(tok){
+        if(!tok) return {anon:anonStatus, own:0};
+        return fetch(_FB.baseUrl+'/academy/data?key='+_FB.apiKey+'&mask.fieldPaths=tbVer',{headers:{Authorization:'Bearer '+tok}}).then(function(r){ return {anon:anonStatus, own:r.status}; });
+      });
+    })
+    .then(function(o){
+      var anonBlocked = (o.anon===403), ownerOk = (o.own===200);
+      if(anonBlocked && ownerOk){
+        DB.cfg.secureMode=true;
+        try{ localStorage.setItem('ac_secure','1'); }catch(e){}
+        saveAll();
+        try{ logChange('서버 보안 잠금', '적용 완료'); }catch(e){}
+        if(res){ res.textContent='✅ 잠금 완료! 허가된 계정만 접근할 수 있습니다.'; res.style.color='var(--g)'; }
+        toast('서버 보안 잠금이 적용됐어요 — 모든 구성원은 한 번씩 다시 로그인해야 합니다','var(--g)');
+      } else if(!anonBlocked){
+        if(res){ res.textContent='⚠ 아직 익명 접근이 허용돼요 — 2단계 규칙 게시를 확인하세요 (익명 응답 '+o.anon+')'; res.style.color='var(--am)'; }
+      } else {
+        if(res){ res.textContent='⚠ 원장 계정 접근이 안 돼요 (응답 '+o.own+') — 1단계를 다시 실행하세요'; res.style.color='var(--rd)'; }
+      }
+    })
+    .catch(function(e){ if(res){ res.textContent='확인 실패: '+e; res.style.color='var(--rd)'; } });
+}
 // ═══ 보안: 민감 기능 재인증 (10분 유효) ═══
 var _reauthUntil=0, _reauthCb=null;
 function requireReauth(cb){
@@ -8396,6 +8608,7 @@ function openSetupModal() {
 function saveOwnerPw() {
   var pw = document.getElementById('owner-pw-input').value.trim();
   if(!pw){toast('비밀번호를 입력하세요','var(--rd)');return;}
+  try{ _fbRotate('owner','원장', DB.cfg.ownerPw||'7193455', pw); }catch(e){}
   DB.cfg.ownerPw = pw;
   saveAll();
   toast('원장 비밀번호가 변경됐어요 ✓');
@@ -8413,6 +8626,7 @@ function saveOwnerPw2() {
   if(!p1){ st.textContent='새 비밀번호를 입력하세요'; return; }
   if(p1.length<4){ st.textContent='4자 이상 입력하세요'; return; }
   if(p1!==p2){ st.textContent='두 비밀번호가 일치하지 않습니다'; return; }
+  try{ _fbRotate('owner','원장', DB.cfg.ownerPw||'7193455', p1); }catch(e){}
   DB.cfg.ownerPw=p1; saveAll(); closeModal('ov-ownerpw'); toast('원장 비밀번호가 변경됐어요 ✓');
 }
 
@@ -8470,8 +8684,8 @@ function fgSave() {
   var e=document.getElementById('fg-e2');
   if(!pw||pw.length<4){e.textContent='4자리 이상으로 입력해 주세요.';return;}
   if(pw!==pw2){e.textContent='비밀번호가 일치하지 않아요.';return;}
-  if(fgRole2==='admin') DB.cfg.adminPw=pw;
-  else DB.cfg.teachers[fgTIdx].pw=pw;
+  if(fgRole2==='admin'){ try{ _fbRotate('admin','관리자',DB.cfg.adminPw,pw); }catch(e){} DB.cfg.adminPw=pw; }
+  else { try{ _fbRotate('teacher', DB.cfg.teachers[fgTIdx].name, DB.cfg.teachers[fgTIdx].pw||'7193455', pw); }catch(e){} DB.cfg.teachers[fgTIdx].pw=pw; }
   saveAll();closeModal('ov-forgot');toast('비밀번호가 변경됐어요 ✓');
 }
 
@@ -8513,6 +8727,7 @@ function saveMgrPw() {
   var st=document.getElementById('mgr-pw-st');
   if(!pw||pw.length<4){st.textContent='4자리 이상으로 입력하세요.';st.style.color='var(--rd)';return;}
   if(pw!==pw2){st.textContent='비밀번호가 일치하지 않아요.';st.style.color='var(--rd)';return;}
+  try{ _fbRotate('admin','관리자', DB.cfg.adminPw, pw); }catch(e){}
   DB.cfg.adminPw=pw;logChange('관리자 수정', '관리자 비밀번호 변경');saveAll();
   document.getElementById('mgr-pw1').value='';document.getElementById('mgr-pw2').value='';
   st.textContent='변경됐어요 ✓';st.style.color='var(--g)';toast('비밀번호 변경됐어요 ✓');
@@ -8529,6 +8744,7 @@ function doAddTeacher() {
   if(DB.cfg.teachers.find(function(t){return t.name===name;})){e.textContent='이미 있는 강사 이름이에요.';return;}
   e.textContent='';
   DB.cfg.teachers.push({name:name,phone:phone,pw:pw});logChange('강사 추가', name);saveAll();
+  try{ _fbProvisionOne('teacher', name, pw); }catch(e){}
   document.getElementById('nt-name').value='';document.getElementById('nt-phone').value='';
   document.getElementById('nt-pw').value='';document.getElementById('nt-pw2').value='';
   toast(name+' 추가됐어요 ✓');renderAccTList();refreshTSel();
@@ -8567,6 +8783,7 @@ function doEditTeacher() {
   if (pw) {
     if (pw.length < 4) { e.textContent = '4자리 이상으로 입력하세요.'; return; }
     if (pw !== pw2) { e.textContent = '비밀번호가 일치하지 않아요.'; return; }
+    try{ _fbRotate('teacher', t.name, t.pw||'7193455', pw); }catch(e){}
     DB.cfg.teachers[i].pw = pw;
   }
 
@@ -8650,6 +8867,7 @@ function saveMyPw() {
   if(DB.cfg.teachers[tIdx].pw!==cur){st.textContent='현재 비밀번호가 틀렸어요.';st.style.color='var(--rd)';return;}
   if(!pw||pw.length<4){st.textContent='4자리 이상으로 입력하세요.';st.style.color='var(--rd)';return;}
   if(pw!==pw2){st.textContent='비밀번호가 일치하지 않아요.';st.style.color='var(--rd)';return;}
+  try{ _fbRotate('teacher', ME.name, cur, pw); }catch(e){}
   DB.cfg.teachers[tIdx].pw=pw;logChange('강사 수정', ME.name+' 비밀번호 변경');saveAll();
   document.getElementById('my-cur').value='';document.getElementById('my-pw1').value='';document.getElementById('my-pw2').value='';
   st.textContent='변경됐어요 ✓';st.style.color='var(--g)';toast('비밀번호 변경됐어요 ✓');
@@ -8903,7 +9121,8 @@ _loadFirebase().then(function() {
   function setFbSt(msg,color){var el=document.getElementById('fb-status');if(el){el.textContent=msg;el.style.color=color||'var(--t3)';}}
   function applyDB(d) {
     if(d&&d.cfg){
-      DB.cfg=d.cfg;if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
+      DB.cfg=d.cfg;
+      try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){}if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
       DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","admins":[],"teachers":[]}')
@@ -8969,7 +9188,8 @@ _loadFirebase().then(function() {
       if (!d2) return;
       // 최근 15초 내 로컬 변경이 있으면 폴링 데이터로 덮어쓰지 않음 (방금 추가한 내용 보호)
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
-      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[]; if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
+      DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[];
+      try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){} if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
       var _pcnt=(d2 && d2.tbCount) ? d2.tbCount : 0;
