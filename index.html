@@ -5491,6 +5491,66 @@ function saveAdminEval() {
   renderAdminHome();
 }
 
+// ═══ 담임 교체 기록 (사유 선택 → 강사 점수 반영) ═══
+// resp:true = 이전 담임 귀책 사유 → '담임유지' 점수에서 감점 반영
+var TCHG_REASONS=[
+  {label:'학부모 요청 (강사 관련 불만)', resp:true},
+  {label:'성적 부진', resp:true},
+  {label:'학생 관리 소홀 (상담·과제 등)', resp:true},
+  {label:'강사 퇴사·휴직', resp:false},
+  {label:'반 개편·시간표 조정', resp:false},
+  {label:'학생 사정 (시간·이동 등)', resp:false},
+  {label:'기타', resp:false}
+];
+function teacherChangeStat(tn){
+  var list=(DB.tchChanges||[]).filter(function(r){ return r.from===tn; });
+  var resp=list.filter(function(r){ return r.resp; }).length;
+  return {total:list.length, resp:resp};
+}
+function openTchChange(idx){
+  var s=DB.stu[idx]; if(!s) return;
+  if(!isAdminLevel()){ toast('관리자 이상만 담임을 교체할 수 있어요','var(--rd)'); return; }
+  var T=(DB.cfg&&DB.cfg.teachers)||[];
+  if(!T.length){ toast('등록된 강사가 없어요','var(--rd)'); return; }
+  var opts=T.filter(function(t){ return t.name!==s.teacher; })
+    .map(function(t){ return '<option value="'+dEsc(t.name)+'">'+dEsc(t.name)+'</option>'; }).join('');
+  var ropts=TCHG_REASONS.map(function(r,i){
+    return '<option value="'+i+'">'+r.label+(r.resp?' — 이전 담임 점수 감점':'')+'</option>';
+  }).join('');
+  var ex=document.getElementById('ov-tchg'); if(ex) ex.remove();
+  var h='<div class="ov open" id="ov-tchg" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🔄 담임 교체 — '+dEsc(s.name)+'</div>'
+    +'<div style="font-size:12px;color:var(--t2);margin-bottom:12px">현재 담임: <b style="color:var(--te)">'+dEsc(s.teacher||'미정')+'</b> · 사유는 기록으로 남고, 감점 사유(학부모 불만·성적 부진·관리 소홀)만 이전 담임의 <b>담임유지</b> 점수에 반영됩니다.</div>'
+    +'<label class="fl">새 담임</label><select class="fi" id="tchg-to"><option value="">선택하세요</option>'+opts+'</select>'
+    +'<label class="fl">교체 사유</label><select class="fi" id="tchg-reason"><option value="">선택하세요</option>'+ropts+'</select>'
+    +'<label class="fl">교체일</label><input class="fi" type="date" id="tchg-date" value="'+today()+'">'
+    +'<label class="fl">메모 (선택)</label><textarea class="fi" id="tchg-memo" rows="2" placeholder="상세 사유·경위 등"></textarea>'
+    +'<button class="btn" onclick="saveTchChange('+idx+')">교체 저장</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-tchg\').remove()">취소</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function saveTchChange(idx){
+  var s=DB.stu[idx]; if(!s) return;
+  var to=(document.getElementById('tchg-to')||{}).value||'';
+  var ri=(document.getElementById('tchg-reason')||{}).value;
+  if(!to){ toast('새 담임을 선택해주세요','var(--rd)'); return; }
+  if(ri===''||ri===undefined){ toast('교체 사유를 선택해주세요','var(--rd)'); return; }
+  var r=TCHG_REASONS[parseInt(ri)]; if(!r){ toast('사유가 올바르지 않아요','var(--rd)'); return; }
+  var date=(document.getElementById('tchg-date')||{}).value||today();
+  var memo=((document.getElementById('tchg-memo')||{}).value||'').trim();
+  if(r.label==='기타' && !memo){ toast('기타 사유는 메모를 입력해주세요','var(--rd)'); return; }
+  if(!Array.isArray(DB.tchChanges)) DB.tchChanges=[];
+  var from=s.teacher||'';
+  DB.tchChanges.push({stu:s.name, cls:s.class||'', from:from, to:to, date:date, reason:r.label, resp:!!(r.resp&&from), memo:memo, by:(ME?ME.name:''), ts:Date.now()});
+  s.teacher=to;
+  logChange('담임 교체', s.name+' '+(from||'미정')+' → '+to+' ('+r.label+')');
+  saveAll();
+  var m=document.getElementById('ov-tchg'); if(m) m.remove();
+  toast('✓ 담임이 교체됐어요 ('+r.label+')','var(--g)');
+  showStuDetail(idx);
+}
+
 // 강사 종합 평가: 강사순위 지표 + 강사평가를 하나의 점수로 종합
 function computeAllTeacherMetrics(){
   var T=(DB.cfg&&DB.cfg.teachers)||[];
@@ -5508,7 +5568,9 @@ function computeAllTeacherMetrics(){
     var oh=calcOhdapRate(tSt); // 오답데이 완료율 (없으면 null)
     var vr=calcVideoRate(t.name); // 수업영상 업로드율 (없으면 null)
     var tb=calcTextbookRate(t.name); // 과제앱 교재 진도율 (없으면 null)
-    return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, consultDone:consultDone, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate, wdCount:wAll, ohdapScore:(oh?oh.score:null), ohdapR1:(oh?oh.rate1:null), ohdapR2:(oh?oh.rate2:null), videoScore:(vr!=null?vr:null), textbookScore:(tb!=null?tb:null)};
+    var tcS=teacherChangeStat(t.name); // 담임 교체 (귀책 사유만 감점)
+    var tcDenom=tSt.length+tcS.resp; var tcRate=tcDenom?Math.round(tcS.resp/tcDenom*100):0;
+    return {name:t.name, idx:i, progressAvg:progressAvg, consultRate:consultRate, consultDone:consultDone, studentCount:tSt.length, hwRate:hwRate, evalScore:evalScore, wdRate:wdRate, wdCount:wAll, tcCount:tcS.resp, tcTotal:tcS.total, tcRate:tcRate, ohdapScore:(oh?oh.score:null), ohdapR1:(oh?oh.rate1:null), ohdapR2:(oh?oh.rate2:null), videoScore:(vr!=null?vr:null), textbookScore:(tb!=null?tb:null)};
   });
 }
 function partWeight(k){ var w=(DB.cfg&&DB.cfg.compWeights)||{}; return (w[k]!==undefined&&w[k]!==null&&w[k]!=='')?Math.max(0,Number(w[k])||0):20; }
@@ -5520,6 +5582,7 @@ function teacherComposite(t){
     {k:'교재', v:(t.textbookScore!=null?t.textbookScore:0), unit:'%', on:(t.textbookScore!=null)},
     {k:'평가', v:t.evalScore||0, unit:'점', on:true},
     {k:'퇴원안정', v:100-(t.wdRate||0), unit:'%', on:true},
+    {k:'담임유지', v:100-(t.tcRate||0), unit:'%', on:true},
     {k:'오답데이', v:(t.ohdapScore!=null?t.ohdapScore:0), unit:'%', on:(t.ohdapScore!=null)},
     {k:'영상', v:(t.videoScore!=null?t.videoScore:0), unit:'%', on:(t.videoScore!=null)}
   ];
@@ -5775,7 +5838,7 @@ function saveAdjRules(){
 }
 function openCompWeights(){
   if(!(ME&&ME.role==='owner')){ toast('원장만 비중을 조절할 수 있어요','var(--rd)'); return; }
-  var keys=['진도율','상담','과제','교재','평가','퇴원안정','오답데이','영상'];
+  var keys=['진도율','상담','과제','교재','평가','퇴원안정','담임유지','오답데이','영상'];
   var rows=keys.map(function(k){
     return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--s2)">'
       +'<span style="flex:1;font-size:13px;font-weight:600">'+k+'</span>'
@@ -5794,13 +5857,13 @@ function openCompWeights(){
   cwUpdatePct();
 }
 function cwUpdatePct(){
-  var keys=['진도율','상담','과제','교재','평가','퇴원안정','오답데이','영상'];
+  var keys=['진도율','상담','과제','교재','평가','퇴원안정','담임유지','오답데이','영상'];
   var tot=0, vals={};
   keys.forEach(function(k){ var el=document.getElementById('cw-'+k); var v=el?Math.max(0,parseFloat(el.value)||0):0; vals[k]=v; tot+=v; });
   keys.forEach(function(k){ var pe=document.getElementById('cwp-'+k); if(pe) pe.textContent= tot? Math.round(vals[k]/tot*100)+'%' : '-'; });
 }
 function saveCompWeights(){
-  var keys=['진도율','상담','과제','교재','평가','퇴원안정','오답데이','영상'];
+  var keys=['진도율','상담','과제','교재','평가','퇴원안정','담임유지','오답데이','영상'];
   if(!DB.cfg) DB.cfg={}; if(!DB.cfg.compWeights) DB.cfg.compWeights={};
   var tot=0;
   keys.forEach(function(k){ var el=document.getElementById('cw-'+k); var v=el?Math.max(0,parseFloat(el.value)||0):0; DB.cfg.compWeights[k]=v; tot+=v; });
@@ -5822,6 +5885,7 @@ function showCompositeDetail(idx){
     '교재':'과제 앱 교재 진도율 (완료 차시 ÷ 배정 차시 · 담당 반 평균, 자동 연동)',
     '평가':'강사 평가 항목 평균 (상 100 · 중 60 · 하 30점)',
     '퇴원안정':'100 − 퇴원율 (퇴원 '+(t.wdCount||0)+'명 · '+(t.wdRate||0)+'%)',
+    '담임유지':'100 − 귀책 담임교체율 (귀책 교체 '+(t.tcCount||0)+'건 / 전체 교체 '+(t.tcTotal||0)+'건) · 학부모 불만·성적 부진·관리 소홀 사유만 감점',
     '오답데이':'오답데이 완료율'+(t.ohdapScore!=null?(' (1차 '+(t.ohdapR1||0)+'% · 2차 '+(t.ohdapR2||0)+'%)'):''),
     '영상':'진도 지난 차시 대비 수업영상 업로드율'
   };
@@ -6200,7 +6264,7 @@ function renderAdminHome() {
   h += '<div class="sl2"><div class="d8" style="background:var(--g)"></div>강사 종합 평가 🏅'
      + ((ME&&ME.role==='owner')?'<span style="margin-left:auto;display:flex;gap:6px"><button onclick="openCompWeights()" style="font-size:10.5px;color:var(--acc);background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:4px 9px;cursor:pointer;font-weight:600">⚖️ 비중</button><button onclick="openAdjRules()" style="font-size:10.5px;color:var(--am);background:var(--s2);border:1px solid var(--s3);border-radius:8px;padding:4px 9px;cursor:pointer;font-weight:600">🎚️ 반 보정</button></span>':'')
      + '</div>';
-  h += '<div style="font-size:11px;color:var(--t3);margin:-4px 0 10px">진도율·상담·과제·강사평가·퇴원안정·오답데이·영상을 평균한 종합 점수입니다. 영상은 진도 나간 차시 대비 수업영상 업로드율. (강사 카드를 누르면 상세)</div>';
+  h += '<div style="font-size:11px;color:var(--t3);margin:-4px 0 10px">진도율·상담·과제·강사평가·퇴원안정·담임유지·오답데이·영상을 평균한 종합 점수입니다. 영상은 진도 나간 차시 대비 수업영상 업로드율. (강사 카드를 누르면 상세)</div>';
   h += teacherOverallHTML();
 
   // ── 강사 순위
@@ -6320,15 +6384,18 @@ function calcMyRank(myName) {
     var bookSc = (typeof calcBookScore==='function') ? calcBookScore(tSt) : null;
     var diagR = (typeof calcDiagRate==='function') ? calcDiagRate(tSt) : null;
     var evalSc = (typeof getEvalScore==='function') ? (getEvalScore(t.name)||0) : 0;
-    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate, bookScore:bookSc?bookSc.score:null, bookRate:bookSc?bookSc.rate:null, bookProg:bookSc?bookSc.prog:null, diagRate:diagR, evalScore:evalSc};
+    var tcS = (typeof teacherChangeStat==='function') ? teacherChangeStat(t.name) : {resp:0};
+    var tcDenom = studentCount + tcS.resp;
+    var tcScore = 100 - (tcDenom ? tcS.resp/tcDenom*100 : 0); // 담임유지 (귀책 교체만 감점)
+    return {name:t.name, progressAvg:progressAvg, consultRate:consultRate, studentCount:studentCount, hwRate:hwRate, bookScore:bookSc?bookSc.score:null, bookRate:bookSc?bookSc.rate:null, bookProg:bookSc?bookSc.prog:null, diagRate:diagR, evalScore:evalSc, tcScore:tcScore};
   });
   var maxStu = Math.max.apply(null, scores.map(function(s){ return s.studentCount; }).concat([1]));
   scores.forEach(function(s) {
     var stuScore = s.studentCount / maxStu * 100;
     var hasBook = s.bookScore !== null && s.bookScore !== undefined;
     var hasDiag = s.diagRate !== null && s.diagRate !== undefined;
-    var wsum = 4.5 + (hasBook ? 1.5 : 0) + (hasDiag ? 1 : 0);
-    var baseScore = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1 + (hasBook ? s.bookScore*1.5 : 0) + (hasDiag ? s.diagRate*1 : 0)) / wsum;
+    var wsum = 5 + (hasBook ? 1.5 : 0) + (hasDiag ? 1 : 0);
+    var baseScore = (s.progressAvg*1 + s.consultRate*1 + stuScore*1.5 + s.hwRate*1 + (s.tcScore||100)*0.5 + (hasBook ? s.bookScore*1.5 : 0) + (hasDiag ? s.diagRate*1 : 0)) / wsum;
     s.total = (baseScore*2 + (s.evalScore||0)*0.5) / 2.5;
   });
   scores.sort(function(a,b){ return b.total - a.total; });
@@ -6813,6 +6880,19 @@ function showStuDetail(idx) {
   h+=nbCardHtml(idx);
   h+=extraCardHtml(idx);
   h+=placementCardHtml(idx);
+  if(isAdminLevel()){
+    h+='<button class="btn ghost" style="margin-bottom:8px" onclick="openTchChange('+idx+')">🔄 담임 교체 (사유 기록)</button>';
+    var tchgs=(DB.tchChanges||[]).filter(function(r){ return r.stu===s.name; });
+    if(tchgs.length){
+      h+='<div class="card" style="margin-bottom:10px"><div style="font-size:11px;color:var(--t3);margin-bottom:6px">담임 교체 이력 '+tchgs.length+'건</div>';
+      tchgs.slice().reverse().forEach(function(r){
+        h+='<div style="font-size:12px;padding:4px 0;border-top:1px solid var(--s2)">'
+          +'<b>'+dEsc(r.from||'미정')+' → '+dEsc(r.to)+'</b> <span style="color:var(--t3)">· '+r.date+'</span>'
+          +'<div style="font-size:11px;color:'+(r.resp?'var(--rd)':'var(--t2)')+';margin-top:1px">'+dEsc(r.reason)+(r.resp?' (감점 반영)':'')+(r.memo?' · '+dEsc(r.memo):'')+'</div></div>';
+      });
+      h+='</div>';
+    }
+  }
   h+='<button class="btn" style="margin-bottom:13px" onclick="openConsult('+idx+')">+ 상담 기록 입력</button>';
   h+='<div class="ct">상담 기록 ('+hist.length+'회)</div>';
   if(!hist.length){h+='<div class="empty">아직 기록이 없습니다.</div>';}
