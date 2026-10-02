@@ -6188,6 +6188,166 @@ function restoreAlert(key){
   if(!(ME&&ME.role==='owner')) return;
   if(DB.cfg&&DB.cfg.alertDone){ delete DB.cfg.alertDone[key]; saveAll(); renderAdminHome(); }
 }
+// ═══ 업무 매뉴얼 (교무실·행정실 관리자) ═══
+// 월간 필수 업무 체크리스트 + 업무별 상세 매뉴얼 · 작성/수정은 원장, 열람·체크는 관리자급
+var MAN_DEPTS=[ {key:'gyomu', label:'🏫 교무실 관리자'}, {key:'haengjung', label:'🗂 행정실 (행정팀)'} ];
+var _manTab='gyomu', _manOpenDoc=null;
+function _manDB(){
+  if(!DB.manuals) DB.manuals={};
+  MAN_DEPTS.forEach(function(d){ if(!DB.manuals[d.key]) DB.manuals[d.key]={monthly:[],docs:[]};
+    if(!Array.isArray(DB.manuals[d.key].monthly)) DB.manuals[d.key].monthly=[];
+    if(!Array.isArray(DB.manuals[d.key].docs)) DB.manuals[d.key].docs=[]; });
+  if(!DB.manuals.done) DB.manuals.done={};
+  return DB.manuals;
+}
+function _manYM(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); }
+function manMonthStat(){ // 이번 달 전체 완료 현황 (배지용)
+  var m=_manDB(), ym=_manYM(), done=m.done[ym]||{}, tot=0, ok=0;
+  MAN_DEPTS.forEach(function(d){ m[d.key].monthly.forEach(function(it){ tot++; if(done[it.id]) ok++; }); });
+  return {tot:tot, ok:ok};
+}
+function openManuals(){
+  if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
+  _manDB();
+  var ex=document.getElementById('ov-manuals'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-manuals" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">📖 업무 매뉴얼</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">월마다 꼭 해야 하는 일은 체크로 관리하고, 업무별 상세 매뉴얼은 펼쳐서 확인합니다.'+(ME.role==='owner'?' 내용 작성·수정은 원장만 할 수 있어요.':' 내용 추가·수정이 필요하면 원장님께 요청하세요.')+'</div>'
+    +'<div class="rank-tab-row" id="man-tabs"></div>'
+    +'<div id="man-body"></div>'
+    +'<button class="btn ghost" style="margin-top:12px" onclick="document.getElementById(\'ov-manuals\').remove()">닫기</button>'
+    +'</div></div>');
+  renderManuals();
+}
+function manTab(k){ _manTab=k; _manOpenDoc=null; renderManuals(); }
+function renderManuals(){
+  var m=_manDB(), dept=m[_manTab], ym=_manYM(), done=m.done[ym]||{};
+  var tabs=document.getElementById('man-tabs'); if(!tabs) return;
+  tabs.innerHTML=MAN_DEPTS.map(function(d){ return '<div class="rank-tab'+(_manTab===d.key?' on':'')+'" onclick="manTab(\''+d.key+'\')">'+d.label+'</div>'; }).join('');
+  var isOw=(ME&&ME.role==='owner');
+  var now=new Date();
+  var h='';
+  // ── 1. 월간 필수 업무 ──
+  var okN=dept.monthly.filter(function(it){ return done[it.id]; }).length;
+  h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--acc)"></div>📅 '+now.getFullYear()+'년 '+(now.getMonth()+1)+'월 필수 업무'
+    +(dept.monthly.length?' <span style="font-size:11px;color:'+(okN===dept.monthly.length?'var(--g)':'var(--am)')+';font-weight:700">'+okN+'/'+dept.monthly.length+' 완료</span>':'')+'</div>';
+  if(!dept.monthly.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 월간 업무가 없어요.'+(isOw?' 아래 버튼으로 추가하세요.':'')+'</div>';
+  dept.monthly.slice().sort(function(a,b){ return (a.when||'').localeCompare(b.when||''); }).forEach(function(it){
+    var dn=done[it.id];
+    h+='<div style="background:var(--s1);border:1px solid '+(dn?'var(--g)':'var(--s3)')+';border-radius:var(--rs);padding:10px 12px;margin-bottom:7px">'
+      +'<div style="display:flex;align-items:flex-start;gap:10px">'
+      +'<input type="checkbox" '+(dn?'checked':'')+' onchange="manToggleDone(\''+_manTab+'\',\''+it.id+'\')" style="width:19px;height:19px;margin-top:1px;flex-shrink:0;accent-color:var(--g);cursor:pointer">'
+      +'<div style="flex:1;min-width:0">'
+      +'<div style="font-size:13px;font-weight:700;'+(dn?'color:var(--t3);text-decoration:line-through':'')+'">'+(it.when?'<span style="font-size:10.5px;background:var(--acc-l);color:var(--acc);border-radius:6px;padding:2px 7px;margin-right:6px;text-decoration:none;display:inline-block">'+dEsc(it.when)+'</span>':'')+dEsc(it.title)+'</div>'
+      +(it.desc?'<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.5;white-space:pre-wrap">'+dEsc(it.desc)+'</div>':'')
+      +(dn?'<div style="font-size:10.5px;color:var(--g);margin-top:3px">✓ '+dEsc(dn.by||'')+' · '+(dn.date||'')+'</div>':'')
+      +'</div>'
+      +(isOw?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">수정</button><button onclick="manDelMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button></div>':'')
+      +'</div></div>';
+  });
+  if(isOw) h+='<button class="btn ghost" style="margin-bottom:4px;padding:9px;font-size:12.5px" onclick="manEditMonthly(\''+_manTab+'\',null)">+ 월간 필수 업무 추가</button>';
+  // ── 2. 업무별 상세 매뉴얼 ──
+  h+='<div class="sl2" style="margin:16px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 업무별 상세 매뉴얼 <span style="font-size:11px;color:var(--t3)">'+dept.docs.length+'건</span></div>';
+  if(!dept.docs.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 매뉴얼이 없어요.'+(isOw?' 아래 버튼으로 추가하세요.':'')+'</div>';
+  dept.docs.forEach(function(doc){
+    var open=(_manOpenDoc===doc.id);
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);margin-bottom:7px;overflow:hidden">'
+      +'<div onclick="manToggleDoc(\''+doc.id+'\')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">'+dEsc(doc.title)+'</div>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(doc.upd||doc.date||'')+(doc.by?' · '+dEsc(doc.by):'')+'</div></div>'
+      +'<span style="font-size:11px;color:var(--t2);font-weight:600;flex-shrink:0">'+(open?'▲ 접기':'▼ 펼치기')+'</span></div>'
+      +(open?('<div style="padding:0 12px 11px">'
+        +'<div style="font-size:12.5px;color:var(--te);line-height:1.7;white-space:pre-wrap;background:var(--s2);border-radius:9px;padding:11px 13px">'+dEsc(doc.body||'')+'</div>'
+        +(isOw?'<div style="display:flex;gap:8px;margin-top:8px"><button onclick="manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--acc);color:var(--acc);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">✎ 수정</button><button onclick="manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--rd);color:var(--rd);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🗑 삭제</button></div>':'')
+        +'</div>'):'')
+      +'</div>';
+  });
+  if(isOw) h+='<button class="btn ghost" style="padding:9px;font-size:12.5px" onclick="manEditDoc(\''+_manTab+'\',null)">+ 상세 매뉴얼 추가</button>';
+  var body=document.getElementById('man-body'); if(body) body.innerHTML=h;
+}
+function manToggleDoc(id){ _manOpenDoc=(_manOpenDoc===id)?null:id; renderManuals(); }
+function manToggleDone(dept,id){
+  var m=_manDB(), ym=_manYM();
+  if(!m.done[ym]) m.done[ym]={};
+  if(m.done[ym][id]){ delete m.done[ym][id]; }
+  else{
+    var it=(m[dept].monthly||[]).find(function(x){ return x.id===id; });
+    m.done[ym][id]={by:(ME?ME.name||'관리자':''), date:today()};
+    try{ logChange('월간 업무 완료', (it?it.title:id)); }catch(e){}
+  }
+  saveAll(); renderManuals();
+}
+// ── 월간 업무 추가/수정 ──
+function manEditMonthly(dept,id){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 수정할 수 있어요','var(--rd)'); return; }
+  var m=_manDB(), it=id?(m[dept].monthly.find(function(x){return x.id===id;})||{}):{};
+  var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">'+(id?'월간 업무 수정':'월간 필수 업무 추가')+'</div>'
+    +'<label class="fl">시기 (예: 1일, 첫 근무일, 매월 15일, 월말)</label><input class="fi" id="mm-when" value="'+dEsc(it.when||'')+'" placeholder="예: 첫 근무일">'
+    +'<label class="fl">업무명</label><input class="fi" id="mm-title" value="'+dEsc(it.title||'')+'" placeholder="예: 급여명세서 발송">'
+    +'<label class="fl">설명 (선택 · 처리 방법 요약)</label><textarea class="fi" id="mm-desc" rows="3" placeholder="어떻게 처리하는지 간단히">'+dEsc(it.desc||'')+'</textarea>'
+    +'<button class="btn" onclick="manSaveMonthly(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
+    +'</div></div>');
+}
+function manSaveMonthly(dept,id){
+  var m=_manDB();
+  var when=(document.getElementById('mm-when')||{}).value.trim();
+  var title=(document.getElementById('mm-title')||{}).value.trim();
+  var desc=(document.getElementById('mm-desc')||{}).value.trim();
+  if(!title){ toast('업무명을 입력해주세요','var(--rd)'); return; }
+  if(id){ var it=m[dept].monthly.find(function(x){return x.id===id;}); if(it){ it.when=when; it.title=title; it.desc=desc; } }
+  else m[dept].monthly.push({id:'mm'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), when:when, title:title, desc:desc});
+  logChange('월간 업무 '+(id?'수정':'추가'), title);
+  saveAll(); var ov=document.getElementById('ov-manedit'); if(ov) ov.remove(); renderManuals(); toast('저장됐어요 ✓','var(--g)');
+}
+function manDelMonthly(dept,id){
+  if(!(ME&&ME.role==='owner')) return;
+  if(!confirm('이 월간 업무를 삭제할까요? (이전 달 완료 기록은 남습니다)')) return;
+  var m=_manDB(); var it=m[dept].monthly.find(function(x){return x.id===id;});
+  m[dept].monthly=m[dept].monthly.filter(function(x){return x.id!==id;});
+  logChange('월간 업무 삭제', it?it.title:id);
+  saveAll(); renderManuals(); toast('삭제됐어요');
+}
+// ── 상세 매뉴얼 추가/수정 ──
+function manEditDoc(dept,id){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 수정할 수 있어요','var(--rd)'); return; }
+  var m=_manDB(), it=id?(m[dept].docs.find(function(x){return x.id===id;})||{}):{};
+  var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:85vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">'+(id?'매뉴얼 수정':'상세 매뉴얼 추가')+'</div>'
+    +'<label class="fl">업무 제목</label><input class="fi" id="md-title" value="'+dEsc(it.title||'')+'" placeholder="예: 신규생 등록 처리 절차">'
+    +'<label class="fl">내용 (순서·방법을 자유롭게 · 줄바꿈 그대로 표시됩니다)</label>'
+    +'<textarea class="fi" id="md-body" rows="12" placeholder="1. 먼저 …\n2. 다음으로 …\n※ 주의: …">'+dEsc(it.body||'')+'</textarea>'
+    +'<button class="btn" onclick="manSaveDoc(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
+    +'</div></div>');
+}
+function manSaveDoc(dept,id){
+  var m=_manDB();
+  var title=(document.getElementById('md-title')||{}).value.trim();
+  var body=(document.getElementById('md-body')||{}).value;
+  if(!title){ toast('업무 제목을 입력해주세요','var(--rd)'); return; }
+  if(!body.trim()){ toast('내용을 입력해주세요','var(--rd)'); return; }
+  if(id){ var it=m[dept].docs.find(function(x){return x.id===id;}); if(it){ it.title=title; it.body=body; it.upd=today(); } _manOpenDoc=id; }
+  else{ var nid='md'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    m[dept].docs.push({id:nid, title:title, body:body, by:(ME?ME.name||'원장':''), date:today(), upd:today()}); _manOpenDoc=nid; }
+  logChange('업무 매뉴얼 '+(id?'수정':'추가'), title);
+  saveAll(); var ov=document.getElementById('ov-manedit'); if(ov) ov.remove(); renderManuals(); toast('저장됐어요 ✓','var(--g)');
+}
+function manDelDoc(dept,id){
+  if(!(ME&&ME.role==='owner')) return;
+  if(!confirm('이 매뉴얼을 삭제할까요?')) return;
+  var m=_manDB(); var it=m[dept].docs.find(function(x){return x.id===id;});
+  m[dept].docs=m[dept].docs.filter(function(x){return x.id!==id;});
+  logChange('업무 매뉴얼 삭제', it?it.title:id);
+  saveAll(); _manOpenDoc=null; renderManuals(); toast('삭제됐어요');
+}
+
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
@@ -6209,6 +6369,7 @@ function renderAdminHome() {
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
+     + (function(){ var st=manMonthStat(); return '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼 (교무실·행정실)'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">· 이번 달 '+st.ok+'/'+st.tot+'</span>':'')+'</button></div>'; })()
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMetricRank()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 항목별 순위 (상담·퇴원율 등)</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
