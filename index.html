@@ -2308,11 +2308,24 @@ function _renderMeetList(loading){
       if(Array.isArray(m.who)&&m.who.length){ whoTxt = m.who.length<=3 ? m.who.join('·') : (m.who.slice(0,2).join('·')+' 외 '+(m.who.length-2)+'명'); }
       return '<div onclick="mtOpen(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
         +'<div style="font-size:12.5px;font-weight:700;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(m.title||'(제목 없음)')+'</div>'
-        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+' · '+dEsc(m.by||'')+'</div></div>';
+        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+((m.fbs&&m.fbs.length)?' · 💬 '+m.fbs.length:'')+' · '+dEsc(m.by||'')+'</div></div>';
     }).join('') : '<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">'+(_mtFilter?'이 종류의 회의록이 없어요':'저장된 회의록이 없어요')+'</div>';
   }
   var h='<div class="ov" id="ov-meetings" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">📝 관리자 회의록</div>'
+    +(function(){
+      if(loading) return '';
+      var pend=mtMyPendingFb();
+      if(!pend.length) return '';
+      return '<div style="background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--r);padding:10px 12px;margin-bottom:10px">'
+        +'<div style="font-size:12px;font-weight:700;color:var(--pu);margin-bottom:6px">💬 내가 확인할 피드백 '+pend.length+'건</div>'
+        +pend.map(function(p){ return '<div style="padding:7px 0;border-top:1px solid var(--s2)">'
+          +'<div style="font-size:12px;font-weight:600;line-height:1.5">'+dEsc(p.text)+'</div>'
+          +'<div style="font-size:10.5px;color:var(--t3);margin:2px 0 5px">📝 '+dEsc(p.mtitle)+'</div>'
+          +'<button onclick="mtFbConfirm(\''+p.mid+'\',\''+p.fid+'\')" style="width:100%;padding:7px;border-radius:8px;border:none;background:var(--pu);color:#fff;font-size:11.5px;font-weight:700;cursor:pointer">👆 확인했습니다</button>'
+          +'</div>'; }).join('')
+        +'</div>';
+    })()
     +'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 새 회의록 작성</button>'
     +'<select class="fs" onchange="mtSetFilter(this.value)" style="margin-bottom:8px">'
       +'<option value="">전체 회의록 보기</option>'
@@ -2368,6 +2381,18 @@ function mtOpen(id){
     +'<button class="btn" id="mt-ai-btn" style="margin:4px 0 10px;background:var(--pu)" onclick="aiSummarizeMeeting()">📝 자동 요약·정리 (내용+첨부파일)</button>'
     +'<label class="fl">요약·편집본 (자동 정리 결과 · 직접 수정 가능)</label>'
     +'<textarea class="fi" id="mt-summary" rows="7" placeholder="자동 요약 버튼을 누르면 회의 내용과 첨부 파일을 정리해 여기에 넣어드려요">'+dEsc(m.summary||'')+'</textarea>'
+    +'<label class="fl">💬 피드백 확인 요청 (대상자가 버튼으로 확인 체크)</label>'
+    +'<div id="mt-fbs" style="margin:2px 0 6px"></div>'
+    +'<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:10px">'
+      +'<input class="fi" id="mt-fb-text" type="text" placeholder="피드백이 필요한 내용 (예: 홍보안 검토 의견 주세요)" style="margin-bottom:6px">'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">확인할 대상 (선택 안 하면 참석 관리자 전원)</div>'
+      +'<div id="mt-fb-who" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px">'
+      +(function(){ var admList=((DB.cfg&&DB.cfg.admins)?DB.cfg.admins:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+        return admList.length?admList.map(function(nm){ return '<span class="mt-whochip" data-nm="'+dEsc(nm)+'" data-on="0" onclick="mtLvTgl(this)" style="padding:5px 11px;border-radius:14px;font-size:11.5px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">'+dEsc(nm)+'</span>'; }).join('')
+        :'<span style="font-size:10.5px;color:var(--t3)">등록된 관리자가 없어요</span>'; })()
+      +'</div>'
+      +'<button onclick="mtFbAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--pu);background:none;color:var(--pu);font-size:12px;font-weight:700;cursor:pointer">+ 피드백 요청 추가</button>'
+    +'</div>'
     +(id?(function(){
         if(!Array.isArray(m.dls)) m.dls=mtDlsOf(m);
         var inner = m.dls.length ? m.dls.map(function(_,i){ return mtDlRow(m,i); }).join('')
@@ -2382,6 +2407,8 @@ function mtOpen(id){
   document.body.insertAdjacentHTML('beforeend', h);
   _mtFiles = Array.isArray(m.files) ? m.files.slice() : [];
   _mtRenderFiles();
+  _mtFbs = Array.isArray(m.fbs) ? JSON.parse(JSON.stringify(m.fbs)) : [];
+  _mtRenderFbs();
 }
 function mtSave(){
   var id=document.getElementById('mt-id').value||('m'+Date.now());
@@ -2400,7 +2427,14 @@ function mtSave(){
   var dlsNew=mtExtractDeadlines(raw+'\n'+summary).map(function(f){ return {date:f.date, text:f.text, status:''}; });
   var dlsOld=(i>=0 && Array.isArray(_meetings[i].dls))?_meetings[i].dls:[];
   dlsNew.forEach(function(d){ var o=dlsOld.find(function(x){return x.date===d.date&&x.text===d.text;}); if(o&&o.status) d.status=o.status; });
-  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, dls:dlsNew, raw:raw, summary:summary, files:(_mtFiles||[]).slice(), by:(ME?ME.name:''), ts:Date.now()};
+  // 피드백 확인 상태 병합 (편집 중 다른 사람이 확인한 기록 보존)
+  var fbsOld=(i>=0 && Array.isArray(_meetings[i].fbs))?_meetings[i].fbs:[];
+  var fbsNew=(_mtFbs||[]).map(function(f){
+    var o=fbsOld.find(function(x){ return x.id===f.id; });
+    if(o&&o.done){ f.done=f.done||{}; Object.keys(o.done).forEach(function(nm){ if(!f.done[nm]) f.done[nm]=o.done[nm]; }); }
+    return f;
+  });
+  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, dls:dlsNew, raw:raw, summary:summary, files:(_mtFiles||[]).slice(), fbs:fbsNew, by:(ME?ME.name:''), ts:Date.now()};
   if(i>=0) _meetings[i]=obj; else _meetings.push(obj);
   _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('회의록 저장됨 ✓','var(--g)'); }).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   try{ logChange('회의록 저장', (title||date)+(mtTypeLabel(obj)?' ['+mtTypeLabel(obj)+']':'')); }catch(e){}
@@ -2471,7 +2505,71 @@ function mtDelete(id){
   var m=document.getElementById('ov-mtedit'); if(m) m.remove();
   _renderMeetList(false);
 }
-// ═══ 회의록 파일 첨부 + 내장 자동 요약 (API 키 불필요) ═══
+// ═══ 회의록 피드백 확인 요청 (버튼으로 확인 체크) ═══
+var _mtFbs=[];
+function mtFbTargets(m,f){ return (f&&f.who&&f.who.length)?f.who:((m&&Array.isArray(m.who))?m.who:[]); }
+function mtMyPendingFb(){
+  var out=[]; if(!ME||!ME.name) return out;
+  (_meetings||[]).forEach(function(m){ (m.fbs||[]).forEach(function(f){
+    var tg=mtFbTargets(m,f);
+    if(tg.indexOf(ME.name)>=0 && !(f.done&&f.done[ME.name])) out.push({mid:m.id, mtitle:m.title||m.date||'(제목 없음)', fid:f.id, text:f.text});
+  });});
+  return out;
+}
+function _mtFbItemHTML(m,f,inEdit){
+  var tg=mtFbTargets(m,f);
+  var chips=tg.map(function(nm){
+    var dn=f.done&&f.done[nm];
+    return '<span style="font-size:10.5px;border-radius:7px;padding:2px 8px;margin-right:4px;display:inline-block;margin-top:3px;'+(dn?'background:var(--gl);color:var(--g);font-weight:700':'background:var(--s2);color:var(--t3)')+'">'+(dn?'✅ ':'⬜ ')+dEsc(nm)+(dn?' · '+dEsc(dn.date||''):'')+'</span>';
+  }).join('');
+  var myBtn='';
+  if(ME && tg.indexOf(ME.name)>=0 && !(f.done&&f.done[ME.name]))
+    myBtn='<button onclick="mtFbConfirm(\''+m.id+'\',\''+f.id+'\')" style="margin-top:6px;width:100%;padding:8px;border-radius:9px;border:none;background:var(--pu);color:#fff;font-size:12px;font-weight:700;cursor:pointer">👆 확인했습니다</button>';
+  var del=(inEdit && ME && (ME.role==='owner'||f.by===ME.name))?'<button onclick="mtFbDel(\''+f.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button>':'';
+  return '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:6px">'
+    +'<div style="display:flex;gap:6px;align-items:flex-start"><div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;line-height:1.5;white-space:pre-wrap">💬 '+dEsc(f.text)+'</div>'+del+'</div>'
+    +'<div style="margin-top:3px">'+chips+(tg.length?'':'<span style="font-size:10.5px;color:var(--t3)">대상자 없음 — 참석 관리자를 선택하거나 항목 대상을 지정하세요</span>')+'</div>'
+    +myBtn+'</div>';
+}
+function _mtRenderFbs(){
+  var el=document.getElementById('mt-fbs'); if(!el) return;
+  var mid=(document.getElementById('mt-id')||{}).value||'';
+  var who=Array.prototype.map.call(document.querySelectorAll('#mt-who .mt-whochip[data-on="1"]'),function(x){return x.getAttribute('data-nm');});
+  var mm={id:mid, who:who};
+  el.innerHTML=_mtFbs.length?_mtFbs.map(function(f){ return _mtFbItemHTML(mm,f,true); }).join('')
+    :'<div style="font-size:11px;color:var(--t3);padding:2px 0 4px">등록된 피드백 요청이 없어요</div>';
+}
+function mtFbAdd(){
+  var inp=document.getElementById('mt-fb-text'); var text=(inp&&inp.value||'').trim();
+  if(!text){ toast('피드백이 필요한 내용을 입력하세요','var(--rd)'); return; }
+  var who=Array.prototype.map.call(document.querySelectorAll('#mt-fb-who .mt-whochip[data-on="1"]'),function(x){return x.getAttribute('data-nm');});
+  _mtFbs.push({id:'fb'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:text, who:who, done:{}, by:(ME?ME.name:''), ts:Date.now()});
+  inp.value='';
+  document.querySelectorAll('#mt-fb-who .mt-whochip[data-on="1"]').forEach(function(c){ c.setAttribute('data-on','0'); c.style.cssText=c.style.cssText.replace(/background[^;]+;?/,'')+';background:var(--s2);color:var(--t2);border:1px solid var(--s3);font-weight:400'; });
+  _mtRenderFbs();
+  toast('💬 피드백 요청이 추가됐어요 — 저장을 눌러야 반영됩니다','var(--g)');
+}
+function mtFbDel(fid){
+  _mtFbs=_mtFbs.filter(function(f){ return f.id!==fid; });
+  _mtRenderFbs();
+}
+function mtFbConfirm(mid,fid){
+  var m=(_meetings||[]).find(function(x){ return x.id===mid; });
+  // 편집 중(아직 저장 전)인 항목이면 임시 목록에서 처리
+  var f=m?(m.fbs||[]).find(function(x){ return x.id===fid; }):null;
+  var inEditOnly=false;
+  if(!f){ f=_mtFbs.find(function(x){ return x.id===fid; }); inEditOnly=!!f; }
+  if(!f){ toast('항목을 찾을 수 없어요','var(--rd)'); return; }
+  if(!f.done) f.done={};
+  f.done[ME.name]={date:today()};
+  if(!inEditOnly && m){
+    _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('✅ 확인이 기록됐어요','var(--g)'); }).catch(function(){ toast('기록 실패 · 인터넷 확인','var(--rd)'); });
+    try{ logChange('회의록 피드백 확인', (m.title||m.date||'')+' — '+String(f.text||'').slice(0,40)); }catch(e){}
+  }
+  if(document.getElementById('ov-mtedit')){ var ed=_mtFbs.find(function(x){ return x.id===fid; }); if(ed){ if(!ed.done) ed.done={}; ed.done[ME.name]={date:today()}; } _mtRenderFbs(); }
+  if(document.getElementById('ov-meetings')) _renderMeetList(false);
+}
+// 파일 첨부
 var _mtFiles=[]; var _mtTxtCache={};
 function _mtFmtSize(n){ return n>=1048576?(n/1048576).toFixed(1)+'MB':(n>=1024?Math.round(n/1024)+'KB':n+'B'); }
 function _mtRenderFiles(){
@@ -6518,6 +6616,13 @@ function renderAdminHome() {
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
      + (function(){ var st=manMonthStat(); return '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼 (교무실·행정실)'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">· 이번 달 '+st.ok+'/'+st.tot+'</span>':'')+'</button></div>'; })()
+     + (function(){
+         if(_meetings===null && !window._mtBgLoad){ window._mtBgLoad=1;
+           _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; try{ if(curTab==='home'&&isAdminLevel()) renderAdminHome(); }catch(e){} }).catch(function(){});
+         }
+         var pend=mtMyPendingFb();
+         return pend.length?'<div onclick="openMeetings()" style="background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--pu)">💬 회의록 피드백 확인 필요 '+pend.length+'건</span><span style="font-size:11px;color:var(--pu)">확인하기 →</span></div>':'';
+       })()
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMetricRank()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 항목별 순위 (상담·퇴원율 등)</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
