@@ -2381,9 +2381,11 @@ function mtOpen(id){
     +'<button class="btn" id="mt-ai-btn" style="margin:4px 0 10px;background:var(--pu)" onclick="aiSummarizeMeeting()">📝 자동 요약·정리 (내용+첨부파일)</button>'
     +'<label class="fl">요약·편집본 (자동 정리 결과 · 직접 수정 가능)</label>'
     +'<textarea class="fi" id="mt-summary" rows="7" placeholder="자동 요약 버튼을 누르면 회의 내용과 첨부 파일을 정리해 여기에 넣어드려요">'+dEsc(m.summary||'')+'</textarea>'
-    +'<label class="fl">💬 피드백 확인 요청 (대상자가 버튼으로 확인 체크)</label>'
+    +'<label class="fl">💬 피드백 확인 요청 (내용·첨부에서 자동 인식 → 대상자가 버튼으로 확인)</label>'
     +'<div id="mt-fbs" style="margin:2px 0 6px"></div>'
+    +'<button onclick="mtFbAutoExtract(true)" style="width:100%;margin-bottom:6px;padding:9px;border-radius:9px;border:1px solid var(--pu);background:var(--s1);color:var(--pu);font-size:12.5px;font-weight:700;cursor:pointer">🔍 피드백 자동 인식 (내용+첨부파일 다시 읽기)</button>'
     +'<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:10px">'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-bottom:5px">자동 인식이 놓친 내용은 직접 추가할 수 있어요</div>'
       +'<input class="fi" id="mt-fb-text" type="text" placeholder="피드백이 필요한 내용 (예: 홍보안 검토 의견 주세요)" style="margin-bottom:6px">'
       +'<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">확인할 대상 (선택 안 하면 참석 관리자 전원)</div>'
       +'<div id="mt-fb-who" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px">'
@@ -2409,6 +2411,8 @@ function mtOpen(id){
   _mtRenderFiles();
   _mtFbs = Array.isArray(m.fbs) ? JSON.parse(JSON.stringify(m.fbs)) : [];
   _mtRenderFbs();
+  // 열 때 자동 인식: 내용·첨부에 있는 피드백 요청 문장을 자동으로 항목화
+  mtFbAutoExtract(false).then(function(n){ if(n) toast('💬 피드백 '+n+'건을 자동 인식했어요 — 저장하면 반영됩니다','var(--g)'); });
 }
 function mtSave(){
   var id=document.getElementById('mt-id').value||('m'+Date.now());
@@ -2527,7 +2531,7 @@ function _mtFbItemHTML(m,f,inEdit){
     myBtn='<button onclick="mtFbConfirm(\''+m.id+'\',\''+f.id+'\')" style="margin-top:6px;width:100%;padding:8px;border-radius:9px;border:none;background:var(--pu);color:#fff;font-size:12px;font-weight:700;cursor:pointer">👆 확인했습니다</button>';
   var del=(inEdit && ME && (ME.role==='owner'||f.by===ME.name))?'<button onclick="mtFbDel(\''+f.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button>':'';
   return '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:6px">'
-    +'<div style="display:flex;gap:6px;align-items:flex-start"><div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;line-height:1.5;white-space:pre-wrap">💬 '+dEsc(f.text)+'</div>'+del+'</div>'
+    +'<div style="display:flex;gap:6px;align-items:flex-start"><div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;line-height:1.5;white-space:pre-wrap">💬 '+dEsc(f.text)+(f.auto?' <span style="font-size:9.5px;background:var(--s2);color:var(--t3);border-radius:5px;padding:1px 5px;font-weight:600;vertical-align:1px">자동 인식</span>':'')+'</div>'+del+'</div>'
     +'<div style="margin-top:3px">'+chips+(tg.length?'':'<span style="font-size:10.5px;color:var(--t3)">대상자 없음 — 참석 관리자를 선택하거나 항목 대상을 지정하세요</span>')+'</div>'
     +myBtn+'</div>';
 }
@@ -2548,6 +2552,41 @@ function mtFbAdd(){
   document.querySelectorAll('#mt-fb-who .mt-whochip[data-on="1"]').forEach(function(c){ c.setAttribute('data-on','0'); c.style.cssText=c.style.cssText.replace(/background[^;]+;?/,'')+';background:var(--s2);color:var(--t2);border:1px solid var(--s3);font-weight:400'; });
   _mtRenderFbs();
   toast('💬 피드백 요청이 추가됐어요 — 저장을 눌러야 반영됩니다','var(--g)');
+}
+// ── 피드백 자동 인식: 회의 내용·요약·첨부 파일에서 확인/검토/피드백 요청 문장 추출 ──
+function mtFbScan(text){
+  var admNames=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+  var out=[], seen={};
+  String(text||'').split(/\n+/).forEach(function(line){
+    var t=line.replace(/^[\s■□▶◆●·•\-–—*※>0-9.)(]+/,'').replace(/\s+/g,' ').trim();
+    if(t.length<6 || t.length>160) return;
+    if(!/피드백|의견\s*(을|들)?\s*(주|요청|부탁|바랍|바람|회신|취합)|검토\s*(바랍|요망|요청|부탁|필요|후\s*회신|의견)|회신\s*(바랍|요망|요청|주|부탁)|확인\s*(바랍|요망|부탁|요청|후\s*회신|하고\s*알려|해\s*주세요|해주세요)|답변\s*(바랍|요청|주)|공유\s*(바랍|요청|부탁)|알려\s*주(세요|시기)/.test(t)) return;
+    var k=t.replace(/\s+/g,'').slice(0,60); if(seen[k]) return; seen[k]=1;
+    var who=admNames.filter(function(nm){ return t.indexOf(nm)>=0; });
+    out.push({text:t, who:who});
+  });
+  return out;
+}
+function mtFbAutoExtract(showToast){
+  var raw=(document.getElementById('mt-raw')||{}).value||'';
+  var sum=(document.getElementById('mt-summary')||{}).value||'';
+  var ps=(_mtFiles||[]).filter(function(f){ return f.hasTxt; }).map(function(f){
+    if(_mtTxtCache[f.fid]!==undefined) return Promise.resolve(_mtTxtCache[f.fid]);
+    return _FS.get('academy/mtfile_'+f.fid).then(function(doc){ var o=_FS.docToObj(doc)||{}; _mtTxtCache[f.fid]=o.txt||''; return o.txt||''; }).catch(function(){ return ''; });
+  });
+  return Promise.all(ps).then(function(txts){
+    var items=mtFbScan(raw+'\n'+sum+'\n'+txts.join('\n'));
+    var added=0;
+    items.forEach(function(it){
+      var norm=it.text.replace(/\s+/g,'');
+      if(_mtFbs.some(function(f){ return String(f.text||'').replace(/\s+/g,'')===norm; })) return;
+      _mtFbs.push({id:'fb'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:it.text, who:it.who, done:{}, by:(ME?ME.name:''), ts:Date.now(), auto:true});
+      added++;
+    });
+    if(added) _mtRenderFbs();
+    if(showToast) toast(added?('💬 피드백 '+added+'건을 자동 인식했어요 — 저장을 누르면 반영됩니다'):'새로 인식된 피드백 문장이 없어요', added?'var(--g)':undefined);
+    return added;
+  }).catch(function(){ if(showToast) toast('자동 인식 중 오류가 났어요','var(--rd)'); return 0; });
 }
 function mtFbDel(fid){
   _mtFbs=_mtFbs.filter(function(f){ return f.id!==fid; });
@@ -2647,6 +2686,7 @@ function mtFilePick(inp){
         _mtTxtCache[fid]=txt;
         _mtRenderFiles();
         toast('📎 「'+file.name+'」 첨부됨'+(txt.trim()?' (요약 가능)':' · 요약은 지원 안 되는 형식이에요'),'var(--g)');
+        if(txt.trim()) mtFbAutoExtract(false).then(function(n){ if(n) toast('💬 첨부 파일에서 피드백 '+n+'건을 자동 인식했어요','var(--g)'); });
       });
     }).catch(function(){ toast('「'+file.name+'」 첨부 실패 — 인터넷을 확인하세요','var(--rd)'); });
   });
@@ -2723,6 +2763,7 @@ function aiSummarizeMeeting(){
     var sum=mtLocalSummarize(all);
     document.getElementById('mt-summary').value=sum;
     fin(); toast('📝 자동 요약 완료 — 내용을 확인하고 필요하면 다듬어주세요 ✓','var(--g)');
+    mtFbAutoExtract(false).then(function(n){ if(n) setTimeout(function(){ toast('💬 피드백 '+n+'건을 자동 인식했어요','var(--g)'); },1200); });
   }).catch(function(){ fin(); toast('요약 중 오류가 났어요','var(--rd)'); });
 }
 function openChangeLog(){
