@@ -2273,6 +2273,94 @@ function mtDlSet(mid, idx, st){
   m.dls[idx].status = (m.dls[idx].status===st)?'':st;
   _FS.set('academy/meetings',{list:_meetings}).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   var row=document.getElementById('mtdl-'+idx); if(row){ row.outerHTML=mtDlRow(m, idx); }
+  if(document.getElementById('ov-mttodo')) renderMtTodo();
+}
+// ═══ 월별 할 일 정리 (회의 내용에서 자동 취합) ═══
+var _mtTodoYM=null;
+function _ymAdd(ym,n){ var p=ym.split('-'); var d=new Date(parseInt(p[0],10), parseInt(p[1],10)-1+n, 1); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); }
+// 기한 없는 할 일 문장 추출 (회의 본문·요약에서)
+function mtActionScan(m){
+  var dlTexts={}; (m.dls||[]).forEach(function(d){ dlTexts[String(d.text||'').replace(/\s+/g,'').slice(0,60)]=1; });
+  var out=[], seen={};
+  String((m.raw||'')+'\n'+(m.summary||'')).split(/\n+/).forEach(function(line){
+    var t=line.replace(/^[\s■□▶◆●·•\-–—*※>0-9.)(]+/,'').replace(/\s+/g,' ').trim();
+    if(t.length<6 || t.length>160) return;
+    if(!/까지|마감|기한|제출|담당|진행\s*예정|준비하|요청|보고|전달|조치|시행|발송|완료하/.test(t)) return;
+    var k=t.replace(/\s+/g,'').slice(0,60);
+    if(seen[k]||dlTexts[k]) return; seen[k]=1;
+    out.push(t);
+  });
+  return out.slice(0,10);
+}
+function openMtTodo(){
+  if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
+  if(!_mtTodoYM){ var d=new Date(); _mtTodoYM=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); }
+  var go=function(){
+    var ex=document.getElementById('ov-mttodo'); if(ex) ex.remove();
+    document.body.insertAdjacentHTML('beforeend',
+      '<div class="ov open" id="ov-mttodo" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1100"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+      +'<div class="mt2">📋 월별 할 일 (회의 내용 자동 취합)</div>'
+      +'<div id="mttodo-body"></div>'
+      +'<button class="btn ghost" style="margin-top:12px" onclick="document.getElementById(\'ov-mttodo\').remove()">닫기</button>'
+      +'</div></div>');
+    renderMtTodo();
+  };
+  if(_meetings===null){
+    toast('회의록 불러오는 중…');
+    _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; go(); }).catch(function(){ _meetings=_meetings||[]; go(); });
+  } else go();
+}
+function mtTodoNav(n){ _mtTodoYM=_ymAdd(_mtTodoYM,n); renderMtTodo(); }
+function renderMtTodo(){
+  var el=document.getElementById('mttodo-body'); if(!el) return;
+  var ym=_mtTodoYM;
+  var p=ym.split('-');
+  // 1) 기한 있는 할 일: 모든 회의록의 dls 중 이 달 날짜
+  var dated=[];
+  (_meetings||[]).forEach(function(m){
+    if(!Array.isArray(m.dls)) return;
+    m.dls.forEach(function(d,idx){
+      if((d.date||'').slice(0,7)===ym) dated.push({mid:m.id, idx:idx, date:d.date, text:d.text, status:d.status||'', mtitle:m.title||m.date||'', who:(m.who||[])});
+    });
+  });
+  dated.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
+  // 2) 기한 미정 할 일: 이 달에 열린 회의의 액션 문장
+  var undated=[];
+  (_meetings||[]).forEach(function(m){
+    if((m.date||'').slice(0,7)!==ym) return;
+    mtActionScan(m).forEach(function(t){ undated.push({mtitle:m.title||m.date||'', text:t}); });
+  });
+  var ok=dated.filter(function(d){return d.status==='ok';}).length;
+  var late=dated.filter(function(d){return d.status==='late';}).length;
+  var open=dated.length-ok-late;
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+    +'<button onclick="mtTodoNav(-1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">◀</button>'
+    +'<span style="font-size:15px;font-weight:800">'+p[0]+'년 '+parseInt(p[1],10)+'월</span>'
+    +'<button onclick="mtTodoNav(1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">▶</button></div>';
+  if(dated.length) h+='<div style="display:flex;gap:6px;margin-bottom:10px;font-size:11px;font-weight:700">'
+    +'<span style="flex:1;text-align:center;background:var(--gl);color:var(--g);border-radius:8px;padding:6px 0">지킴 '+ok+'</span>'
+    +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--rd);border-radius:8px;padding:6px 0">어김 '+late+'</span>'
+    +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--am);border-radius:8px;padding:6px 0">대기 '+open+'</span></div>';
+  h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--acc)"></div>⏱ 기한 있는 할 일 <span style="font-size:11px;color:var(--t3)">'+dated.length+'건</span></div>';
+  if(!dated.length) h+='<div class="empty" style="font-size:12px;padding:6px 0 10px">이 달 기한인 할 일이 없어요</div>';
+  dated.forEach(function(d){
+    var sc=d.status==='ok'?'var(--g)':d.status==='late'?'var(--rd)':'var(--s3)';
+    function b(st,lab,col){ var on=d.status===st; return '<button onclick="mtDlSet(\''+d.mid+'\','+d.idx+',\''+st+'\')" style="font-size:10.5px;padding:4px 9px;border-radius:11px;cursor:pointer;border:1px solid '+(on?col:'var(--s3)')+';background:'+(on?col:'var(--s1)')+';color:'+(on?'#fff':'var(--t2)')+';font-weight:'+(on?'700':'500')+'">'+lab+'</button>'; }
+    h+='<div style="background:var(--s1);border:1px solid '+sc+';border-radius:10px;padding:9px 11px;margin-bottom:6px">'
+      +'<div style="display:flex;gap:8px;align-items:center"><span style="font-size:11px;font-weight:800;color:var(--acc);flex-shrink:0">'+parseInt((d.date||'').slice(8,10)||'0',10)+'일</span>'
+      +'<div style="flex:1;min-width:0;font-size:12.5px;font-weight:600;line-height:1.5">'+dEsc(d.text)+'</div>'+b('ok','지킴','var(--g)')+b('late','어김','var(--rd)')+'</div>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:3px">📝 '+dEsc(d.mtitle)+(d.who.length?' · 👥 '+dEsc(d.who.length<=3?d.who.join('·'):d.who.slice(0,2).join('·')+' 외 '+(d.who.length-2)+'명'):'')+'</div>'
+      +'</div>';
+  });
+  h+='<div class="sl2" style="margin:14px 0 8px"><div class="d8" style="background:var(--am)"></div>📌 기한 미정 할 일 <span style="font-size:11px;color:var(--t3)">이 달 회의에서 나온 일 · '+undated.length+'건</span></div>';
+  if(!undated.length) h+='<div class="empty" style="font-size:12px;padding:6px 0">이 달 회의에서 추출된 기한 미정 할 일이 없어요</div>';
+  undated.forEach(function(u){
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:8px 11px;margin-bottom:6px">'
+      +'<div style="font-size:12.5px;font-weight:600;line-height:1.5">'+dEsc(u.text)+'</div>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">📝 '+dEsc(u.mtitle)+'</div></div>';
+  });
+  h+='<div style="font-size:10px;color:var(--t3);margin-top:8px;line-height:1.5">＊ 기한 있는 할 일은 회의록에서 자동 추출된 기한(지킴/어김 체크 포함)이고, 체크 결과는 관리자 점수에 반영됩니다. 기한 미정 할 일은 그 달 회의 내용에서 "제출·요청·담당·준비" 등 실행 문장을 자동으로 모은 것입니다.</div>';
+  el.innerHTML=h;
 }
 function mtTypeChg(){
   var t=(document.getElementById('mt-type')||{}).value||'';
@@ -2327,6 +2415,7 @@ function _renderMeetList(loading){
         +'</div>';
     })()
     +'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 새 회의록 작성</button>'
+    +'<button class="btn ghost" style="margin-bottom:10px;border-color:var(--acc);color:var(--acc)" onclick="openMtTodo()">📋 월별 할 일 정리 (회의 내용 자동 취합)</button>'
     +'<select class="fs" onchange="mtSetFilter(this.value)" style="margin-bottom:8px">'
       +'<option value="">전체 회의록 보기</option>'
       +MT_TYPES.map(function(t){return '<option value="'+t+'"'+(_mtFilter===t?' selected':'')+'>'+t+(t==='교무회의록'?' (초·중·고 선택)':'')+'</option>';}).join('')
