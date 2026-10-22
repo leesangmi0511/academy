@@ -2308,7 +2308,7 @@ function _renderMeetList(loading){
       if(Array.isArray(m.who)&&m.who.length){ whoTxt = m.who.length<=3 ? m.who.join('·') : (m.who.slice(0,2).join('·')+' 외 '+(m.who.length-2)+'명'); }
       return '<div onclick="mtOpen(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
         +'<div style="font-size:12.5px;font-weight:700;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(m.title||'(제목 없음)')+'</div>'
-        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+' · '+dEsc(m.by||'')+'</div></div>';
+        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+' · '+dEsc(m.by||'')+'</div></div>';
     }).join('') : '<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">'+(_mtFilter?'이 종류의 회의록이 없어요':'저장된 회의록이 없어요')+'</div>';
   }
   var h='<div class="ov" id="ov-meetings" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
@@ -2361,9 +2361,13 @@ function mtOpen(id){
     +'</div>'
     +'<label class="fl">회의 내용 (한글에서 복사해 붙여넣기)</label>'
     +'<textarea class="fi" id="mt-raw" rows="6" placeholder="한글(HWP) 등에서 회의 내용을 긁어서 여기에 붙여넣으세요">'+dEsc(m.raw||'')+'</textarea>'
-    +'<button class="btn" id="mt-ai-btn" style="margin:4px 0 10px;background:var(--pu)" onclick="aiSummarizeMeeting()">🤖 AI 요약·편집</button>'
-    +'<label class="fl">요약·편집본 (AI 결과 · 직접 수정 가능)</label>'
-    +'<textarea class="fi" id="mt-summary" rows="7" placeholder="AI 요약·편집 버튼을 누르면 여기에 정리된 회의록이 들어옵니다">'+dEsc(m.summary||'')+'</textarea>'
+    +'<label class="fl">📎 파일 등록 (회의 자료 · 1개당 600KB 이하)</label>'
+    +'<div id="mt-files" style="margin:2px 0 6px"></div>'
+    +'<input type="file" id="mt-file-in" multiple style="display:none" onchange="mtFilePick(this)">'
+    +'<button class="btn ghost" style="margin:0 0 10px;padding:9px;font-size:12.5px" onclick="document.getElementById(\'mt-file-in\').click()">+ 파일 첨부 (한글·워드·PDF·텍스트)</button>'
+    +'<button class="btn" id="mt-ai-btn" style="margin:4px 0 10px;background:var(--pu)" onclick="aiSummarizeMeeting()">📝 자동 요약·정리 (내용+첨부파일)</button>'
+    +'<label class="fl">요약·편집본 (자동 정리 결과 · 직접 수정 가능)</label>'
+    +'<textarea class="fi" id="mt-summary" rows="7" placeholder="자동 요약 버튼을 누르면 회의 내용과 첨부 파일을 정리해 여기에 넣어드려요">'+dEsc(m.summary||'')+'</textarea>'
     +(id?(function(){
         if(!Array.isArray(m.dls)) m.dls=mtDlsOf(m);
         var inner = m.dls.length ? m.dls.map(function(_,i){ return mtDlRow(m,i); }).join('')
@@ -2376,6 +2380,8 @@ function mtOpen(id){
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-mtedit\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
+  _mtFiles = Array.isArray(m.files) ? m.files.slice() : [];
+  _mtRenderFiles();
 }
 function mtSave(){
   var id=document.getElementById('mt-id').value||('m'+Date.now());
@@ -2394,7 +2400,7 @@ function mtSave(){
   var dlsNew=mtExtractDeadlines(raw+'\n'+summary).map(function(f){ return {date:f.date, text:f.text, status:''}; });
   var dlsOld=(i>=0 && Array.isArray(_meetings[i].dls))?_meetings[i].dls:[];
   dlsNew.forEach(function(d){ var o=dlsOld.find(function(x){return x.date===d.date&&x.text===d.text;}); if(o&&o.status) d.status=o.status; });
-  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, dls:dlsNew, raw:raw, summary:summary, by:(ME?ME.name:''), ts:Date.now()};
+  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, dls:dlsNew, raw:raw, summary:summary, files:(_mtFiles||[]).slice(), by:(ME?ME.name:''), ts:Date.now()};
   if(i>=0) _meetings[i]=obj; else _meetings.push(obj);
   _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('회의록 저장됨 ✓','var(--g)'); }).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   try{ logChange('회의록 저장', (title||date)+(mtTypeLabel(obj)?' ['+mtTypeLabel(obj)+']':'')); }catch(e){}
@@ -2452,32 +2458,174 @@ function mtAutoSchedule(text, mtTitle){
 }
 function mtDelete(id){
   if(!confirm('이 회의록을 삭제할까요?')) return;
+  var mt=(_meetings||[]).find(function(x){return x.id===id;});
+  if(mt && Array.isArray(mt.files)) mt.files.forEach(function(f){
+    _auth.token().then(function(tok){
+      var h=tok?{Authorization:'Bearer '+tok}:{};
+      return fetch(_FB.baseUrl+'/academy/mtfile_'+f.fid+'?key='+_FB.apiKey,{method:'DELETE',headers:h});
+    }).catch(function(){});
+  });
   _meetings=(_meetings||[]).filter(function(x){return x.id!==id;});
   _FS.set('academy/meetings', {list:_meetings});
   try{ logChange('회의록 삭제', id); }catch(e){}
   var m=document.getElementById('ov-mtedit'); if(m) m.remove();
   _renderMeetList(false);
 }
+// ═══ 회의록 파일 첨부 + 내장 자동 요약 (API 키 불필요) ═══
+var _mtFiles=[]; var _mtTxtCache={};
+function _mtFmtSize(n){ return n>=1048576?(n/1048576).toFixed(1)+'MB':(n>=1024?Math.round(n/1024)+'KB':n+'B'); }
+function _mtRenderFiles(){
+  var el=document.getElementById('mt-files'); if(!el) return;
+  if(!_mtFiles.length){ el.innerHTML='<div style="font-size:11px;color:var(--t3);padding:2px 0 4px">첨부된 파일이 없어요</div>'; return; }
+  el.innerHTML=_mtFiles.map(function(f,i){
+    return '<div style="display:flex;align-items:center;gap:8px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:7px 10px;margin-bottom:5px">'
+      +'<span style="flex:1;min-width:0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+dEsc(f.name)+'</span>'
+      +'<span style="font-size:10px;color:var(--t3);flex-shrink:0">'+_mtFmtSize(f.size||0)+(f.hasTxt?'':' · 요약 불가 형식')+'</span>'
+      +'<button onclick="mtFileDl('+i+')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;flex-shrink:0">받기</button>'
+      +'<button onclick="mtFileDel('+i+')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button>'
+      +'</div>';
+  }).join('');
+}
+function _loadScript(src){
+  return new Promise(function(res,rej){
+    if(document.querySelector('script[src="'+src+'"]')) return res();
+    var s=document.createElement('script'); s.src=src; s.onload=function(){res();}; s.onerror=function(){rej(new Error('load fail'));};
+    document.head.appendChild(s);
+  });
+}
+function _xmlToText(xml, paraTag){
+  var t=xml;
+  if(paraTag) t=t.replace(new RegExp('</'+paraTag+'>','g'), '\n');
+  t=t.replace(/<[^>]+>/g,'');
+  t=t.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;|&apos;/g,"'");
+  return t.replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();
+}
+// 파일에서 텍스트 추출 (txt·md·csv / docx / hwpx / pdf)
+function _mtExtractText(file){
+  var ext=(file.name.split('.').pop()||'').toLowerCase();
+  if(['txt','md','csv','log','html','htm'].indexOf(ext)>=0){
+    return file.text().then(function(t){ return ext==='html'||ext==='htm' ? _xmlToText(t,'p') : t; });
+  }
+  if(ext==='docx'||ext==='hwpx'){
+    return _loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js').then(function(){
+      return file.arrayBuffer();
+    }).then(function(buf){ return JSZip.loadAsync(buf); }).then(function(zip){
+      if(ext==='docx'){
+        var f=zip.file('word/document.xml');
+        if(!f) throw new Error('no doc');
+        return f.async('string').then(function(x){ return _xmlToText(x,'w:p'); });
+      }
+      // hwpx: Contents/section*.xml 전부
+      var secs=Object.keys(zip.files).filter(function(k){ return /^Contents\/section\d+\.xml$/.test(k); }).sort();
+      if(!secs.length) throw new Error('no sec');
+      return Promise.all(secs.map(function(k){ return zip.file(k).async('string'); }))
+        .then(function(xs){ return xs.map(function(x){ return _xmlToText(x,'hp:p'); }).join('\n'); });
+    });
+  }
+  if(ext==='pdf'){
+    return _loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js').then(function(){
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      return file.arrayBuffer();
+    }).then(function(buf){ return window.pdfjsLib.getDocument({data:buf}).promise; }).then(function(pdf){
+      var ps=[]; for(var i=1;i<=Math.min(pdf.numPages,30);i++) ps.push(pdf.getPage(i).then(function(pg){ return pg.getTextContent(); }).then(function(tc){ return tc.items.map(function(it){ return it.str; }).join(' '); }));
+      return Promise.all(ps).then(function(xs){ return xs.join('\n'); });
+    });
+  }
+  return Promise.resolve(''); // hwp 등 추출 불가 형식 — 보관만
+}
+function mtFilePick(inp){
+  var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
+  if(!files.length) return;
+  files.forEach(function(file){
+    if(file.size>600*1024){ toast('「'+file.name+'」은 600KB를 넘어 첨부할 수 없어요 — 내용을 복사해 붙여넣어 주세요','var(--rd)'); return; }
+    var fid='mf'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    toast('「'+file.name+'」 올리는 중…');
+    var pTxt=_mtExtractText(file).catch(function(){ return ''; });
+    var pB64=new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result).split(',')[1]||''); }; r.onerror=rej; r.readAsDataURL(file); });
+    Promise.all([pTxt,pB64]).then(function(rr){
+      var txt=(rr[0]||'').slice(0,30000);
+      return _FS.set('academy/mtfile_'+fid, {name:file.name, type:file.type||'', size:file.size, data:rr[1], txt:txt, ts:Date.now(), by:(ME?ME.name:'')}).then(function(){
+        _mtFiles.push({fid:fid, name:file.name, size:file.size, hasTxt:!!txt.trim()});
+        _mtTxtCache[fid]=txt;
+        _mtRenderFiles();
+        toast('📎 「'+file.name+'」 첨부됨'+(txt.trim()?' (요약 가능)':' · 요약은 지원 안 되는 형식이에요'),'var(--g)');
+      });
+    }).catch(function(){ toast('「'+file.name+'」 첨부 실패 — 인터넷을 확인하세요','var(--rd)'); });
+  });
+}
+function mtFileDel(i){
+  var f=_mtFiles[i]; if(!f) return;
+  if(!confirm('「'+f.name+'」 첨부를 삭제할까요?')) return;
+  _mtFiles.splice(i,1); _mtRenderFiles();
+  _auth.token().then(function(tok){
+    var h=tok?{Authorization:'Bearer '+tok}:{};
+    return fetch(_FB.baseUrl+'/academy/mtfile_'+f.fid+'?key='+_FB.apiKey,{method:'DELETE',headers:h});
+  }).catch(function(){});
+}
+function mtFileDl(i){
+  var f=_mtFiles[i]; if(!f) return;
+  toast('내려받는 중…');
+  _FS.get('academy/mtfile_'+f.fid).then(function(doc){
+    var o=_FS.docToObj(doc)||{};
+    if(!o.data){ toast('파일을 찾을 수 없어요','var(--rd)'); return; }
+    var bin=atob(o.data), arr=new Uint8Array(bin.length);
+    for(var j=0;j<bin.length;j++) arr[j]=bin.charCodeAt(j);
+    var blob=new Blob([arr],{type:o.type||'application/octet-stream'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=f.name; document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },800);
+  }).catch(function(){ toast('내려받기 실패 — 인터넷을 확인하세요','var(--rd)'); });
+}
+// 내장 요약 엔진: 문장 분류 + 중요 문장 추출 (서버·API 키 없이 동작)
+function mtLocalSummarize(text){
+  var lines=text.split(/\n+/).map(function(l){ return l.replace(/^[\s■□▶◆●·•\-–—*※>]+/,'').replace(/\s+/g,' ').trim(); })
+    .filter(function(l){ return l.length>=4; });
+  // 문장 단위로 더 쪼개기 (마침표 기준, 너무 긴 줄만)
+  var sents=[];
+  lines.forEach(function(l){
+    if(l.length<=90){ sents.push(l); return; }
+    l.replace(/([.!?])\s+/g,'$1\u0001').split('\u0001').forEach(function(s){ s=s.trim(); if(s.length>=4) sents.push(s); });
+  });
+  var seen={}; sents=sents.filter(function(s){ var k=s.slice(0,60); if(seen[k]) return false; seen[k]=1; return true; });
+  var dec=[], act=[], fol=[], rest=[];
+  sents.forEach(function(s){
+    if(/다음\s*회의|차회|차기\s*회의|추후\s*(논의|협의|결정)|재논의|후속/.test(s)) fol.push(s);
+    else if(/결정|확정|승인|합의|의결|하기로\s*(함|했|한다)|채택/.test(s)) dec.push(s);
+    else if(/까지|마감|기한|제출|담당|진행\s*예정|준비|요청|보고|전달|조치|시행|발송|안내\s*예정|확인\s*(요망|필요)/.test(s)) act.push(s);
+    else rest.push(s);
+  });
+  // 핵심 안건: 남은 문장 중 단어 빈도 점수 상위
+  var freq={};
+  sents.forEach(function(s){ (s.match(/[가-힣a-zA-Z0-9]{2,}/g)||[]).forEach(function(w){ if(w.length<2) return; freq[w]=(freq[w]||0)+1; }); });
+  var scored=rest.map(function(s,i){
+    var ws=s.match(/[가-힣a-zA-Z0-9]{2,}/g)||[], sc=0;
+    ws.forEach(function(w){ sc+=(freq[w]||0); });
+    return {s:s, i:i, sc:ws.length?sc/Math.sqrt(ws.length):0};
+  }).sort(function(a,b){ return b.sc-a.sc; });
+  var agenda=scored.slice(0,5).sort(function(a,b){ return a.i-b.i; }).map(function(x){ return x.s; });
+  function cut(arr,n){ return arr.slice(0,n).map(function(s){ return '· '+(s.length>110?s.slice(0,108)+'…':s); }).join('\n'); }
+  var out=[];
+  out.push('■ 핵심 안건\n'+(agenda.length?cut(agenda,5):'· (본문에서 안건을 찾지 못했어요)'));
+  if(dec.length) out.push('■ 결정 사항\n'+cut(dec,8));
+  if(act.length) out.push('■ 할 일·기한\n'+cut(act,10));
+  if(fol.length) out.push('■ 다음 회의·후속 조치\n'+cut(fol,5));
+  return out.join('\n\n');
+}
 function aiSummarizeMeeting(){
-  var key=localStorage.getItem('ac_aikey')||'';
-  if(!key){ var k=prompt('Anthropic API 키를 입력하세요.\n(이 기기에만 저장되며 다른 사람에게 공유되지 않습니다)'); if(!k) return; key=k.trim(); localStorage.setItem('ac_aikey', key); }
   var raw=(document.getElementById('mt-raw').value||'').trim();
-  if(!raw){ toast('회의 내용을 먼저 붙여넣으세요','var(--rd)'); return; }
-  var model=localStorage.getItem('ac_aimodel')||'claude-sonnet-5';
-  var btn=document.getElementById('mt-ai-btn'); if(btn){ btn.textContent='AI 요약 중…'; btn.disabled=true; }
-  var prompt2='다음은 학원 관리자 회의 내용입니다. 아래 형식으로 깔끔하게 정리·편집해 주세요. 한국어 회의록 형식으로, 군더더기 없이.\n\n[형식]\n■ 핵심 안건\n■ 결정 사항\n■ 할 일(담당자별 액션 아이템)\n■ 다음 회의/후속 조치\n\n[회의 내용]\n'+raw;
-  fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({model:model, max_tokens:1800, messages:[{role:'user', content:prompt2}]})
-  }).then(function(r){return r.json();}).then(function(j){
-    if(btn){ btn.textContent='🤖 AI 요약·편집'; btn.disabled=false; }
-    if(j && j.error){ toast('요약 실패: '+(j.error.message||j.error.type||''),'var(--rd)'); return; }
-    var txt=(j&&j.content)?j.content.filter(function(b){return b.type==='text';}).map(function(b){return b.text;}).join('\n'):'';
-    if(!txt){ toast('요약 결과가 비어 있어요','var(--rd)'); return; }
-    document.getElementById('mt-summary').value=txt;
-    toast('AI 요약·편집 완료 ✓','var(--g)');
-  }).catch(function(e){ if(btn){ btn.textContent='🤖 AI 요약·편집'; btn.disabled=false; } toast('요약 오류: '+((e&&e.message)||e),'var(--rd)'); });
+  var btn=document.getElementById('mt-ai-btn'); if(btn){ btn.textContent='요약 정리 중…'; btn.disabled=true; }
+  function fin(){ if(btn){ btn.textContent='📝 자동 요약·정리 (내용+첨부파일)'; btn.disabled=false; } }
+  // 첨부 파일 텍스트 모으기 (캐시 → 서버)
+  var ps=_mtFiles.filter(function(f){ return f.hasTxt; }).map(function(f){
+    if(_mtTxtCache[f.fid]!==undefined) return Promise.resolve(_mtTxtCache[f.fid]);
+    return _FS.get('academy/mtfile_'+f.fid).then(function(doc){ var o=_FS.docToObj(doc)||{}; _mtTxtCache[f.fid]=o.txt||''; return o.txt||''; }).catch(function(){ return ''; });
+  });
+  Promise.all(ps).then(function(txts){
+    var all=(raw+'\n'+txts.join('\n')).trim();
+    if(!all){ fin(); toast('회의 내용을 붙여넣거나 요약 가능한 파일을 첨부하세요','var(--rd)'); return; }
+    var sum=mtLocalSummarize(all);
+    document.getElementById('mt-summary').value=sum;
+    fin(); toast('📝 자동 요약 완료 — 내용을 확인하고 필요하면 다듬어주세요 ✓','var(--g)');
+  }).catch(function(){ fin(); toast('요약 중 오류가 났어요','var(--rd)'); });
 }
 function openChangeLog(){
   if(!(ME && ME.role==='owner')){ toast('원장만 볼 수 있어요','var(--rd)'); return; }
