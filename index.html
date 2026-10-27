@@ -2504,6 +2504,7 @@ function mtView(id){
   }
   h+='<div style="display:flex;gap:8px;margin-top:12px">'
     +'<button class="btn" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove();mtOpen(\''+m.id+'\')">✏️ 편집</button>'
+    +(ME&&ME.role==='owner'?'<button class="btn ghost" style="flex:1;color:var(--rd);border-color:var(--rd)" onclick="mtDelete(\''+m.id+'\')">🗑 삭제</button>':'')
     +'<button class="btn ghost" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove()">닫기</button></div>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
@@ -2563,7 +2564,7 @@ function mtOpen(id){
           +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);padding:2px 12px;margin-bottom:10px">'+inner+'</div>';
       })():'')
     +'<button class="btn" onclick="mtSave()">저장</button>'
-    +(id?'<button class="btn ghost" style="color:var(--rd)" onclick="mtDelete(\''+id+'\')">삭제</button>':'')
+    +(id&&ME&&ME.role==='owner'?'<button class="btn ghost" style="color:var(--rd)" onclick="mtDelete(\''+id+'\')">삭제</button>':'')
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-mtedit\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
@@ -2655,8 +2656,10 @@ function mtAutoSchedule(text, mtTitle){
   }
 }
 function mtDelete(id){
-  if(!confirm('이 회의록을 삭제할까요?')) return;
-  var mt=(_meetings||[]).find(function(x){return x.id===id;});
+  if(!(ME && ME.role==='owner')){ toast('회의록 삭제는 원장만 할 수 있어요','var(--rd)'); return; }
+  var mt0=(_meetings||[]).find(function(x){return x.id===id;});
+  if(!confirm('「'+((mt0&&(mt0.title||mt0.date))||'')+'」 회의록을 삭제할까요?\n첨부 파일과 피드백·기한 기록도 함께 삭제됩니다.')) return;
+  var mt=mt0;
   if(mt && Array.isArray(mt.files)) mt.files.forEach(function(f){
     _auth.token().then(function(tok){
       var h=tok?{Authorization:'Bearer '+tok}:{};
@@ -2664,9 +2667,10 @@ function mtDelete(id){
     }).catch(function(){});
   });
   _meetings=(_meetings||[]).filter(function(x){return x.id!==id;});
-  _FS.set('academy/meetings', {list:_meetings});
-  try{ logChange('회의록 삭제', id); }catch(e){}
+  _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('🗑 회의록이 삭제됐어요','var(--g)'); }).catch(function(){ toast('삭제 저장 실패 · 인터넷 확인','var(--rd)'); });
+  try{ logChange('회의록 삭제', (mt&&(mt.title||mt.date))||id); }catch(e){}
   var m=document.getElementById('ov-mtedit'); if(m) m.remove();
+  var v=document.getElementById('ov-mtview'); if(v){ window._mtViewId=null; v.remove(); }
   _renderMeetList(false);
 }
 // ═══ 회의록 피드백 확인 요청 (버튼으로 확인 체크) ═══
