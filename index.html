@@ -7277,6 +7277,67 @@ function mtdDel(name,id){
   DB.myTodos[name]=(DB.myTodos[name]||[]).filter(function(x){ return x.id!==id; });
   saveAll(); _renderMyTodos();
 }
+// ═══ 원장 알림: 꼭 해야 하는 일이 미완료일 때 ═══
+function wbOwnerAlerts(){
+  var alerts=[]; var td=today(); var day=new Date().getDate();
+  // 1) 기한 지난 회의 할 일
+  (_meetings||[]).forEach(function(m){
+    (m.dls||[]).forEach(function(d){
+      if(d.status || !d.date) return;
+      if(d.date<td){
+        var days=Math.round((new Date(td)-new Date(d.date))/86400000);
+        alerts.push({sev:'late', text:d.text, info:'기한 '+d.date+' · '+days+'일 지남 · 👤 '+((m.who||[]).join('·')||'담당 미정'), src:'📝 '+(m.title||m.date||'')});
+      }
+    });
+    // 2) 3일 넘게 미확인 피드백
+    (m.fbs||[]).forEach(function(f){
+      var tg=mtFbTargets(m,f);
+      var wait=tg.filter(function(nm){ return !(f.done&&f.done[nm]); });
+      if(wait.length && f.ts && (Date.now()-f.ts)>3*86400000){
+        alerts.push({sev:'warn', text:f.text, info:'피드백 미확인 '+Math.floor((Date.now()-f.ts)/86400000)+'일 · 👤 '+wait.join('·'), src:'📝 '+(m.title||m.date||'')});
+      }
+    });
+  });
+  // 3) 매뉴얼 월간 필수 업무 미완료 (시기 지남 / 월말 임박)
+  try{
+    var man=_manDB(), mdone=man.done[_manYM()]||{};
+    MAN_DEPTS.forEach(function(dp){ man[dp.key].monthly.forEach(function(it){
+      if(mdone[it.id]) return;
+      var w=String(it.when||'');
+      var sev=null, why='';
+      var mm=w.match(/(\d{1,2})\s*일/);
+      if(mm && day>parseInt(mm[1],10)){ sev='late'; why='시기('+w+') 지남'; }
+      else if(/말일|월\s*말/.test(w) && day>=26){ sev='warn'; why='말일 임박'; }
+      else if(/첫\s*근무일|월\s*초/.test(w) && day>=5){ sev='late'; why='시기('+w+') 지남'; }
+      else if(day>=21){ sev='warn'; why='월말 임박'; }
+      if(sev) alerts.push({sev:sev, text:(w?('['+w+'] '):'')+it.title, info:why, src:dp.label});
+    }); });
+  }catch(e){}
+  alerts.sort(function(a,b){ return (a.sev==='late'?0:1)-(b.sev==='late'?0:1); });
+  return alerts;
+}
+function wbOwnerAlertCardHTML(){
+  if(!(ME&&ME.role==='owner')) return '';
+  var al=wbOwnerAlerts();
+  if(!al.length) return '';
+  // 하루 1회 브라우저 알림
+  try{
+    if(localStorage.getItem('ac_ownalert')!==today()){
+      localStorage.setItem('ac_ownalert', today());
+      showDirectNotif('🚨 미완료 할 일 '+al.length+'건', al.slice(0,3).map(function(a){ return a.text; }).join(' · '));
+    }
+  }catch(e){}
+  var h='<div onclick="openWorkBoard()" style="background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--r);padding:11px 14px;margin-bottom:10px;cursor:pointer">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px"><span style="font-size:12.5px;font-weight:800;color:var(--rd)">🚨 꼭 해야 할 일 미완료 '+al.length+'건</span><span style="font-size:11px;color:var(--rd)">현황판 →</span></div>';
+  al.slice(0,5).forEach(function(a){
+    h+='<div style="font-size:11.5px;line-height:1.5;margin-top:4px;padding-left:2px">'
+      +'<span style="color:'+(a.sev==='late'?'var(--rd)':'var(--am)')+';font-weight:700">'+(a.sev==='late'?'🚨':'⚠')+'</span> '+dEsc(a.text)
+      +'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+dEsc(a.info)+' · '+dEsc(a.src)+'</span></div>';
+  });
+  if(al.length>5) h+='<div style="font-size:10.5px;color:var(--t3);margin-top:4px">외 '+(al.length-5)+'건 — 눌러서 전체 보기</div>';
+  h+='</div>';
+  return h;
+}
 function wbHomeCardHTML(){
   var wb=wbCollect();
   var manOpen=wb.open.filter(function(d){ return d.type==='매뉴얼 업무'; });
@@ -7321,6 +7382,7 @@ function renderAdminHome() {
          }
          var pend=mtMyPendingFb();
          return (pend.length?'<div onclick="openMeetings()" style="background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--pu)">💬 회의록 피드백 확인 필요 '+pend.length+'건</span><span style="font-size:11px;color:var(--pu)">확인하기 →</span></div>':'')
+           + wbOwnerAlertCardHTML()
            + wbHomeCardHTML();
        })()
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button></div>'
