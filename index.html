@@ -6930,6 +6930,97 @@ function manDelDoc(dept,id){
   saveAll(); _manOpenDoc=null; renderManuals(); toast('삭제됐어요');
 }
 
+// ═══ 업무 현황판 (완료한 일·미완료 일 공유 + 매뉴얼 시기별 업무 상시 표시) ═══
+function wbCollect(){
+  var ym=getYearMonth();
+  var done=[], open=[];
+  (_meetings||[]).forEach(function(m){
+    var src='📝 '+(m.title||m.date||'');
+    (m.dls||[]).forEach(function(d){
+      if(!d.status) open.push({type:'회의 기한', text:d.text, date:d.date||'', who:(m.who||[]).join('·'), src:src});
+      else if(d.status==='ok') done.push({type:'기한 지킴', text:d.text, date:d.date||'', who:(m.who||[]).join('·'), src:src});
+    });
+    (m.fbs||[]).forEach(function(f){
+      mtFbTargets(m,f).forEach(function(nm){
+        var dn=f.done&&f.done[nm];
+        if(dn) done.push({type:'피드백 확인', text:f.text, date:dn.date||'', who:nm, src:src});
+        else open.push({type:'피드백', text:f.text, date:'', who:nm, src:src});
+      });
+    });
+  });
+  Object.keys(DB.tlj||{}).forEach(function(nm){ (DB.tlj[nm]||[]).forEach(function(e){
+    if((e.date||'').slice(0,7)!==ym) return;
+    (e.linked||[]).forEach(function(l){ done.push({type:'일지 처리', text:l.text, date:e.date, who:nm, hours:l.hours||'', src:'🧑‍💼 팀장일지'}); });
+  }); });
+  var man=_manDB(), mdone=man.done[_manYM()]||{};
+  MAN_DEPTS.forEach(function(dp){ man[dp.key].monthly.forEach(function(it){
+    var dn=mdone[it.id];
+    var txt=(it.when?('['+it.when+'] '):'')+it.title;
+    if(dn) done.push({type:'매뉴얼 업무', text:txt, date:dn.date||'', who:dn.by||'', src:dp.label});
+    else open.push({type:'매뉴얼 업무', text:txt, date:'', who:'', src:dp.label, when:it.when||''});
+  }); });
+  // 중복 제거 (같은 사람·같은 내용)
+  var seen={};
+  done=done.filter(function(d){ var k=(d.who||'')+'|'+String(d.text||'').replace(/\s+/g,'').slice(0,60); if(seen[k]) return false; seen[k]=1; return true; });
+  done.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+  open.sort(function(a,b){ return (a.date||'9999').localeCompare(b.date||'9999'); });
+  return {done:done, open:open};
+}
+function openWorkBoard(){
+  if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
+  var go=function(){ _renderWorkBoard(); };
+  if(typeof _meetings==='undefined' || _meetings===null){
+    toast('불러오는 중…');
+    _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; go(); }).catch(function(){ _meetings=_meetings||[]; go(); });
+  } else go();
+}
+function _renderWorkBoard(){
+  var ex=document.getElementById('ov-workboard'); if(ex) ex.remove();
+  var wb=wbCollect();
+  var st=manMonthStat();
+  var now=new Date();
+  function row(d,isDone){
+    return '<div style="background:var(--s1);border:1px solid '+(isDone?'var(--g)':'var(--s3)')+';border-radius:10px;padding:8px 11px;margin-bottom:6px">'
+      +'<div style="font-size:12.5px;font-weight:600;line-height:1.5;'+(isDone?'color:var(--t2)':'')+'">'+(isDone?'✅ ':'⬜ ')+dEsc(d.text)+(d.hours?' <span style="color:var(--acc);font-weight:700;font-size:11px">· '+dEsc(d.hours)+'</span>':'')+'</div>'
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+dEsc(d.type)+(d.who?' · 👤 '+dEsc(d.who):'')+(d.date?' · '+dEsc(d.date):'')+' · '+dEsc(d.src)+'</div></div>';
+  }
+  var h='<div class="ov open" id="ov-workboard" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">📋 업무 현황판</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:10px">회의·일지·매뉴얼의 할 일을 모든 관리자가 함께 봅니다. (완료는 이번 달 기준)</div>'
+    +'<div style="display:flex;gap:6px;margin-bottom:12px;font-size:11px;font-weight:700">'
+    +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--am);border-radius:8px;padding:7px 0">미완료 '+wb.open.length+'건</span>'
+    +'<span style="flex:1;text-align:center;background:var(--gl);color:var(--g);border-radius:8px;padding:7px 0">완료 '+wb.done.length+'건</span>'
+    +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--pu);border-radius:8px;padding:7px 0">매뉴얼 '+st.ok+'/'+st.tot+'</span></div>'
+    +'<div class="sl2" style="margin:2px 0 8px"><div class="d8" style="background:var(--am)"></div>🔔 아직 완료되지 않은 일 <span style="font-size:11px;color:var(--t3)">'+wb.open.length+'건</span></div>';
+  if(!wb.open.length) h+='<div class="empty" style="font-size:12px;padding:6px 0 10px">남은 일이 없어요 👍</div>';
+  wb.open.slice(0,60).forEach(function(d){ h+=row(d,false); });
+  h+='<div class="sl2" style="margin:14px 0 8px"><div class="d8" style="background:var(--g)"></div>✅ 완료한 일 <span style="font-size:11px;color:var(--t3)">'+now.getFullYear()+'년 '+(now.getMonth()+1)+'월 · '+wb.done.length+'건</span></div>';
+  if(!wb.done.length) h+='<div class="empty" style="font-size:12px;padding:6px 0 10px">이번 달 완료 기록이 없어요</div>';
+  wb.done.slice(0,60).forEach(function(d){ h+=row(d,true); });
+  h+='<div style="display:flex;gap:8px;margin-top:10px">'
+    +'<button class="btn ghost" style="flex:1" onclick="document.getElementById(\'ov-workboard\').remove();openManuals()">📖 매뉴얼 열기</button>'
+    +'<button class="btn ghost" style="flex:1" onclick="document.getElementById(\'ov-workboard\').remove();openMeetings()">📝 회의록 열기</button></div>'
+    +'<button class="btn ghost" style="margin-top:8px" onclick="document.getElementById(\'ov-workboard\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+// 관리자 홈 상시 카드: 미완료·완료 요약 + 매뉴얼 시기별 할 일
+function wbHomeCardHTML(){
+  var wb=wbCollect();
+  var manOpen=wb.open.filter(function(d){ return d.type==='매뉴얼 업무'; });
+  var h='<div onclick="openWorkBoard()" style="background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--r);padding:11px 14px;margin-bottom:10px;cursor:pointer">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:800;color:var(--acc)">📋 업무 현황판</span>'
+    +'<span style="font-size:11px;font-weight:700"><span style="color:'+(wb.open.length?'var(--am)':'var(--g)')+'">미완료 '+wb.open.length+'</span> · <span style="color:var(--g)">완료 '+wb.done.length+'</span></span></div>';
+  if(manOpen.length){
+    h+='<div style="font-size:10.5px;color:var(--t3);margin-top:6px;font-weight:700">📅 이번 달 시기별 업무 (매뉴얼)</div>';
+    manOpen.slice(0,3).forEach(function(d){
+      h+='<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.4">'+(d.when?'<span style="background:var(--acc-l);color:var(--acc);border-radius:5px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:5px">'+dEsc(d.when)+'</span>':'')+dEsc(String(d.text||'').replace(/^\[[^\]]*\]\s*/,''))+'</div>';
+    });
+    if(manOpen.length>3) h+='<div style="font-size:10.5px;color:var(--t3);margin-top:3px">외 '+(manOpen.length-3)+'건 — 눌러서 전체 보기</div>';
+  }
+  h+='</div>';
+  return h;
+}
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
@@ -6957,7 +7048,8 @@ function renderAdminHome() {
            _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; try{ if(curTab==='home'&&isAdminLevel()) renderAdminHome(); }catch(e){} }).catch(function(){});
          }
          var pend=mtMyPendingFb();
-         return pend.length?'<div onclick="openMeetings()" style="background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--pu)">💬 회의록 피드백 확인 필요 '+pend.length+'건</span><span style="font-size:11px;color:var(--pu)">확인하기 →</span></div>':'';
+         return (pend.length?'<div onclick="openMeetings()" style="background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--pu)">💬 회의록 피드백 확인 필요 '+pend.length+'건</span><span style="font-size:11px;color:var(--pu)">확인하기 →</span></div>':'')
+           + wbHomeCardHTML();
        })()
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button></div>'
      + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMetricRank()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 항목별 순위 (상담·퇴원율 등)</button></div>'
