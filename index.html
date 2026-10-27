@@ -7053,6 +7053,90 @@ function _renderWorkBoard(){
   document.body.insertAdjacentHTML('beforeend', h);
 }
 // 관리자 홈 상시 카드: 미완료·완료 요약 + 매뉴얼 시기별 할 일
+// ═══ 날짜별 할 일 (개인 플래너 · 작성자 본인 + 원장만 열람) ═══
+function _myTodoList(name){ if(!DB.myTodos) DB.myTodos={}; if(!Array.isArray(DB.myTodos[name])) DB.myTodos[name]=[]; return DB.myTodos[name]; }
+var _mtdYM=null, _mtdFor=null;
+function myTodoOpenCnt(){ // 내 이번 달 미완료 (버튼 배지)
+  if(!ME||!ME.name) return 0;
+  var ym=getYearMonth();
+  return ((DB.myTodos&&DB.myTodos[ME.name])||[]).filter(function(t){ return (t.date||'').slice(0,7)===ym && !t.done; }).length;
+}
+function openMyTodos(){
+  if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
+  if(!_mtdYM){ var d=new Date(); _mtdYM=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); }
+  _mtdFor=ME.name; // 열 때는 항상 내 목록부터
+  _renderMyTodos();
+}
+function mtdNav(n){ _mtdYM=_ymAdd(_mtdYM,n); _renderMyTodos(); }
+function _renderMyTodos(){
+  var ex=document.getElementById('ov-mytodos'); if(ex) ex.remove();
+  var isOw=(ME&&ME.role==='owner');
+  var mine=(_mtdFor===ME.name);
+  var p=_mtdYM.split('-');
+  var h='<div class="ov open" id="ov-mytodos" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">📆 날짜별 할 일</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:10px">'+(isOw?'본인과 각 관리자의 날짜별 할 일입니다. 내용은 작성자 본인과 원장만 볼 수 있어요.':'나만의 날짜별 할 일입니다. 내용은 본인과 원장님만 볼 수 있고, 다른 관리자에게는 보이지 않아요.')+'</div>';
+  if(isOw){
+    var names=[ME.name];
+    ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(a&&a.name&&names.indexOf(a.name)<0) names.push(a.name); });
+    ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(a){ if(a&&a.name&&names.indexOf(a.name)<0) names.push(a.name); });
+    Object.keys(DB.myTodos||{}).forEach(function(nm){ if(names.indexOf(nm)<0) names.push(nm); });
+    h+='<div class="rank-tab-row" style="margin-bottom:10px">'+names.map(function(nm){ return '<div class="rank-tab'+(_mtdFor===nm?' on':'')+'" onclick="_mtdFor=\''+dEsc(nm)+'\';_renderMyTodos()">'+dEsc(nm===ME.name?'원장(나)':nm)+'</div>'; }).join('')+'</div>';
+  }
+  h+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">'
+    +'<button onclick="mtdNav(-1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">◀</button>'
+    +'<span style="font-size:15px;font-weight:800">'+p[0]+'년 '+parseInt(p[1],10)+'월'+(isOw&&!mine?' · '+dEsc(_mtdFor):'')+'</span>'
+    +'<button onclick="mtdNav(1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">▶</button></div>';
+  if(mine){
+    h+='<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:12px">'
+      +'<div style="display:flex;gap:6px;margin-bottom:6px"><input class="fi" type="date" id="mtd-date" value="'+today()+'" style="flex:0 0 42%;margin:0">'
+      +'<input class="fi" type="text" id="mtd-text" placeholder="할 일 내용" style="flex:1;margin:0" onkeydown="if(event.key===\'Enter\')mtdAdd()"></div>'
+      +'<button onclick="mtdAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--acc);background:none;color:var(--acc);font-size:12px;font-weight:700;cursor:pointer">+ 추가</button></div>';
+  }
+  var list=_myTodoList(_mtdFor).filter(function(t){ return (t.date||'').slice(0,7)===_mtdYM; });
+  var dn=list.filter(function(t){ return t.done; }).length;
+  if(list.length) h+='<div style="font-size:11px;font-weight:700;color:'+(dn===list.length?'var(--g)':'var(--am)')+';margin-bottom:8px;text-align:center">'+dn+'/'+list.length+' 완료</div>';
+  if(!list.length) h+='<div class="empty" style="font-size:12px;padding:10px 0">이 달에 등록된 할 일이 없어요'+(mine?' — 위에서 추가하세요':'')+'</div>';
+  var byDate={};
+  list.forEach(function(t){ (byDate[t.date]=byDate[t.date]||[]).push(t); });
+  Object.keys(byDate).sort().forEach(function(dt){
+    h+='<div style="font-size:11.5px;font-weight:800;color:var(--acc);margin:10px 0 5px">'+parseInt(dt.slice(8,10),10)+'일 <span style="font-weight:600;color:var(--t3)">'+dt+'</span></div>';
+    byDate[dt].forEach(function(t){
+      h+='<div style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid '+(t.done?'var(--g)':'var(--s3)')+';border-radius:10px;padding:9px 11px;margin-bottom:5px">'
+        +(mine?'<input type="checkbox" '+(t.done?'checked':'')+' onchange="mtdToggle(\''+t.id+'\')" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g);cursor:pointer">'
+          :'<span style="flex-shrink:0;font-size:13px">'+(t.done?'✅':'⬜')+'</span>')
+        +'<span style="flex:1;min-width:0;font-size:12.5px;line-height:1.5;'+(t.done?'color:var(--t3);text-decoration:line-through':'')+'">'+dEsc(t.text)
+        +(t.done&&t.doneDate?'<span style="display:block;font-size:10px;color:var(--g);text-decoration:none;margin-top:1px">✓ '+dEsc(t.doneDate)+' 완료</span>':'')+'</span>'
+        +((mine||isOw)?'<button onclick="mtdDel(\''+dEsc(_mtdFor)+'\',\''+t.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button>':'')
+        +'</div>';
+    });
+  });
+  h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-mytodos\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function mtdAdd(){
+  var date=(document.getElementById('mtd-date')||{}).value||today();
+  var text=((document.getElementById('mtd-text')||{}).value||'').trim();
+  if(!text){ toast('할 일 내용을 입력하세요','var(--rd)'); return; }
+  _myTodoList(ME.name).push({id:'td'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:date, text:text, done:false, ts:Date.now()});
+  saveAll();
+  _mtdYM=date.slice(0,7); _mtdFor=ME.name;
+  _renderMyTodos();
+  var inp=document.getElementById('mtd-text'); if(inp){ inp.focus(); }
+  toast('추가됐어요 ✓','var(--g)');
+}
+function mtdToggle(id){
+  var t=_myTodoList(ME.name).find(function(x){ return x.id===id; }); if(!t) return;
+  t.done=!t.done; t.doneDate=t.done?today():'';
+  saveAll(); _renderMyTodos();
+}
+function mtdDel(name,id){
+  if(!(ME && (ME.name===name || ME.role==='owner'))) return;
+  if(!confirm('이 할 일을 삭제할까요?')) return;
+  DB.myTodos[name]=(DB.myTodos[name]||[]).filter(function(x){ return x.id!==id; });
+  saveAll(); _renderMyTodos();
+}
 function wbHomeCardHTML(){
   var wb=wbCollect();
   var manOpen=wb.open.filter(function(d){ return d.type==='매뉴얼 업무'; });
@@ -7090,7 +7174,7 @@ function renderAdminHome() {
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지 작성</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
-     + (function(){ var st=manMonthStat(); return '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼 (교무실·행정실)'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">· 이번 달 '+st.ok+'/'+st.tot+'</span>':'')+'</button></div>'; })()
+     + (function(){ var st=manMonthStat(); var td=myTodoOpenCnt(); return '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">'+st.ok+'/'+st.tot+'</span>':'')+'</button><button onclick="openMyTodos()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📆 날짜별 할 일'+(td?' <span style="font-weight:700;color:var(--am)">'+td+'</span>':'')+'</button></div>'; })()
      + (function(){
          if(_meetings===null && !window._mtBgLoad){ window._mtBgLoad=1;
            _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; try{ if(curTab==='home'&&isAdminLevel()) renderAdminHome(); }catch(e){} }).catch(function(){});
