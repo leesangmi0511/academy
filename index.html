@@ -2274,6 +2274,7 @@ function mtDlSet(mid, idx, st){
   _FS.set('academy/meetings',{list:_meetings}).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   var row=document.getElementById('mtdl-'+idx); if(row){ row.outerHTML=mtDlRow(m, idx); }
   if(document.getElementById('ov-mttodo')) renderMtTodo();
+  if(document.getElementById('ov-mtview') && window._mtViewId) mtView(window._mtViewId);
 }
 // ═══ 월별 할 일 정리 (회의 내용에서 자동 취합) ═══
 var _mtTodoYM=null;
@@ -2394,7 +2395,7 @@ function _renderMeetList(loading){
       var tl=mtTypeLabel(m);
       var whoTxt='';
       if(Array.isArray(m.who)&&m.who.length){ whoTxt = m.who.length<=3 ? m.who.join('·') : (m.who.slice(0,2).join('·')+' 외 '+(m.who.length-2)+'명'); }
-      return '<div onclick="mtOpen(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
+      return '<div onclick="mtView(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
         +'<div style="font-size:12.5px;font-weight:700;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(m.title||'(제목 없음)')+'</div>'
         +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+((m.fbs&&m.fbs.length)?' · 💬 '+m.fbs.length:'')+' · '+dEsc(m.by||'')+'</div></div>';
     }).join('') : '<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">'+(_mtFilter?'이 종류의 회의록이 없어요':'저장된 회의록이 없어요')+'</div>';
@@ -2434,6 +2435,76 @@ function _renderMeetList(loading){
           +'<div style="font-size:10px;color:var(--t3);margin:-6px 0 10px;line-height:1.5">＊ 준수율 90%↑ +10 · 70%↑ +5 · 50%↓ -5 · 30%↓ -10 / 기한 없는 회의록 1건당 -5점 (최대 -20)</div>'):'';
       })())
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-meetings\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+// ═══ 회의록 조회 (읽기 전용 + 내 할 일 완료 버튼) ═══
+function mtViewFileDl(fid,name){
+  toast('내려받는 중…');
+  _FS.get('academy/mtfile_'+fid).then(function(doc){
+    var o=_FS.docToObj(doc)||{};
+    if(!o.data){ toast('파일을 찾을 수 없어요','var(--rd)'); return; }
+    var bin=atob(o.data), arr=new Uint8Array(bin.length);
+    for(var j=0;j<bin.length;j++) arr[j]=bin.charCodeAt(j);
+    var blob=new Blob([arr],{type:o.type||'application/octet-stream'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'파일'; document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },800);
+  }).catch(function(){ toast('내려받기 실패','var(--rd)'); });
+}
+function mtView(id){
+  var m=(_meetings||[]).find(function(x){ return x.id===id; });
+  if(!m){ toast('회의록을 찾을 수 없어요','var(--rd)'); return; }
+  window._mtViewId=id;
+  var ex=document.getElementById('ov-mtview'); if(ex) ex.remove();
+  var tl=mtTypeLabel(m);
+  var whoTxt=Array.isArray(m.who)&&m.who.length?m.who.join(' · '):'';
+  var amIn=ME && Array.isArray(m.who) && m.who.indexOf(ME.name)>=0;
+  var h='<div class="ov open" id="ov-mtview" onclick="if(event.target===this){window._mtViewId=null;this.remove();}" style="display:flex;z-index:1050"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">📖 '+dEsc(m.title||'(제목 없음)')+'</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:12px">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?'<br>👥 '+dEsc(whoTxt):'')+(m.by?' · 작성 '+dEsc(m.by):'')+'</div>';
+  // ── 내가 해야 할 일 ──
+  if(isAdminLevel()){
+    var mine=[];
+    if(amIn) (m.dls||[]).forEach(function(d,idx){ mine.push({kind:'dl', idx:idx, text:d.text, date:d.date, st:d.status||''}); });
+    (m.fbs||[]).forEach(function(f){
+      var tg=mtFbTargets(m,f);
+      if(ME && tg.indexOf(ME.name)>=0) mine.push({kind:'fb', fid:f.id, text:f.text, done:!!(f.done&&f.done[ME.name])});
+    });
+    if(mine.length){
+      var left=mine.filter(function(t){ return t.kind==='dl'?!t.st:!t.done; }).length;
+      h+='<div class="sl2" style="margin:2px 0 8px"><div class="d8" style="background:var(--acc)"></div>📌 내가 해야 할 일 <span style="font-size:11px;color:'+(left?'var(--am)':'var(--g)')+';font-weight:700">'+(left?('남음 '+left+'건'):'모두 완료 ✓')+'</span></div>';
+      mine.forEach(function(t){
+        var doneNow=t.kind==='dl'?(t.st==='ok'):t.done;
+        var late=t.kind==='dl'&&t.st==='late';
+        h+='<div style="background:var(--s1);border:1px solid '+(doneNow?'var(--g)':late?'var(--rd)':'var(--s3)')+';border-radius:10px;padding:9px 11px;margin-bottom:6px">'
+          +'<div style="font-size:12.5px;font-weight:600;line-height:1.5;'+(doneNow?'color:var(--t3)':'')+'">'+(t.kind==='fb'?'💬 ':'⏱ ')+dEsc(t.text)+'</div>'
+          +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(t.kind==='dl'?('기한 '+dEsc(t.date||'')):'피드백 확인 요청')+'</div>'
+          +(doneNow?'<div style="font-size:11px;color:var(--g);font-weight:700;margin-top:4px">✅ 완료'+(t.kind==='dl'?' (지킴)':' (확인함)')+'</div>'
+            :late?'<div style="font-size:11px;color:var(--rd);font-weight:700;margin-top:4px">✗ 어김으로 체크됨</div>'
+            :(t.kind==='dl'
+              ?'<button onclick="mtDlSet(\''+m.id+'\','+t.idx+',\'ok\')" style="margin-top:6px;width:100%;padding:8px;border-radius:9px;border:none;background:var(--g);color:#fff;font-size:12px;font-weight:700;cursor:pointer">✓ 완료했습니다</button>'
+              :'<button onclick="mtFbConfirm(\''+m.id+'\',\''+t.fid+'\')" style="margin-top:6px;width:100%;padding:8px;border-radius:9px;border:none;background:var(--pu);color:#fff;font-size:12px;font-weight:700;cursor:pointer">👆 확인했습니다</button>'))
+          +'</div>';
+      });
+    }
+  }
+  // ── 요약·내용 ──
+  if(m.summary) h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>요약·정리</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:11px 13px;font-size:12.5px;line-height:1.7;white-space:pre-wrap;margin-bottom:8px">'+dEsc(m.summary)+'</div>';
+  if(m.raw) h+='<div onclick="var e=document.getElementById(\'mtv-raw\');var a=document.getElementById(\'mtv-raw-ar\');var on=e.style.display!==\'none\';e.style.display=on?\'none\':\'block\';a.textContent=on?\'▼ 펼치기\':\'▲ 접기\';" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:9px 13px;margin-bottom:6px;cursor:pointer"><span style="font-size:12px;font-weight:700">회의 내용 전문</span><span id="mtv-raw-ar" style="font-size:11px;color:var(--t2)">▼ 펼치기</span></div>'
+    +'<div id="mtv-raw" style="display:none;background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:11px 13px;font-size:12px;line-height:1.7;white-space:pre-wrap;margin-bottom:8px;color:var(--t2)">'+dEsc(m.raw)+'</div>';
+  // ── 첨부 파일 ──
+  if(m.files&&m.files.length){
+    h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--am)"></div>📎 첨부 파일 '+m.files.length+'건</div>';
+    m.files.forEach(function(f){
+      h+='<div style="display:flex;align-items:center;gap:8px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 11px;margin-bottom:5px">'
+        +'<span style="flex:1;min-width:0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+dEsc(f.name)+'</span>'
+        +'<button onclick="mtViewFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11.5px;background:none;border:1px solid var(--acc);color:var(--acc);border-radius:7px;padding:4px 10px;cursor:pointer;font-weight:600;flex-shrink:0">받기</button></div>';
+    });
+  }
+  h+='<div style="display:flex;gap:8px;margin-top:12px">'
+    +'<button class="btn" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove();mtOpen(\''+m.id+'\')">✏️ 편집</button>'
+    +'<button class="btn ghost" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove()">닫기</button></div>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
 }
@@ -2696,6 +2767,7 @@ function mtFbConfirm(mid,fid){
   }
   if(document.getElementById('ov-mtedit')){ var ed=_mtFbs.find(function(x){ return x.id===fid; }); if(ed){ if(!ed.done) ed.done={}; ed.done[ME.name]={date:today()}; } _mtRenderFbs(); }
   if(document.getElementById('ov-meetings')) _renderMeetList(false);
+  if(document.getElementById('ov-mtview') && window._mtViewId) mtView(window._mtViewId);
 }
 // 파일 첨부
 var _mtFiles=[]; var _mtTxtCache={};
@@ -5873,13 +5945,14 @@ function _tljList(name){ if(!DB.tlj) DB.tlj={}; if(!Array.isArray(DB.tlj[name]))
 function calcAdminTljStats(name){
   var ym=getYearMonth();
   var list=(DB.tlj&&DB.tlj[name])||[];
-  var days={}, linked=0;
-  list.forEach(function(e){ if((e.date||'').slice(0,7)===ym){ days[e.date]=1; linked+=(e.linked||[]).length; } });
+  var HRS={'30분':0.5,'1시간':1,'1.5시간':1.5,'2시간':2,'3시간':3,'4시간':4,'종일':8};
+  var days={}, linked=0, hours=0;
+  list.forEach(function(e){ if((e.date||'').slice(0,7)===ym){ days[e.date]=1; (e.linked||[]).forEach(function(l){ linked++; hours+=HRS[l.hours]||0; }); } });
   var d=Object.keys(days).length;
   var adj=0;
   adj += d>=12?5 : d>=8?3 : d>=4?1 : d>0?0 : -5; // 작성 성실도
   adj += linked>=5?5 : linked>=2?3 : linked>0?1 : 0; // 회의 할 일 처리 기록
-  return {days:d, linked:linked, adj:adj};
+  return {days:d, linked:linked, hours:Math.round(hours*10)/10, adj:adj};
 }
 // 내가 처리해야 할 회의 할 일 (기한 미체크 + 피드백 미확인)
 function tljMyTodos(){
@@ -5914,7 +5987,7 @@ function _renderTlj(){
       var st=calcAdminTljStats(_tljViewFor);
       h+='<div style="display:flex;gap:6px;margin:10px 0;font-size:11px;font-weight:700">'
         +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--acc);border-radius:8px;padding:7px 0">이번 달 작성 '+st.days+'일</span>'
-        +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--g);border-radius:8px;padding:7px 0">할 일 처리 '+st.linked+'건</span>'
+        +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--g);border-radius:8px;padding:7px 0">할 일 처리 '+st.linked+'건'+(st.hours?' · '+st.hours+'h':'')+'</span>'
         +'<span style="flex:1;text-align:center;background:'+(st.adj>=0?'var(--gl);color:var(--g)':'var(--s2);color:var(--rd)')+';border-radius:8px;padding:7px 0">점수 보정 '+(st.adj>0?'+':'')+st.adj+'</span></div>'
         +'<div style="font-size:10px;color:var(--t3);margin-bottom:10px;line-height:1.5">＊ 작성 12일↑ +5 · 8일↑ +3 · 4일↑ +1 · 0일 -5 / 회의 할 일 처리 5건↑ +5 · 2건↑ +3 · 1건 +1 — 관리자 평가 종합 점수에 반영</div>';
     }
@@ -5929,15 +6002,19 @@ function _renderTlj(){
     if(!todos.length) h+='<div style="font-size:11.5px;color:var(--t3);padding:2px 0 8px">남은 회의 할 일이 없어요 👍</div>';
     else h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">'
       +todos.map(function(t,i){
-        return '<label style="display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--s2);cursor:pointer">'
-          +'<input type="checkbox" class="tlj-todo" data-i="'+i+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
+        var hopts=['30분','1시간','1.5시간','2시간','3시간','4시간','종일'].map(function(o){ return '<option value="'+o+'">'+o+'</option>'; }).join('');
+        return '<div style="padding:8px 0;border-bottom:1px solid var(--s2)">'
+          +'<label style="display:flex;gap:9px;align-items:flex-start;cursor:pointer">'
+          +'<input type="checkbox" class="tlj-todo" data-i="'+i+'" onchange="var s=document.getElementById(\'tlj-hr-'+i+'\');if(s){s.style.display=this.checked?\'block\':\'none\';}" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
           +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+dEsc(t.text)
-          +'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+(t.kind==='dl'?('⏱ '+dEsc(t.date||'')+' · '):'💬 피드백 · ')+'📝 '+dEsc(t.mtitle)+'</span></span></label>';
+          +'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+(t.kind==='dl'?('⏱ '+dEsc(t.date||'')+' · '):'💬 피드백 · ')+'📝 '+dEsc(t.mtitle)+'</span></span></label>'
+          +'<select class="fs tlj-hours" id="tlj-hr-'+i+'" data-i="'+i+'" style="display:none;margin:6px 0 0 27px;width:calc(100% - 27px);padding:7px;font-size:12px"><option value="">일한 시간 선택 (선택사항)</option>'+hopts+'</select>'
+          +'</div>';
       }).join('')+'</div>';
     window._tljTodos=todos;
     h+='<button class="btn" onclick="tljSave()">일지 저장</button>';
     var st2=calcAdminTljStats(ME.name);
-    h+='<div style="font-size:10.5px;color:var(--t3);margin:6px 0 10px;text-align:center">이번 달 작성 '+st2.days+'일 · 할 일 처리 '+st2.linked+'건 · 점수 보정 '+(st2.adj>0?'+':'')+st2.adj+'</div>';
+    h+='<div style="font-size:10.5px;color:var(--t3);margin:6px 0 10px;text-align:center">이번 달 작성 '+st2.days+'일 · 할 일 처리 '+st2.linked+'건'+(st2.hours?' ('+st2.hours+'시간)':'')+' · 점수 보정 '+(st2.adj>0?'+':'')+st2.adj+'</div>';
   }
   // 일지 목록
   var target=isOw?_tljViewFor:ME.name;
@@ -5951,7 +6028,7 @@ function _renderTlj(){
       +(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':'')
       +(e.plan?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--t2)"><b>📌 예정</b>\n'+dEsc(e.plan)+'</div>':'')
       +(e.issue?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--am)"><b>⚠ 특이사항</b>\n'+dEsc(e.issue)+'</div>':'')
-      +((e.linked&&e.linked.length)?'<div style="font-size:11px;color:var(--g);margin-top:5px;line-height:1.5">'+e.linked.map(function(l){ return '✔ '+dEsc(l.text); }).join('<br>')+'</div>':'')
+      +((e.linked&&e.linked.length)?'<div style="font-size:11px;color:var(--g);margin-top:5px;line-height:1.5">'+e.linked.map(function(l){ return '✔ '+dEsc(l.text)+(l.hours?' <span style="color:var(--acc);font-weight:700">· '+dEsc(l.hours)+'</span>':''); }).join('<br>')+'</div>':'')
       +'</div>';
   });
   h+='<button class="btn ghost" style="margin-top:8px" onclick="document.getElementById(\'ov-tlj\').remove()">닫기</button>'
@@ -5963,11 +6040,17 @@ function tljSave(){
   var done=((document.getElementById('tlj-done')||{}).value||'').trim();
   var plan=((document.getElementById('tlj-plan')||{}).value||'').trim();
   var issue=((document.getElementById('tlj-issue')||{}).value||'').trim();
-  var checked=Array.prototype.map.call(document.querySelectorAll('.tlj-todo:checked'),function(c){ return window._tljTodos[parseInt(c.getAttribute('data-i'))]; }).filter(Boolean);
+  var checked=Array.prototype.map.call(document.querySelectorAll('.tlj-todo:checked'),function(c){
+    var i=parseInt(c.getAttribute('data-i'));
+    var t=window._tljTodos[i]; if(!t) return null;
+    var sel=document.getElementById('tlj-hr-'+i);
+    var hrs=sel?sel.value:'';
+    return Object.assign({hours:hrs}, t);
+  }).filter(Boolean);
   if(!done && !checked.length){ toast('오늘 한 일을 적거나, 처리한 할 일을 체크해주세요','var(--rd)'); return; }
   var list=_tljList(ME.name);
   var entry={id:'tj'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:date, done:done, plan:plan, issue:issue,
-    linked:checked.map(function(t){ return {text:t.text, kind:t.kind, mid:t.mid}; }), ts:Date.now()};
+    linked:checked.map(function(t){ return {text:t.text, kind:t.kind, mid:t.mid, hours:t.hours||''}; }), ts:Date.now()};
   list.push(entry);
   // 체크한 회의 할 일 → 회의록에 반영 (기한=지킴, 피드백=확인)
   var touched=false;
