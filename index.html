@@ -6937,30 +6937,30 @@ function manParseText(text, fileName){
   });
   // ── 2) 상세 매뉴얼: 제목 줄로 구간 나누기 + 본문 정돈 ──
   function tidy(bodyArr){
-    var out=[], stepN=0;
+    var out=[];
     bodyArr.forEach(function(l){
-      var t=l.trim(); if(!t) return;
+      var t=l.trim(); if(!t){ if(out.length && out[out.length-1]!=='') out.push(''); return; }
       var num=t.match(/^(\d{1,2})\s*[.)]\s*(.+)$/);
-      if(num){ stepN=parseInt(num[1],10); out.push(num[1]+'. '+num[2].trim()); return; }       // 번호 단계 통일
+      if(num){ out.push(num[1]+'. '+num[2].trim()); return; }       // 번호 단계 통일
       if(/^[·•◦▪‣∙-]\s*/.test(t)){ out.push('· '+t.replace(/^[·•◦▪‣∙-]\s*/,'')); return; }     // 글머리 통일
       if(/^※/.test(t)){ out.push('※ '+t.replace(/^※\s*/,'')); return; }
       out.push(t);
     });
     return out.join('\n');
   }
-  var docs=[], cur=null;
+  // 파일 전체 내용 (빠짐없이 · 제목 줄은 ■로 구분, 읽기 좋게 정돈)
+  var fullArr=[];
   lines.forEach(function(t){
-    var clean=t.replace(/^(제\s*\d+\s*[장조항]|[■◆●□▶]+|#{1,4})\s*/,'').replace(/^[【\[]|[】\]]$/g,'').replace(/[:：]\s*$/,'').trim();
     if(isHeading(t)){
-      if(cur && cur.body.length) docs.push(cur);
-      cur={title:clean||t, body:[]};
-    } else if(cur){ cur.body.push(t); }
-    else { cur={title:(fileName||'불러온 매뉴얼').replace(/\.[a-z0-9]+$/i,''), body:[t]}; }
+      var clean=t.replace(/^(제\s*\d+\s*[장조항]|[■◆●□▶]+|#{1,4})\s*/,'').replace(/^[【\[]|[】\]]$/g,'').replace(/[:：]\s*$/,'').trim();
+      if(fullArr.length) fullArr.push('');
+      fullArr.push('■ '+(clean||t));
+    } else fullArr.push(t);
   });
-  if(cur && cur.body.length) docs.push(cur);
-  docs=docs.filter(function(d){ return d.body.join('').length>=10; }).slice(0,30)
-    .map(function(d){ return {title:d.title.slice(0,60), body:tidy(d.body).slice(0,8000)}; });
-  return {monthly:monthly.slice(0,30), docs:docs};
+  var full=tidy(fullArr);
+  var fileTitle=(fileName||'불러온 매뉴얼').replace(/\.[a-z0-9]+$/i,'').slice(0,60);
+  var docs=full.trim()?[{title:fileTitle, body:full.slice(0,50000)}]:[];
+  return {monthly:monthly.slice(0,30), docs:docs, full:full};
 }
 var _manImp=null;
 function manFilePick(inp){
