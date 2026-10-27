@@ -5986,7 +5986,7 @@ function calcAdminTljStats(name){
   var list=(DB.tlj&&DB.tlj[name])||[];
   var HRS={'30분':0.5,'1시간':1,'1.5시간':1.5,'2시간':2,'3시간':3,'4시간':4,'종일':8};
   var days={}, linked=0, hours=0;
-  list.forEach(function(e){ if((e.date||'').slice(0,7)===ym){ days[e.date]=1; (e.linked||[]).forEach(function(l){ linked++; hours+=HRS[l.hours]||0; }); } });
+  list.forEach(function(e){ if((e.date||'').slice(0,7)===ym){ days[e.date]=1; (e.linked||[]).forEach(function(l){ linked++; hours+=HRS[l.hours]||0; }); (e.doneItems||[]).forEach(function(r){ hours+=HRS[r.hours]||0; }); } });
   var d=Object.keys(days).length;
   var adj=0;
   adj += d>=12?5 : d>=8?3 : d>=4?1 : d>0?0 : -5; // 작성 성실도
@@ -6033,7 +6033,8 @@ function _renderTlj(){
   } else {
     h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
       +'<label class="fl">날짜</label><input class="fi" type="date" id="tlj-date" value="'+today()+'">'
-      +'<label class="fl">✅ 오늘 한 일</label><textarea class="fi" id="tlj-done" rows="4" placeholder="오늘 처리한 업무를 적어주세요"></textarea>'
+      +'<label class="fl">✅ 오늘 한 일 (작업시간 선택)</label><div id="tlj-done-rows"></div>'
+      +'<button onclick="tljDoneAdd()" style="width:100%;margin:2px 0 10px;padding:8px;border-radius:9px;border:1px dashed var(--g);background:none;color:var(--g);font-size:12px;font-weight:700;cursor:pointer">+ 한 일 추가</button>'
       +'<label class="fl">📌 예정·진행 중</label><textarea class="fi" id="tlj-plan" rows="2" placeholder="내일/이번 주 예정 업무 (선택)"></textarea>'
       +'<label class="fl">⚠ 특이사항 (선택)</label><textarea class="fi" id="tlj-issue" rows="2" placeholder="공유할 문제·건의 등"></textarea>';
     var todos=tljMyTodos();
@@ -6044,10 +6045,10 @@ function _renderTlj(){
         var hopts=['30분','1시간','1.5시간','2시간','3시간','4시간','종일'].map(function(o){ return '<option value="'+o+'">'+o+'</option>'; }).join('');
         return '<div style="padding:8px 0;border-bottom:1px solid var(--s2)">'
           +'<label style="display:flex;gap:9px;align-items:flex-start;cursor:pointer">'
-          +'<input type="checkbox" class="tlj-todo" data-i="'+i+'" onchange="var s=document.getElementById(\'tlj-hr-'+i+'\');if(s){s.style.display=this.checked?\'block\':\'none\';}" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
+          +'<input type="checkbox" class="tlj-todo" data-i="'+i+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
           +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+dEsc(t.text)
           +'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+(t.kind==='dl'?('⏱ '+dEsc(t.date||'')+' · '):'💬 피드백 · ')+'📝 '+dEsc(t.mtitle)+'</span></span></label>'
-          +'<select class="fs tlj-hours" id="tlj-hr-'+i+'" data-i="'+i+'" style="display:none;margin:6px 0 0 27px;width:calc(100% - 27px);padding:7px;font-size:12px"><option value="">일한 시간 선택 (선택사항)</option>'+hopts+'</select>'
+          +'<select class="fs tlj-hours" id="tlj-hr-'+i+'" data-i="'+i+'" style="margin:6px 0 0 27px;width:calc(100% - 27px);padding:7px;font-size:12px"><option value="">⏱ 작업시간 선택 (선택사항)</option>'+hopts+'</select>'
           +'</div>';
       }).join('')+'</div>';
     window._tljTodos=todos;
@@ -6073,10 +6074,35 @@ function _renderTlj(){
   h+='<button class="btn ghost" style="margin-top:8px" onclick="document.getElementById(\'ov-tlj\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
+  if(document.getElementById('tlj-done-rows')) _tljRenderDone();
 }
+// ── 오늘 한 일 항목 (작업시간 선택) ──
+var TLJ_HOURS=['30분','1시간','1.5시간','2시간','3시간','4시간','종일'];
+function _tljRenderDone(){
+  var el=document.getElementById('tlj-done-rows'); if(!el) return;
+  if(!Array.isArray(window._tljDone) || !window._tljDone.length) window._tljDone=[{text:'',hours:''}];
+  var hopts=TLJ_HOURS.map(function(o){ return '<option value="'+o+'">'+o+'</option>'; }).join('');
+  el.innerHTML=window._tljDone.map(function(r,i){
+    return '<div style="display:flex;gap:5px;margin-bottom:5px;align-items:center">'
+      +'<input class="fi tlj-dt" data-i="'+i+'" value="'+dEsc(r.text||'')+'" placeholder="한 일 내용" style="flex:1;margin:0;padding:8px 9px;font-size:12px">'
+      +'<select class="fs tlj-dh" data-i="'+i+'" style="flex:0 0 31%;margin:0;padding:8px 5px;font-size:11.5px"><option value="">⏱ 시간</option>'+hopts+'</select>'
+      +(window._tljDone.length>1?'<button onclick="tljDoneRm('+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">✕</button>':'')
+      +'</div>';
+  }).join('');
+  window._tljDone.forEach(function(r,i){ var s=el.querySelector('.tlj-dh[data-i="'+i+'"]'); if(s) s.value=r.hours||''; });
+}
+function _tljSyncDone(){
+  if(!Array.isArray(window._tljDone)) return;
+  document.querySelectorAll('.tlj-dt').forEach(function(inp){ var r=window._tljDone[parseInt(inp.getAttribute('data-i'))]; if(r) r.text=inp.value; });
+  document.querySelectorAll('.tlj-dh').forEach(function(s){ var r=window._tljDone[parseInt(s.getAttribute('data-i'))]; if(r) r.hours=s.value; });
+}
+function tljDoneAdd(){ _tljSyncDone(); window._tljDone.push({text:'',hours:''}); _tljRenderDone(); var inps=document.querySelectorAll('.tlj-dt'); if(inps.length) inps[inps.length-1].focus(); }
+function tljDoneRm(i){ _tljSyncDone(); window._tljDone.splice(i,1); _tljRenderDone(); }
 function tljSave(){
   var date=(document.getElementById('tlj-date')||{}).value||today();
-  var done=((document.getElementById('tlj-done')||{}).value||'').trim();
+  _tljSyncDone();
+  var doneItems=(window._tljDone||[]).map(function(r){ return {text:(r.text||'').trim(), hours:r.hours||''}; }).filter(function(r){ return r.text; });
+  var done=doneItems.map(function(r){ return r.text+(r.hours?' ('+r.hours+')':''); }).join('\n');
   var plan=((document.getElementById('tlj-plan')||{}).value||'').trim();
   var issue=((document.getElementById('tlj-issue')||{}).value||'').trim();
   var checked=Array.prototype.map.call(document.querySelectorAll('.tlj-todo:checked'),function(c){
@@ -6086,11 +6112,12 @@ function tljSave(){
     var hrs=sel?sel.value:'';
     return Object.assign({hours:hrs}, t);
   }).filter(Boolean);
-  if(!done && !checked.length){ toast('오늘 한 일을 적거나, 처리한 할 일을 체크해주세요','var(--rd)'); return; }
+  if(!doneItems.length && !checked.length){ toast('오늘 한 일을 적거나, 처리한 할 일을 체크해주세요','var(--rd)'); return; }
   var list=_tljList(ME.name);
-  var entry={id:'tj'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:date, done:done, plan:plan, issue:issue,
+  var entry={id:'tj'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:date, done:done, doneItems:doneItems, plan:plan, issue:issue,
     linked:checked.map(function(t){ return {text:t.text, kind:t.kind, mid:t.mid, hours:t.hours||''}; }), ts:Date.now()};
   list.push(entry);
+  window._tljDone=null;
   // 체크한 회의 할 일 → 회의록에 반영 (기한=지킴, 피드백=확인 · 서버 최신본 기준 병합)
   var touched=false;
   checked.forEach(function(t){
