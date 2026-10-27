@@ -6065,7 +6065,15 @@ function _renderTlj(){
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:10px 12px;margin-bottom:7px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:12px;font-weight:800;color:var(--acc)">'+dEsc(e.date||'')+'</span>'
       +((isOw||e.date===today())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>'
-      +(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':'')
+      +((e.doneItems&&e.doneItems.length)?('<div style="font-size:12px;line-height:1.6"><b>✅ 한 일</b>'
+        +e.doneItems.map(function(r){
+          var st=r.st||'done';
+          var tag=st==='done'?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700">완료</span>'
+            :st==='ing'?'<span style="font-size:9.5px;background:var(--s2);color:var(--am);border-radius:5px;padding:1px 6px;font-weight:700">진행 중</span>'
+            :'<span style="font-size:9.5px;background:var(--s2);color:var(--rd);border-radius:5px;padding:1px 6px;font-weight:700">미완료</span>';
+          return '<div style="margin-top:3px">'+tag+' '+dEsc(r.text)+(r.hours?' <span style="color:var(--acc);font-weight:700;font-size:11px">· '+dEsc(r.hours)+'</span>':'')+'</div>';
+        }).join('')+'</div>')
+        :(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':''))
       +(e.plan?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--t2)"><b>📌 예정</b>\n'+dEsc(e.plan)+'</div>':'')
       +(e.issue?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--am)"><b>⚠ 특이사항</b>\n'+dEsc(e.issue)+'</div>':'')
       +((e.linked&&e.linked.length)?'<div style="font-size:11px;color:var(--g);margin-top:5px;line-height:1.5">'+e.linked.map(function(l){ return '✔ '+dEsc(l.text)+(l.hours?' <span style="color:var(--acc);font-weight:700">· '+dEsc(l.hours)+'</span>':''); }).join('<br>')+'</div>':'')
@@ -6080,29 +6088,39 @@ function _renderTlj(){
 var TLJ_HOURS=['30분','1시간','1.5시간','2시간','3시간','4시간','종일'];
 function _tljRenderDone(){
   var el=document.getElementById('tlj-done-rows'); if(!el) return;
-  if(!Array.isArray(window._tljDone) || !window._tljDone.length) window._tljDone=[{text:'',hours:''}];
+  if(!Array.isArray(window._tljDone) || !window._tljDone.length) window._tljDone=[{text:'',hours:'',st:'done'}];
   var hopts=TLJ_HOURS.map(function(o){ return '<option value="'+o+'">'+o+'</option>'; }).join('');
+  var ST=[{k:'done',lb:'완료',col:'var(--g)'},{k:'ing',lb:'진행 중',col:'var(--am)'},{k:'todo',lb:'미완료',col:'var(--rd)'}];
   el.innerHTML=window._tljDone.map(function(r,i){
-    return '<div style="display:flex;gap:5px;margin-bottom:5px;align-items:center">'
+    var st=r.st||'done';
+    var chips=ST.map(function(s){ var on=(st===s.k);
+      return '<button onclick="tljDoneSt('+i+',\''+s.k+'\')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;cursor:pointer;border:1px solid '+(on?s.col:'var(--s3)')+';background:'+(on?s.col:'var(--s1)')+';color:'+(on?'#fff':'var(--t2)')+';font-weight:'+(on?'700':'500')+'">'+s.lb+'</button>';
+    }).join('');
+    return '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:8px 9px;margin-bottom:6px">'
+      +'<div style="display:flex;gap:5px;align-items:center;margin-bottom:6px">'
       +'<input class="fi tlj-dt" data-i="'+i+'" value="'+dEsc(r.text||'')+'" placeholder="한 일 내용" style="flex:1;margin:0;padding:8px 9px;font-size:12px">'
-      +'<select class="fs tlj-dh" data-i="'+i+'" style="flex:0 0 31%;margin:0;padding:8px 5px;font-size:11.5px"><option value="">⏱ 시간</option>'+hopts+'</select>'
       +(window._tljDone.length>1?'<button onclick="tljDoneRm('+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">✕</button>':'')
+      +'</div>'
+      +'<div style="display:flex;gap:5px;align-items:center">'
+      +'<select class="fs tlj-dh" data-i="'+i+'" style="flex:0 0 32%;margin:0;padding:6px 5px;font-size:11.5px"><option value="">⏱ 시간</option>'+hopts+'</select>'
+      +chips+'</div>'
       +'</div>';
   }).join('');
   window._tljDone.forEach(function(r,i){ var s=el.querySelector('.tlj-dh[data-i="'+i+'"]'); if(s) s.value=r.hours||''; });
 }
+function tljDoneSt(i,st){ _tljSyncDone(); if(window._tljDone[i]) window._tljDone[i].st=st; _tljRenderDone(); }
 function _tljSyncDone(){
   if(!Array.isArray(window._tljDone)) return;
   document.querySelectorAll('.tlj-dt').forEach(function(inp){ var r=window._tljDone[parseInt(inp.getAttribute('data-i'))]; if(r) r.text=inp.value; });
   document.querySelectorAll('.tlj-dh').forEach(function(s){ var r=window._tljDone[parseInt(s.getAttribute('data-i'))]; if(r) r.hours=s.value; });
 }
-function tljDoneAdd(){ _tljSyncDone(); window._tljDone.push({text:'',hours:''}); _tljRenderDone(); var inps=document.querySelectorAll('.tlj-dt'); if(inps.length) inps[inps.length-1].focus(); }
+function tljDoneAdd(){ _tljSyncDone(); window._tljDone.push({text:'',hours:'',st:'done'}); _tljRenderDone(); var inps=document.querySelectorAll('.tlj-dt'); if(inps.length) inps[inps.length-1].focus(); }
 function tljDoneRm(i){ _tljSyncDone(); window._tljDone.splice(i,1); _tljRenderDone(); }
 function tljSave(){
   var date=(document.getElementById('tlj-date')||{}).value||today();
   _tljSyncDone();
-  var doneItems=(window._tljDone||[]).map(function(r){ return {text:(r.text||'').trim(), hours:r.hours||''}; }).filter(function(r){ return r.text; });
-  var done=doneItems.map(function(r){ return r.text+(r.hours?' ('+r.hours+')':''); }).join('\n');
+  var doneItems=(window._tljDone||[]).map(function(r){ return {text:(r.text||'').trim(), hours:r.hours||'', st:r.st||'done'}; }).filter(function(r){ return r.text; });
+  var done=doneItems.map(function(r){ return r.text+(r.hours?' ('+r.hours+')':'')+(r.st==='ing'?' [진행 중]':r.st==='todo'?' [미완료]':''); }).join('\n');
   var plan=((document.getElementById('tlj-plan')||{}).value||'').trim();
   var issue=((document.getElementById('tlj-issue')||{}).value||'').trim();
   var checked=Array.prototype.map.call(document.querySelectorAll('.tlj-todo:checked'),function(c){
