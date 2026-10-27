@@ -6894,8 +6894,8 @@ function renderManuals(){
       +'</div>';
   });
   if(isOw) h+='<button class="btn ghost" style="padding:9px;font-size:12.5px" onclick="manEditDoc(\''+_manTab+'\',null)">+ 상세 매뉴얼 추가</button>'
-    +'<input type="file" id="man-file-in" style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md" onchange="manFilePick(this)">'
-    +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="document.getElementById(\'man-file-in\').click()">📂 파일에서 불러오기 (한글·워드·PDF·텍스트 → 자동 인식)</button>';
+    +'<input type="file" id="man-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md" onchange="manFilePick(this)">'
+    +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="document.getElementById(\'man-file-in\').click()">📂 파일에서 불러오기 (여러 개 가능 · 한글·워드·PDF·텍스트)</button>';
   var body=document.getElementById('man-body'); if(body) body.innerHTML=h;
 }
 // ── 매뉴얼 파일 불러오기: 문서에서 월간 업무·상세 매뉴얼 자동 인식 ──
@@ -6938,16 +6938,31 @@ function manParseText(text, fileName){
 }
 var _manImp=null;
 function manFilePick(inp){
-  var file=(inp.files||[])[0]; inp.value='';
-  if(!file) return;
+  var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
+  if(!files.length) return;
   if(!(ME&&ME.role==='owner')){ toast('원장만 불러올 수 있어요','var(--rd)'); return; }
-  toast('「'+file.name+'」 읽는 중…');
-  _mtExtractText(file).then(function(txt){
-    txt=(txt||'').slice(0,50000);
-    if(!txt.trim()){ toast('이 파일에서 텍스트를 읽지 못했어요 — 한글은 hwpx 형식으로 저장해주세요','var(--rd)'); return; }
-    var p=manParseText(txt, file.name);
-    if(!p.monthly.length && !p.docs.length){ toast('인식된 내용이 없어요','var(--rd)'); return; }
-    _manImp={dept:_manTab, monthly:p.monthly, docs:p.docs, fname:file.name};
+  toast(files.length>1?('파일 '+files.length+'개 읽는 중…'):('「'+files[0].name+'」 읽는 중…'));
+  Promise.all(files.map(function(file){
+    return _mtExtractText(file).then(function(txt){ return {name:file.name, txt:(txt||'').slice(0,50000)}; })
+      .catch(function(){ return {name:file.name, txt:''}; });
+  })).then(function(results){
+    var monthly=[], docs=[], failed=[], seenM={}, seenD={};
+    results.forEach(function(r){
+      if(!r.txt.trim()){ failed.push(r.name); return; }
+      var p=manParseText(r.txt, r.name);
+      p.monthly.forEach(function(it){
+        var k=it.title.replace(/\s+/g,'').slice(0,40); if(seenM[k]) return; seenM[k]=1;
+        it.src=r.name; monthly.push(it);
+      });
+      p.docs.forEach(function(d){
+        var k=d.title.replace(/\s+/g,'').slice(0,40); if(seenD[k]) return; seenD[k]=1;
+        d.src=r.name; docs.push(d);
+      });
+    });
+    if(failed.length) toast('읽지 못한 파일: '+failed.join(', ')+' — 한글은 hwpx 형식으로 저장해주세요','var(--am)');
+    if(!monthly.length && !docs.length){ if(!failed.length) toast('인식된 내용이 없어요','var(--rd)'); return; }
+    var fname=results.length>1?('파일 '+results.length+'개'):results[0].name;
+    _manImp={dept:_manTab, monthly:monthly.slice(0,40), docs:docs.slice(0,40), fname:fname, multi:results.length>1};
     _renderManImport();
   }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
 }
@@ -6963,14 +6978,15 @@ function _renderManImport(){
   p.monthly.forEach(function(it,i){
     h+='<label style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 11px;margin-bottom:5px;cursor:pointer">'
       +'<input type="checkbox" class="mi-m" data-i="'+i+'" checked style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--acc)">'
-      +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5"><span style="background:var(--acc-l);color:var(--acc);border-radius:5px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:5px">'+dEsc(it.when)+'</span>'+dEsc(it.title)+'</span></label>';
+      +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5"><span style="background:var(--acc-l);color:var(--acc);border-radius:5px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:5px">'+dEsc(it.when)+'</span>'+dEsc(it.title)
+      +(p.multi&&it.src?'<span style="display:block;font-size:9.5px;color:var(--t3);margin-top:1px">📄 '+dEsc(it.src)+'</span>':'')+'</span></label>';
   });
   h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 상세 매뉴얼로 추가 <span style="font-size:11px;color:var(--t3)">'+p.docs.length+'건 인식</span></div>';
   if(!p.docs.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">구분할 제목을 찾지 못했어요</div>';
   p.docs.forEach(function(d,i){
     h+='<label style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 11px;margin-bottom:5px;cursor:pointer">'
       +'<input type="checkbox" class="mi-d" data-i="'+i+'" checked style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--pu)">'
-      +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5"><b>'+dEsc(d.title)+'</b>'
+      +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5"><b>'+dEsc(d.title)+'</b>'+(p.multi&&d.src?' <span style="font-size:9.5px;color:var(--t3)">📄 '+dEsc(d.src)+'</span>':'')
       +'<span style="display:block;font-size:10.5px;color:var(--t3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(d.body.slice(0,70))+'…</span></span></label>';
   });
   h+='<button class="btn" onclick="manImportApply()">✓ 선택한 항목 추가</button>'
