@@ -6886,6 +6886,7 @@ function renderManuals(){
       +'<div onclick="manToggleDoc(\''+doc.id+'\')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer">'
       +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">'+dEsc(doc.title)+'</div>'
       +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(doc.upd||doc.date||'')+(doc.by?' · '+dEsc(doc.by):'')+'</div></div>'
+      +(isOw?'<span style="flex-shrink:0;display:flex;gap:2px;margin-right:4px"><button onclick="event.stopPropagation();manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:2px 5px">✎</button><button onclick="event.stopPropagation();manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;padding:2px 5px">🗑</button></span>':'')
       +'<span style="font-size:11px;color:var(--t2);font-weight:600;flex-shrink:0">'+(open?'▲ 접기':'▼ 펼치기')+'</span></div>'
       +(open?('<div style="padding:0 12px 11px">'
         +'<div style="font-size:12.5px;color:var(--te);line-height:1.7;white-space:pre-wrap;background:var(--s2);border-radius:9px;padding:11px 13px">'+dEsc(doc.body||'')+'</div>'
@@ -6900,31 +6901,56 @@ function renderManuals(){
 }
 // ── 매뉴얼 파일 불러오기: 문서에서 월간 업무·상세 매뉴얼 자동 인식 ──
 function manParseText(text, fileName){
-  var lines=String(text||'').split(/\n+/).map(function(l){ return l.replace(/\s+/g,' ').trim(); }).filter(Boolean);
-  // 1) 월간 필수 업무 후보: 시기 표현이 있는 짧은 문장
-  var monthly=[], seenM={};
-  var WHEN_RE=/(매월|매달)?\s*(첫\s*근무일|월\s*초|월\s*말|말일|(첫째|둘째|셋째|넷째|마지막)\s*주(\s*[월화수목금토일]요일)?|(\d{1,2})\s*일(까지|에|경)?)/;
-  lines.forEach(function(l){
-    var t=l.replace(/^[\s■□▶◆●·•\-–—*※>0-9.)(]+/,'').trim();
-    if(t.length<5 || t.length>70) return;
-    var m=t.match(WHEN_RE);
-    if(!m) return;
-    var when=m[0].replace(/\s+/g,' ').trim();
-    var title=t.replace(m[0],'').replace(/^[\s:：\-–—,.]+|[\s:：\-–—,.]+$/g,'').trim();
-    if(title.length<3) return;
-    var k=title.replace(/\s+/g,'').slice(0,40); if(seenM[k]) return; seenM[k]=1;
-    monthly.push({when:when, title:title});
-  });
-  // 2) 상세 매뉴얼: 제목처럼 보이는 줄로 구간 나누기
+  var WHEN_RE=/(매월|매달|매주)?\s*(첫\s*근무일|월\s*초|월\s*말|말일|(첫째|둘째|셋째|넷째|마지막)\s*주(\s*[월화수목금토일]요일)?|[월화수목금토일]요일(마다)?|(\d{1,2})\s*일(까지|에|경)?)/;
   function isHeading(t){
     if(/^(제\s*\d+\s*[장조항]|[■◆●□▶]|#{1,4}\s|[【\[].+[】\]]$)/.test(t)) return t.replace(/^(제\s*\d+\s*[장조항]|[■◆●□▶]+|#{1,4})\s*/,'').length<=40;
     if(/^[\d※·•\-–—*>()]/.test(t)) return false; // 번호 단계·주의 문구는 본문
     return t.length>=3 && t.length<=28 && !/[다요음임함됨\.,:;…)]$/.test(t) && !WHEN_RE.test(t);
   }
+  // ── 전처리: PDF 등에서 끊긴 문장 복원 + 페이지 번호·잡음 제거 ──
+  var raw=String(text||'').replace(/\r/g,'').split('\n').map(function(l){ return l.replace(/[ \t]+/g,' ').trim(); });
+  var lines=[];
+  raw.forEach(function(l){
+    if(!l) return;
+    if(/^[-–—\s]*\d+\s*(페이지|page|p)?[-–—\s]*$/i.test(l)) return;      // 페이지 번호
+    if(/^(목\s*차|차\s*례)$/.test(l)) return;                             // 목차 표제
+    var prev=lines.length?lines[lines.length-1]:'';
+    // 이전 줄이 문장 중간에서 끊겼으면 이어붙이기 (제목·번호·기호 줄은 새 줄 유지)
+    if(prev && prev.length>12 && !/[.!?:;…다요함음됨임함죠까]$/.test(prev)
+       && !/^[\d■◆●□▶※·•\-–—*>#【\[(]/.test(l) && !isHeading(l) && !isHeading(prev) && !WHEN_RE.test(l.slice(0,14))){
+      lines[lines.length-1]=prev+' '+l; return;
+    }
+    lines.push(l);
+  });
+  // ── 1) 월간 필수 업무: 시기 표현이 있는 짧은 문장 ──
+  var monthly=[], seenM={};
+  lines.forEach(function(l){
+    var t=l.replace(/^[\s■□▶◆●·•\-–—*※>0-9.)(]+/,'').trim();
+    if(t.length<5 || t.length>80) return;
+    var m=t.match(WHEN_RE);
+    if(!m) return;
+    var when=m[0].replace(/\s+/g,' ').replace(/\s*일\s*$/,'일').trim();
+    var title=t.replace(m[0],'').replace(/^[\s:：\-–—,.]+|[\s:：\-–—,.]+$/g,'').trim();
+    if(title.length<3 || title.length>60) return;
+    var k=title.replace(/\s+/g,'').slice(0,40); if(seenM[k]) return; seenM[k]=1;
+    monthly.push({when:when, title:title});
+  });
+  // ── 2) 상세 매뉴얼: 제목 줄로 구간 나누기 + 본문 정돈 ──
+  function tidy(bodyArr){
+    var out=[], stepN=0;
+    bodyArr.forEach(function(l){
+      var t=l.trim(); if(!t) return;
+      var num=t.match(/^(\d{1,2})\s*[.)]\s*(.+)$/);
+      if(num){ stepN=parseInt(num[1],10); out.push(num[1]+'. '+num[2].trim()); return; }       // 번호 단계 통일
+      if(/^[·•◦▪‣∙-]\s*/.test(t)){ out.push('· '+t.replace(/^[·•◦▪‣∙-]\s*/,'')); return; }     // 글머리 통일
+      if(/^※/.test(t)){ out.push('※ '+t.replace(/^※\s*/,'')); return; }
+      out.push(t);
+    });
+    return out.join('\n');
+  }
   var docs=[], cur=null;
-  lines.forEach(function(raw){
-    var t=raw.trim();
-    var clean=t.replace(/^(제\s*\d+\s*[장조항]|[■◆●□▶]+|#{1,4})\s*/,'').replace(/^[【\[]|[】\]]$/g,'').trim();
+  lines.forEach(function(t){
+    var clean=t.replace(/^(제\s*\d+\s*[장조항]|[■◆●□▶]+|#{1,4})\s*/,'').replace(/^[【\[]|[】\]]$/g,'').replace(/[:：]\s*$/,'').trim();
     if(isHeading(t)){
       if(cur && cur.body.length) docs.push(cur);
       cur={title:clean||t, body:[]};
@@ -6932,9 +6958,9 @@ function manParseText(text, fileName){
     else { cur={title:(fileName||'불러온 매뉴얼').replace(/\.[a-z0-9]+$/i,''), body:[t]}; }
   });
   if(cur && cur.body.length) docs.push(cur);
-  docs=docs.filter(function(d){ return d.body.join('').length>=10; }).slice(0,20)
-    .map(function(d){ return {title:d.title.slice(0,60), body:d.body.join('\n').slice(0,8000)}; });
-  return {monthly:monthly.slice(0,20), docs:docs};
+  docs=docs.filter(function(d){ return d.body.join('').length>=10; }).slice(0,30)
+    .map(function(d){ return {title:d.title.slice(0,60), body:tidy(d.body).slice(0,8000)}; });
+  return {monthly:monthly.slice(0,30), docs:docs};
 }
 var _manImp=null;
 function manFilePick(inp){
@@ -6972,41 +6998,61 @@ function _renderManImport(){
   var dl=MAN_DEPTS.find(function(d){ return d.key===p.dept; });
   var h='<div class="ov open" id="ov-manimport" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
     +'<div class="mt2">📂 파일 인식 결과 — '+dEsc(p.fname)+'</div>'
-    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+(dl?dl.label:'')+' 매뉴얼에 추가할 항목을 확인하세요. 체크된 항목만 추가되고, 추가 후 언제든 수정할 수 있어요.</div>';
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+(dl?dl.label:'')+' 매뉴얼에 추가됩니다. 인식이 어긋난 부분은 <b>여기서 바로 고치고</b>, 필요 없는 항목은 ✕로 빼세요. 체크된 항목만 추가됩니다.</div>';
   h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--acc)"></div>📅 월간 필수 업무로 추가 <span style="font-size:11px;color:var(--t3)">'+p.monthly.length+'건 인식</span></div>';
   if(!p.monthly.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">시기(매월 N일 등)가 있는 문장을 찾지 못했어요</div>';
   p.monthly.forEach(function(it,i){
-    h+='<label style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 11px;margin-bottom:5px;cursor:pointer">'
-      +'<input type="checkbox" class="mi-m" data-i="'+i+'" checked style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--acc)">'
-      +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5"><span style="background:var(--acc-l);color:var(--acc);border-radius:5px;padding:1px 6px;font-size:10px;font-weight:700;margin-right:5px">'+dEsc(it.when)+'</span>'+dEsc(it.title)
-      +(p.multi&&it.src?'<span style="display:block;font-size:9.5px;color:var(--t3);margin-top:1px">📄 '+dEsc(it.src)+'</span>':'')+'</span></label>';
+    h+='<div style="display:flex;gap:8px;align-items:flex-start;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 10px;margin-bottom:5px">'
+      +'<input type="checkbox" class="mi-m" data-i="'+i+'" checked style="width:18px;height:18px;margin-top:7px;flex-shrink:0;accent-color:var(--acc)">'
+      +'<span style="flex:1;min-width:0">'
+      +'<span style="display:flex;gap:5px"><input class="fi mi-mw" data-i="'+i+'" value="'+dEsc(it.when)+'" placeholder="시기" style="flex:0 0 34%;margin:0;padding:6px 8px;font-size:11.5px">'
+      +'<input class="fi mi-mt" data-i="'+i+'" value="'+dEsc(it.title)+'" placeholder="업무명" style="flex:1;margin:0;padding:6px 8px;font-size:11.5px"></span>'
+      +(p.multi&&it.src?'<span style="display:block;font-size:9.5px;color:var(--t3);margin-top:2px">📄 '+dEsc(it.src)+'</span>':'')+'</span>'
+      +'<button onclick="manImpRemove(\'monthly\','+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0;margin-top:5px">✕</button>'
+      +'</div>';
   });
   h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 상세 매뉴얼로 추가 <span style="font-size:11px;color:var(--t3)">'+p.docs.length+'건 인식</span></div>';
   if(!p.docs.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">구분할 제목을 찾지 못했어요</div>';
   p.docs.forEach(function(d,i){
-    h+='<label style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 11px;margin-bottom:5px;cursor:pointer">'
-      +'<input type="checkbox" class="mi-d" data-i="'+i+'" checked style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--pu)">'
-      +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5"><b>'+dEsc(d.title)+'</b>'+(p.multi&&d.src?' <span style="font-size:9.5px;color:var(--t3)">📄 '+dEsc(d.src)+'</span>':'')
-      +'<span style="display:block;font-size:10.5px;color:var(--t3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(d.body.slice(0,70))+'…</span></span></label>';
+    var open=(p._openDoc===i);
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 10px;margin-bottom:5px">'
+      +'<div style="display:flex;gap:8px;align-items:center">'
+      +'<input type="checkbox" class="mi-d" data-i="'+i+'" checked style="width:18px;height:18px;flex-shrink:0;accent-color:var(--pu)">'
+      +'<input class="fi mi-dt" data-i="'+i+'" value="'+dEsc(d.title)+'" placeholder="제목" style="flex:1;margin:0;padding:6px 8px;font-size:12px;font-weight:700">'
+      +'<button onclick="manImpToggle('+i+')" style="font-size:10.5px;background:none;border:1px solid var(--s3);border-radius:7px;padding:4px 8px;color:var(--t2);cursor:pointer;flex-shrink:0">'+(open?'접기':'내용 수정')+'</button>'
+      +'<button onclick="manImpRemove(\'docs\','+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">✕</button></div>'
+      +(p.multi&&d.src?'<div style="font-size:9.5px;color:var(--t3);margin-top:2px;padding-left:26px">📄 '+dEsc(d.src)+'</div>':'')
+      +'<textarea class="fi mi-db" data-i="'+i+'" rows="'+(open?10:3)+'" style="margin:6px 0 0;font-size:11.5px;line-height:1.6'+(open?'':';max-height:64px')+'">'+dEsc(d.body)+'</textarea>'
+      +'</div>';
   });
   h+='<button class="btn" onclick="manImportApply()">✓ 선택한 항목 추가</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manimport\').remove()">취소</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
 }
+function _manImpSyncEdits(){ // 화면의 수정 내용을 _manImp에 반영
+  var p=_manImp; if(!p) return;
+  document.querySelectorAll('.mi-mw').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.when=el.value.trim(); });
+  document.querySelectorAll('.mi-mt').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.title=el.value.trim(); });
+  document.querySelectorAll('.mi-dt').forEach(function(el){ var d=p.docs[parseInt(el.getAttribute('data-i'))]; if(d) d.title=el.value.trim(); });
+  document.querySelectorAll('.mi-db').forEach(function(el){ var d=p.docs[parseInt(el.getAttribute('data-i'))]; if(d) d.body=el.value; });
+}
+function manImpRemove(kind,i){ _manImpSyncEdits(); if(_manImp&&_manImp[kind]) _manImp[kind].splice(i,1); _renderManImport(); }
+function manImpToggle(i){ _manImpSyncEdits(); if(_manImp) _manImp._openDoc=(_manImp._openDoc===i)?null:i; _renderManImport(); }
 function manImportApply(){
   var p=_manImp; if(!p) return;
+  _manImpSyncEdits();
   var m=_manDB(), dept=m[p.dept];
   var addM=0, addD=0;
   document.querySelectorAll('.mi-m:checked').forEach(function(c){
-    var it=p.monthly[parseInt(c.getAttribute('data-i'))]; if(!it) return;
+    var it=p.monthly[parseInt(c.getAttribute('data-i'))]; if(!it||!it.title) return;
     var k=it.title.replace(/\s+/g,'');
     if(dept.monthly.some(function(x){ return x.title.replace(/\s+/g,'')===k; })) return;
     dept.monthly.push({id:'mm'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), when:it.when, title:it.title, desc:''});
     addM++;
   });
   document.querySelectorAll('.mi-d:checked').forEach(function(c){
-    var d=p.docs[parseInt(c.getAttribute('data-i'))]; if(!d) return;
+    var d=p.docs[parseInt(c.getAttribute('data-i'))]; if(!d||!d.title||!String(d.body||'').trim()) return;
     var k=d.title.replace(/\s+/g,'');
     if(dept.docs.some(function(x){ return x.title.replace(/\s+/g,'')===k; })) return;
     dept.docs.push({id:'md'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), title:d.title, body:d.body, by:(ME?ME.name:'원장'), date:today(), upd:today()});
