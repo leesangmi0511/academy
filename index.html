@@ -7130,6 +7130,22 @@ function openWorkBoard(){
     _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; go(); }).catch(function(){ _meetings=_meetings||[]; go(); });
   } else go();
 }
+// 관리자별 할 일 처리율 (회의 기한 + 피드백 기준)
+function wbAdminRates(){
+  var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+  var res=admins.map(function(nm){
+    var dlT=0,dlOk=0,dlLate=0,fbT=0,fbOk=0;
+    (_meetings||[]).forEach(function(m){
+      if(Array.isArray(m.who)&&m.who.indexOf(nm)>=0) (m.dls||[]).forEach(function(d){ dlT++; if(d.status==='ok')dlOk++; else if(d.status==='late')dlLate++; });
+      (m.fbs||[]).forEach(function(f){ var tg=mtFbTargets(m,f); if(tg.indexOf(nm)>=0){ fbT++; if(f.done&&f.done[nm]) fbOk++; } });
+    });
+    var ts=(typeof calcAdminTljStats==='function')?calcAdminTljStats(nm):{linked:0,days:0};
+    var tot=dlT+fbT, done=dlOk+fbOk;
+    return {name:nm, tot:tot, done:done, rate:(tot?Math.round(done/tot*100):null), dlT:dlT, dlOk:dlOk, dlLate:dlLate, fbT:fbT, fbOk:fbOk, tlj:ts};
+  });
+  res.sort(function(a,b){ return (b.rate===null?-1:b.rate)-(a.rate===null?-1:a.rate); });
+  return res;
+}
 function _renderWorkBoard(){
   var ex=document.getElementById('ov-workboard'); if(ex) ex.remove();
   var wb=wbCollect();
@@ -7147,6 +7163,22 @@ function _renderWorkBoard(){
     +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--am);border-radius:8px;padding:7px 0">미완료 '+wb.open.length+'건</span>'
     +'<span style="flex:1;text-align:center;background:var(--gl);color:var(--g);border-radius:8px;padding:7px 0">완료 '+wb.done.length+'건</span>'
     +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--pu);border-radius:8px;padding:7px 0">매뉴얼 '+st.ok+'/'+st.tot+'</span></div>'
+    +(function(){
+      var rates=wbAdminRates();
+      if(!rates.length) return '';
+      var h2='<div class="sl2" style="margin:2px 0 8px"><div class="d8" style="background:var(--pu)"></div>👤 관리자별 할 일 처리율 <span style="font-size:10.5px;color:var(--t3);font-weight:500">회의 기한 + 피드백 기준</span></div>';
+      rates.forEach(function(r,ri){
+        var col=r.rate===null?'var(--t3)':r.rate>=80?'var(--g)':r.rate>=50?'var(--am)':'var(--rd)';
+        h2+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:9px 12px;margin-bottom:6px">'
+          +'<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:700">'+(r.rate!==null?(ri+1)+'위 · ':'')+dEsc(r.name)+'</span>'
+          +'<span style="font-size:13px;font-weight:800;color:'+col+'">'+(r.rate===null?'할 일 없음':r.rate+'%')+'</span></div>'
+          +(r.rate!==null?('<div style="height:7px;background:var(--s2);border-radius:4px;margin-top:6px;overflow:hidden"><div style="height:7px;width:'+r.rate+'%;background:'+col+';border-radius:4px"></div></div>'):'')
+          +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">완료 '+r.done+'/'+r.tot+' · 기한 '+r.dlOk+'/'+r.dlT+(r.dlLate?' (<span style="color:var(--rd);font-weight:700">어김 '+r.dlLate+'</span>)':'')+' · 피드백 '+r.fbOk+'/'+r.fbT
+          +' · 일지 '+(r.tlj.days||0)+'일/'+(r.tlj.linked||0)+'건 처리</div>'
+          +'</div>';
+      });
+      return h2;
+    })()
     +'<div class="sl2" style="margin:2px 0 8px"><div class="d8" style="background:var(--am)"></div>🔔 아직 완료되지 않은 일 <span style="font-size:11px;color:var(--t3)">'+wb.open.length+'건</span></div>';
   if(!wb.open.length) h+='<div class="empty" style="font-size:12px;padding:6px 0 10px">남은 일이 없어요 👍</div>';
   wb.open.slice(0,60).forEach(function(d){ h+=row(d,false); });
