@@ -5786,10 +5786,11 @@ function openAdminEval() {
     var score = (a.adminEvalTotal !== undefined) ? ' · 평가 '+a.adminEvalTotal+'점' : '';
     var date = a.adminEvalDate ? ' ('+a.adminEvalDate+')' : '';
     var mst = (typeof calcAdminMeetStats==='function') ? calcAdminMeetStats(a.name) : null;
-    if(mst && mst.adj!==0){
-      score += ' · 회의기한 '+(mst.adj>0?'+':'')+mst.adj;
-      if(a.adminEvalTotal!==undefined) score += ' → 종합 '+Math.max(0,Math.min(100,a.adminEvalTotal+mst.adj))+'점';
-    }
+    var tst = (typeof calcAdminTljStats==='function') ? calcAdminTljStats(a.name) : null;
+    var adjSum = (mst?mst.adj:0) + (tst?tst.adj:0);
+    if(mst && mst.adj!==0) score += ' · 회의기한 '+(mst.adj>0?'+':'')+mst.adj;
+    if(tst && tst.adj!==0) score += ' · 일지 '+(tst.adj>0?'+':'')+tst.adj;
+    if(a.adminEvalTotal!==undefined && adjSum!==0) score += ' → 종합 '+Math.max(0,Math.min(100,a.adminEvalTotal+adjSum))+'점';
     h += '<button onclick="document.getElementById(\'ov-admineval-menu\').remove();openAdminEvalFor(\''+a.name+'\')" '
        + 'style="width:100%;text-align:left;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
        + '<span style="font-size:14px;font-weight:600">'+a.name+'</span>'
@@ -5865,6 +5866,128 @@ function saveAdminEval() {
   closeModal('ov-admin-eval');
   toast('👔 '+currentAdminEvalTarget+' 관리자 평가가 저장됐어요 ✓');
   renderAdminHome();
+}
+
+// ═══ 팀장일지 (관리자 업무일지 · 회의 할 일 연동 → 관리자 점수 반영) ═══
+function _tljList(name){ if(!DB.tlj) DB.tlj={}; if(!Array.isArray(DB.tlj[name])) DB.tlj[name]=[]; return DB.tlj[name]; }
+function calcAdminTljStats(name){
+  var ym=getYearMonth();
+  var list=(DB.tlj&&DB.tlj[name])||[];
+  var days={}, linked=0;
+  list.forEach(function(e){ if((e.date||'').slice(0,7)===ym){ days[e.date]=1; linked+=(e.linked||[]).length; } });
+  var d=Object.keys(days).length;
+  var adj=0;
+  adj += d>=12?5 : d>=8?3 : d>=4?1 : d>0?0 : -5; // 작성 성실도
+  adj += linked>=5?5 : linked>=2?3 : linked>0?1 : 0; // 회의 할 일 처리 기록
+  return {days:d, linked:linked, adj:adj};
+}
+// 내가 처리해야 할 회의 할 일 (기한 미체크 + 피드백 미확인)
+function tljMyTodos(){
+  var out=[]; if(!ME||!ME.name) return out;
+  (_meetings||[]).forEach(function(m){
+    if(!Array.isArray(m.who)||m.who.indexOf(ME.name)<0) return;
+    (m.dls||[]).forEach(function(d,idx){ if(!d.status) out.push({kind:'dl', mid:m.id, idx:idx, text:d.text, date:d.date, mtitle:m.title||m.date||''}); });
+  });
+  mtMyPendingFb().forEach(function(p){ out.push({kind:'fb', mid:p.mid, fid:p.fid, text:p.text, mtitle:p.mtitle}); });
+  return out;
+}
+var _tljViewFor=null;
+function openTlj(){
+  if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
+  var go=function(){ _tljViewFor=(ME.role==='owner')?null:ME.name; _renderTlj(); };
+  if(typeof _meetings==='undefined' || _meetings===null){
+    toast('회의록 불러오는 중…');
+    _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; go(); }).catch(function(){ _meetings=_meetings||[]; go(); });
+  } else go();
+}
+function _renderTlj(){
+  var ex=document.getElementById('ov-tlj'); if(ex) ex.remove();
+  var isOw=(ME&&ME.role==='owner');
+  var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+  var h='<div class="ov open" id="ov-tlj" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">🧑‍💼 팀장일지'+(isOw?' (조회·점수)':'')+'</div>';
+  if(isOw){
+    if(!admins.length) h+='<div class="empty">등록된 관리자가 없어요</div>';
+    else{
+      if(!_tljViewFor) _tljViewFor=admins[0];
+      h+='<div class="rank-tab-row">'+admins.map(function(nm){ return '<div class="rank-tab'+(_tljViewFor===nm?' on':'')+'" onclick="_tljViewFor=\''+dEsc(nm)+'\';_renderTlj()">'+dEsc(nm)+'</div>'; }).join('')+'</div>';
+      var st=calcAdminTljStats(_tljViewFor);
+      h+='<div style="display:flex;gap:6px;margin:10px 0;font-size:11px;font-weight:700">'
+        +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--acc);border-radius:8px;padding:7px 0">이번 달 작성 '+st.days+'일</span>'
+        +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--g);border-radius:8px;padding:7px 0">할 일 처리 '+st.linked+'건</span>'
+        +'<span style="flex:1;text-align:center;background:'+(st.adj>=0?'var(--gl);color:var(--g)':'var(--s2);color:var(--rd)')+';border-radius:8px;padding:7px 0">점수 보정 '+(st.adj>0?'+':'')+st.adj+'</span></div>'
+        +'<div style="font-size:10px;color:var(--t3);margin-bottom:10px;line-height:1.5">＊ 작성 12일↑ +5 · 8일↑ +3 · 4일↑ +1 · 0일 -5 / 회의 할 일 처리 5건↑ +5 · 2건↑ +3 · 1건 +1 — 관리자 평가 종합 점수에 반영</div>';
+    }
+  } else {
+    h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
+      +'<label class="fl">날짜</label><input class="fi" type="date" id="tlj-date" value="'+today()+'">'
+      +'<label class="fl">✅ 오늘 한 일</label><textarea class="fi" id="tlj-done" rows="4" placeholder="오늘 처리한 업무를 적어주세요"></textarea>'
+      +'<label class="fl">📌 예정·진행 중</label><textarea class="fi" id="tlj-plan" rows="2" placeholder="내일/이번 주 예정 업무 (선택)"></textarea>'
+      +'<label class="fl">⚠ 특이사항 (선택)</label><textarea class="fi" id="tlj-issue" rows="2" placeholder="공유할 문제·건의 등"></textarea>';
+    var todos=tljMyTodos();
+    h+='<label class="fl">📝 회의에서 나온 내 할 일 ('+todos.length+'건) — 처리했으면 체크</label>';
+    if(!todos.length) h+='<div style="font-size:11.5px;color:var(--t3);padding:2px 0 8px">남은 회의 할 일이 없어요 👍</div>';
+    else h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">'
+      +todos.map(function(t,i){
+        return '<label style="display:flex;gap:9px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--s2);cursor:pointer">'
+          +'<input type="checkbox" class="tlj-todo" data-i="'+i+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
+          +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+dEsc(t.text)
+          +'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+(t.kind==='dl'?('⏱ '+dEsc(t.date||'')+' · '):'💬 피드백 · ')+'📝 '+dEsc(t.mtitle)+'</span></span></label>';
+      }).join('')+'</div>';
+    window._tljTodos=todos;
+    h+='<button class="btn" onclick="tljSave()">일지 저장</button>';
+    var st2=calcAdminTljStats(ME.name);
+    h+='<div style="font-size:10.5px;color:var(--t3);margin:6px 0 10px;text-align:center">이번 달 작성 '+st2.days+'일 · 할 일 처리 '+st2.linked+'건 · 점수 보정 '+(st2.adj>0?'+':'')+st2.adj+'</div>';
+  }
+  // 일지 목록
+  var target=isOw?_tljViewFor:ME.name;
+  var list=target?_tljList(target).slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); }):[];
+  h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>지난 일지 <span style="font-size:11px;color:var(--t3)">'+list.length+'건</span></div>';
+  if(!list.length) h+='<div class="empty" style="font-size:12px;padding:6px 0">작성된 일지가 없어요</div>';
+  list.slice(0,40).forEach(function(e){
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:10px 12px;margin-bottom:7px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:12px;font-weight:800;color:var(--acc)">'+dEsc(e.date||'')+'</span>'
+      +((isOw||e.date===today())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>'
+      +(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':'')
+      +(e.plan?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--t2)"><b>📌 예정</b>\n'+dEsc(e.plan)+'</div>':'')
+      +(e.issue?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--am)"><b>⚠ 특이사항</b>\n'+dEsc(e.issue)+'</div>':'')
+      +((e.linked&&e.linked.length)?'<div style="font-size:11px;color:var(--g);margin-top:5px;line-height:1.5">'+e.linked.map(function(l){ return '✔ '+dEsc(l.text); }).join('<br>')+'</div>':'')
+      +'</div>';
+  });
+  h+='<button class="btn ghost" style="margin-top:8px" onclick="document.getElementById(\'ov-tlj\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function tljSave(){
+  var date=(document.getElementById('tlj-date')||{}).value||today();
+  var done=((document.getElementById('tlj-done')||{}).value||'').trim();
+  var plan=((document.getElementById('tlj-plan')||{}).value||'').trim();
+  var issue=((document.getElementById('tlj-issue')||{}).value||'').trim();
+  var checked=Array.prototype.map.call(document.querySelectorAll('.tlj-todo:checked'),function(c){ return window._tljTodos[parseInt(c.getAttribute('data-i'))]; }).filter(Boolean);
+  if(!done && !checked.length){ toast('오늘 한 일을 적거나, 처리한 할 일을 체크해주세요','var(--rd)'); return; }
+  var list=_tljList(ME.name);
+  var entry={id:'tj'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:date, done:done, plan:plan, issue:issue,
+    linked:checked.map(function(t){ return {text:t.text, kind:t.kind, mid:t.mid}; }), ts:Date.now()};
+  list.push(entry);
+  // 체크한 회의 할 일 → 회의록에 반영 (기한=지킴, 피드백=확인)
+  var touched=false;
+  checked.forEach(function(t){
+    var m=(_meetings||[]).find(function(x){ return x.id===t.mid; }); if(!m) return;
+    if(t.kind==='dl' && m.dls && m.dls[t.idx]){ m.dls[t.idx].status='ok'; touched=true; }
+    if(t.kind==='fb'){ var f=(m.fbs||[]).find(function(x){ return x.id===t.fid; }); if(f){ if(!f.done) f.done={}; f.done[ME.name]={date:today()}; touched=true; } }
+  });
+  if(touched) _FS.set('academy/meetings',{list:_meetings}).catch(function(){ toast('회의록 반영 실패 · 인터넷 확인','var(--rd)'); });
+  try{ logChange('팀장일지 작성', ME.name+' '+date+(checked.length?' · 할 일 '+checked.length+'건 처리':'')); }catch(e){}
+  saveAll();
+  toast('🧑‍💼 일지가 저장됐어요'+(checked.length?' · 할 일 '+checked.length+'건이 회의록에 반영됐어요':'')+' ✓','var(--g)');
+  _renderTlj();
+}
+function tljDel(name,id){
+  if(!confirm('이 일지를 삭제할까요?')) return;
+  if(!(ME && (ME.role==='owner' || ME.name===name))) return;
+  DB.tlj[name]=(DB.tlj[name]||[]).filter(function(e){ return e.id!==id; });
+  try{ logChange('팀장일지 삭제', name+' '+id); }catch(e){}
+  saveAll(); _renderTlj();
 }
 
 // ═══ 담임 교체 기록 (사유 선택 → 강사 점수 반영) ═══
@@ -6739,10 +6862,10 @@ function renderAdminHome() {
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
-     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button></div>':'')
+     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지</button></div>':'')
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
-     + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
+     + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지 작성</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
      + (function(){ var st=manMonthStat(); return '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼 (교무실·행정실)'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">· 이번 달 '+st.ok+'/'+st.tot+'</span>':'')+'</button></div>'; })()
