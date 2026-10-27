@@ -2270,8 +2270,13 @@ function mtDlSet(mid, idx, st){
   var m=(_meetings||[]).find(function(x){return x.id===mid;}); if(!m) return;
   if(!Array.isArray(m.dls)) m.dls=mtDlsOf(m);
   if(!m.dls[idx]) return;
-  m.dls[idx].status = (m.dls[idx].status===st)?'':st;
-  _FS.set('academy/meetings',{list:_meetings}).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
+  var newSt=(m.dls[idx].status===st)?'':st;
+  m.dls[idx].status=newSt;
+  _mtSync(function(list){
+    var mm=list.find(function(x){return x.id===mid;}); if(!mm) return;
+    if(!Array.isArray(mm.dls)) mm.dls=mtDlsOf(mm);
+    if(mm.dls[idx]) mm.dls[idx].status=newSt;
+  }, function(ok){ if(!ok) toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   var row=document.getElementById('mtdl-'+idx); if(row){ row.outerHTML=mtDlRow(m, idx); }
   if(document.getElementById('ov-mttodo')) renderMtTodo();
   if(document.getElementById('ov-mtview') && window._mtViewId) mtView(window._mtViewId);
@@ -2575,6 +2580,20 @@ function mtOpen(id){
   // 열 때 자동 인식: 내용·첨부에 있는 피드백 요청 문장을 자동으로 항목화
   mtFbAutoExtract(false).then(function(n){ if(n) toast('💬 피드백 '+n+'건을 자동 인식했어요 — 저장하면 반영됩니다','var(--g)'); });
 }
+// 서버 최신 회의록 목록을 받아와 변경을 적용한 뒤 저장 (여러 기기 동시 수정 보호)
+function _mtSync(mutate, cb){
+  _FS.get('academy/meetings').then(function(doc){
+    var arr=null; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list); }catch(e){}
+    return Array.isArray(arr)?arr:(_meetings||[]);
+  }).catch(function(){ return _meetings||[]; })
+  .then(function(arr){
+    _meetings=Array.isArray(arr)?arr:[];
+    try{ mutate(_meetings); }catch(e){}
+    return _FS.set('academy/meetings',{list:_meetings})
+      .then(function(){ if(cb) cb(true); })
+      .catch(function(){ if(cb) cb(false); });
+  });
+}
 function mtSave(){
   var id=document.getElementById('mt-id').value||('m'+Date.now());
   var date=document.getElementById('mt-date').value||today();
@@ -2586,28 +2605,33 @@ function mtSave(){
   var levels=Array.prototype.map.call(document.querySelectorAll('#mt-levels .mt-lvchip[data-on="1"]'),function(el){return el.getAttribute('data-lv');});
   if(mtype==='교무회의록' && !levels.length){ toast('교무회의록은 초등·중등·고등 중 하나 이상 선택하세요','var(--rd)'); return; }
   var who=Array.prototype.map.call(document.querySelectorAll('#mt-who .mt-whochip[data-on="1"]'),function(el){return el.getAttribute('data-nm');});
-  if(!Array.isArray(_meetings)) _meetings=[];
-  var i=_meetings.findIndex(function(x){return x.id===id;});
-  // 기한 추출 + 기존 체크 상태 유지
   var dlsNew=mtExtractDeadlines(raw+'\n'+summary).map(function(f){ return {date:f.date, text:f.text, status:''}; });
-  var dlsOld=(i>=0 && Array.isArray(_meetings[i].dls))?_meetings[i].dls:[];
-  dlsNew.forEach(function(d){ var o=dlsOld.find(function(x){return x.date===d.date&&x.text===d.text;}); if(o&&o.status) d.status=o.status; });
-  // 피드백 확인 상태 병합 (편집 중 다른 사람이 확인한 기록 보존)
-  var fbsOld=(i>=0 && Array.isArray(_meetings[i].fbs))?_meetings[i].fbs:[];
-  var fbsNew=(_mtFbs||[]).map(function(f){
-    var o=fbsOld.find(function(x){ return x.id===f.id; });
-    if(o&&o.done){ f.done=f.done||{}; Object.keys(o.done).forEach(function(nm){ if(!f.done[nm]) f.done[nm]=o.done[nm]; }); }
-    return f;
+  var myFbs=(_mtFbs||[]); var myFiles=(_mtFiles||[]).slice();
+  toast('저장 중…');
+  _mtSync(function(list){
+    var i=list.findIndex(function(x){return x.id===id;});
+    // 기한 체크 상태: 서버 최신본 기준으로 유지
+    var dlsOld=(i>=0 && Array.isArray(list[i].dls))?list[i].dls:[];
+    dlsNew.forEach(function(d){ d.status=''; var o=dlsOld.find(function(x){return x.date===d.date&&x.text===d.text;}); if(o&&o.status) d.status=o.status; });
+    // 피드백 확인 상태: 서버 최신본과 병합 (편집 중 다른 사람의 확인 보존)
+    var fbsOld=(i>=0 && Array.isArray(list[i].fbs))?list[i].fbs:[];
+    var fbsNew=myFbs.map(function(f){
+      var o=fbsOld.find(function(x){ return x.id===f.id; });
+      if(o&&o.done){ f.done=f.done||{}; Object.keys(o.done).forEach(function(nm){ if(!f.done[nm]) f.done[nm]=o.done[nm]; }); }
+      return f;
+    });
+    var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, dls:dlsNew, raw:raw, summary:summary, files:myFiles, fbs:fbsNew, by:(ME?ME.name:''), ts:Date.now()};
+    if(i>=0) list[i]=obj; else list.push(obj);
+  }, function(ok){
+    if(ok) toast('회의록 저장됨 ✓','var(--g)'); else toast('저장 실패 · 인터넷 확인','var(--rd)');
+    _renderMeetList(false);
   });
-  var obj={id:id, date:date, title:title, mtype:mtype, levels:(mtype==='교무회의록'?levels:[]), who:who, dls:dlsNew, raw:raw, summary:summary, files:(_mtFiles||[]).slice(), fbs:fbsNew, by:(ME?ME.name:''), ts:Date.now()};
-  if(i>=0) _meetings[i]=obj; else _meetings.push(obj);
-  _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('회의록 저장됨 ✓','var(--g)'); }).catch(function(){ toast('저장 실패 · 인터넷 확인','var(--rd)'); });
-  try{ logChange('회의록 저장', (title||date)+(mtTypeLabel(obj)?' ['+mtTypeLabel(obj)+']':'')); }catch(e){}
+  try{ logChange('회의록 저장', (title||date)+(mtype?' ['+mtype+']':'')); }catch(e){}
   // 회의 내용 속 기한 날짜 자동 인식 → 일정 등록
   try{ mtAutoSchedule(raw+'\n'+summary, title||date); }catch(e){}
   if(!dlsNew.length && who.length){ setTimeout(function(){ toast('⚠ 기한이 추출되지 않았어요 — 참석 관리자 점수에 하향 반영됩니다','var(--am)'); }, 900); }
   var m=document.getElementById('ov-mtedit'); if(m) m.remove();
-  _renderMeetList(false);
+  _renderMeetList(true);
 }
 // 회의 내용에서 기한 날짜(예: "8/15까지", "8월 20일 마감", "2026-09-01 제출") 추출 → 일정 자동 등록
 function mtExtractDeadlines(text){
@@ -2667,7 +2691,13 @@ function mtDelete(id){
     }).catch(function(){});
   });
   _meetings=(_meetings||[]).filter(function(x){return x.id!==id;});
-  _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('🗑 회의록이 삭제됐어요','var(--g)'); }).catch(function(){ toast('삭제 저장 실패 · 인터넷 확인','var(--rd)'); });
+  _mtSync(function(list){
+    var i=list.findIndex(function(x){return x.id===id;});
+    if(i>=0) list.splice(i,1);
+  }, function(ok){
+    if(ok) toast('🗑 회의록이 삭제됐어요','var(--g)'); else toast('삭제 저장 실패 · 인터넷 확인','var(--rd)');
+    _renderMeetList(false);
+  });
   try{ logChange('회의록 삭제', (mt&&(mt.title||mt.date))||id); }catch(e){}
   var m=document.getElementById('ov-mtedit'); if(m) m.remove();
   var v=document.getElementById('ov-mtview'); if(v){ window._mtViewId=null; v.remove(); }
@@ -2766,7 +2796,12 @@ function mtFbConfirm(mid,fid){
   if(!f.done) f.done={};
   f.done[ME.name]={date:today()};
   if(!inEditOnly && m){
-    _FS.set('academy/meetings', {list:_meetings}).then(function(){ toast('✅ 확인이 기록됐어요','var(--g)'); }).catch(function(){ toast('기록 실패 · 인터넷 확인','var(--rd)'); });
+    var nm=ME.name, dt=today();
+    _mtSync(function(list){
+      var mm=list.find(function(x){ return x.id===mid; }); if(!mm) return;
+      var ff=(mm.fbs||[]).find(function(x){ return x.id===fid; }); if(!ff) return;
+      if(!ff.done) ff.done={}; ff.done[nm]={date:dt};
+    }, function(ok){ if(ok) toast('✅ 확인이 기록됐어요','var(--g)'); else toast('기록 실패 · 인터넷 확인','var(--rd)'); });
     try{ logChange('회의록 피드백 확인', (m.title||m.date||'')+' — '+String(f.text||'').slice(0,40)); }catch(e){}
   }
   if(document.getElementById('ov-mtedit')){ var ed=_mtFbs.find(function(x){ return x.id===fid; }); if(ed){ if(!ed.done) ed.done={}; ed.done[ME.name]={date:today()}; } _mtRenderFbs(); }
@@ -6056,14 +6091,23 @@ function tljSave(){
   var entry={id:'tj'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:date, done:done, plan:plan, issue:issue,
     linked:checked.map(function(t){ return {text:t.text, kind:t.kind, mid:t.mid, hours:t.hours||''}; }), ts:Date.now()};
   list.push(entry);
-  // 체크한 회의 할 일 → 회의록에 반영 (기한=지킴, 피드백=확인)
+  // 체크한 회의 할 일 → 회의록에 반영 (기한=지킴, 피드백=확인 · 서버 최신본 기준 병합)
   var touched=false;
   checked.forEach(function(t){
     var m=(_meetings||[]).find(function(x){ return x.id===t.mid; }); if(!m) return;
     if(t.kind==='dl' && m.dls && m.dls[t.idx]){ m.dls[t.idx].status='ok'; touched=true; }
     if(t.kind==='fb'){ var f=(m.fbs||[]).find(function(x){ return x.id===t.fid; }); if(f){ if(!f.done) f.done={}; f.done[ME.name]={date:today()}; touched=true; } }
   });
-  if(touched) _FS.set('academy/meetings',{list:_meetings}).catch(function(){ toast('회의록 반영 실패 · 인터넷 확인','var(--rd)'); });
+  if(touched){
+    var nm=ME.name, dt=today(), picked=checked.slice();
+    _mtSync(function(list){
+      picked.forEach(function(t){
+        var m=list.find(function(x){ return x.id===t.mid; }); if(!m) return;
+        if(t.kind==='dl' && m.dls && m.dls[t.idx]) m.dls[t.idx].status='ok';
+        if(t.kind==='fb'){ var f=(m.fbs||[]).find(function(x){ return x.id===t.fid; }); if(f){ if(!f.done) f.done={}; f.done[nm]={date:dt}; } }
+      });
+    }, function(ok){ if(!ok) toast('회의록 반영 실패 · 인터넷 확인','var(--rd)'); });
+  }
   try{ logChange('팀장일지 작성', ME.name+' '+date+(checked.length?' · 할 일 '+checked.length+'건 처리':'')); }catch(e){}
   saveAll();
   toast('🧑‍💼 일지가 저장됐어요'+(checked.length?' · 할 일 '+checked.length+'건이 회의록에 반영됐어요':'')+' ✓','var(--g)');
