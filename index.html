@@ -5920,9 +5920,11 @@ function openAdminEval() {
     var date = a.adminEvalDate ? ' ('+a.adminEvalDate+')' : '';
     var mst = (typeof calcAdminMeetStats==='function') ? calcAdminMeetStats(a.name) : null;
     var tst = (typeof calcAdminTljStats==='function') ? calcAdminTljStats(a.name) : null;
-    var adjSum = (mst?mst.adj:0) + (tst?tst.adj:0);
+    var ust = (typeof calcAdminUpgStats==='function') ? calcAdminUpgStats(a.name) : null;
+    var adjSum = (mst?mst.adj:0) + (tst?tst.adj:0) + (ust?ust.adj:0);
     if(mst && mst.adj!==0) score += ' · 회의기한 '+(mst.adj>0?'+':'')+mst.adj;
     if(tst && tst.adj!==0) score += ' · 일지 '+(tst.adj>0?'+':'')+tst.adj;
+    if(ust && ust.adj!==0) score += ' · 업그레이드 +'+ust.adj;
     if(a.adminEvalTotal!==undefined && adjSum!==0) score += ' → 종합 '+Math.max(0,Math.min(100,a.adminEvalTotal+adjSum))+'점';
     h += '<button onclick="document.getElementById(\'ov-admineval-menu\').remove();openAdminEvalFor(\''+a.name+'\')" '
        + 'style="width:100%;text-align:left;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
@@ -7704,6 +7706,108 @@ function wbHomeCardHTML(){
   }
   return h;
 }
+// ═══ 업무 업그레이드 제안·시행 (팀장 스스로 개선 → 관리자 점수 가점) ═══
+function _upgList(name){ if(!DB.upg) DB.upg={}; if(!Array.isArray(DB.upg[name])) DB.upg[name]=[]; return DB.upg[name]; }
+function calcAdminUpgStats(name){
+  var ym=getYearMonth();
+  var list=(DB.upg&&DB.upg[name])||[];
+  var proposed=list.filter(function(u){ return (u.date||'').slice(0,7)===ym; }).length;
+  var conf=list.filter(function(u){ return u.status==='done' && u.confirmed && (u.confirmed.date||'').slice(0,7)===ym; }).length;
+  var adj=(proposed>0?1:0) + (conf>=2?5:conf===1?3:0);
+  return {proposed:proposed, confirmed:conf, adj:adj};
+}
+var _upgViewFor=null;
+function openUpgrades(){
+  if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
+  _upgViewFor=(ME.role==='owner')?null:ME.name;
+  renderUpgrades();
+}
+function renderUpgrades(){
+  var ex=document.getElementById('ov-upg'); if(ex) ex.remove();
+  var isOw=(ME&&ME.role==='owner');
+  var h='<div class="ov open" id="ov-upg" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">💡 업무 업그레이드'+(isOw?' (확인·점수 반영)':'')+'</div>';
+  var STLB={proposed:['제안','var(--acc)'], doing:['시행 중','var(--am)'], done:['시행 완료','var(--g)']};
+  function card(u, name, mine){
+    var s=STLB[u.status]||STLB.proposed;
+    var hh='<div style="background:var(--s1);border:1px solid '+(u.confirmed?'var(--g)':'var(--s3)')+';border-radius:10px;padding:10px 12px;margin-bottom:7px">'
+      +'<div style="font-size:12.5px;font-weight:700;line-height:1.5"><span style="font-size:9.5px;background:var(--s2);color:'+s[1]+';border-radius:5px;padding:1px 6px;font-weight:700;margin-right:5px">'+s[0]+'</span>'+dEsc(u.title)+'</div>'
+      +(u.expect?'<div style="font-size:11px;color:var(--t2);margin-top:3px;line-height:1.5">🎯 기대 효과: '+dEsc(u.expect)+'</div>':'')
+      +'<div style="font-size:10px;color:var(--t3);margin-top:3px">'+dEsc(u.date||'')+' 제안'+(u.doneDate?' · '+dEsc(u.doneDate)+' 시행 완료':'')+(u.result?' · 결과: '+dEsc(u.result):'')+'</div>'
+      +(u.confirmed?'<div style="font-size:10.5px;color:var(--g);font-weight:700;margin-top:3px">✅ 원장 확인 ('+dEsc(u.confirmed.date||'')+') — 점수 반영됨</div>':'');
+    if(mine){
+      if(u.status==='proposed') hh+='<button onclick="upgStatus(\''+u.id+'\',\'doing\')" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:1px solid var(--am);background:var(--s1);color:var(--am);font-size:11.5px;font-weight:700;cursor:pointer">▶ 시행 시작</button>';
+      if(u.status==='doing') hh+='<button onclick="upgStatus(\''+u.id+'\',\'done\')" style="margin-top:6px;width:100%;padding:7px;border-radius:8px;border:none;background:var(--g);color:#fff;font-size:11.5px;font-weight:700;cursor:pointer">✓ 시행 완료 (원장 확인 요청)</button>';
+      if(!u.confirmed) hh+='<button onclick="upgDel(\''+dEsc(name)+'\',\''+u.id+'\')" style="margin-top:4px;width:100%;padding:5px;border-radius:8px;border:none;background:none;color:var(--rd);font-size:10.5px;cursor:pointer">삭제</button>';
+    }
+    if(isOw && u.status==='done' && !u.confirmed)
+      hh+='<button onclick="upgConfirm(\''+dEsc(name)+'\',\''+u.id+'\')" style="margin-top:6px;width:100%;padding:8px;border-radius:8px;border:none;background:var(--pu);color:#fff;font-size:12px;font-weight:700;cursor:pointer">👑 시행 확인 → 점수 반영</button>';
+    return hh+'</div>';
+  }
+  if(isOw){
+    var names=[];
+    ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(a&&a.name) names.push(a.name); });
+    Object.keys(DB.upg||{}).forEach(function(nm){ if(names.indexOf(nm)<0) names.push(nm); });
+    h+='<div style="font-size:11px;color:var(--t2);margin-bottom:10px">팀장이 스스로 제안하고 시행한 업무 개선입니다. <b>시행 확인</b>을 눌러야 그 달 관리자 점수에 가점됩니다. (제안 +1 · 시행 확인 1건 +3 · 2건↑ +5)</div>';
+    if(!names.length) h+='<div class="empty">등록된 관리자가 없어요</div>';
+    names.forEach(function(nm){
+      var list=_upgList(nm); var st=calcAdminUpgStats(nm);
+      h+='<div class="sl2" style="margin:10px 0 6px"><div class="d8" style="background:var(--pu)"></div>'+dEsc(nm)+' <span style="font-size:11px;color:var(--t3)">'+list.length+'건 · 이달 가점 +'+st.adj+'</span></div>';
+      if(!list.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">아직 제안이 없어요</div>';
+      list.slice().reverse().forEach(function(u){ h+=card(u, nm, false); });
+    });
+  } else {
+    var st2=calcAdminUpgStats(ME.name);
+    h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">내 업무를 더 잘하는 방법을 스스로 제안하고 시행해보세요. <b>제안만 해도 +1점</b>, 시행을 끝내고 원장님이 확인하면 <b>1건 +3점 · 2건 이상 +5점</b>이 이번 달 관리자 점수에 더해집니다.</div>'
+      +'<div style="display:flex;gap:6px;margin-bottom:12px;font-size:11px;font-weight:700">'
+      +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--acc);border-radius:8px;padding:7px 0">이달 제안 '+st2.proposed+'건</span>'
+      +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--g);border-radius:8px;padding:7px 0">시행 확인 '+st2.confirmed+'건</span>'
+      +'<span style="flex:1;text-align:center;background:var(--gl);color:var(--g);border-radius:8px;padding:7px 0">가점 +'+st2.adj+'</span></div>'
+      +'<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:12px">'
+      +'<input class="fi" id="upg-title" placeholder="업그레이드할 내용 (예: 반 회의 기록 양식 통일)" style="margin-bottom:6px">'
+      +'<input class="fi" id="upg-expect" placeholder="기대 효과 (선택 · 예: 회의 시간 단축)" style="margin-bottom:7px">'
+      +'<button onclick="upgAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--acc);background:none;color:var(--acc);font-size:12px;font-weight:700;cursor:pointer">+ 업그레이드 제안 등록</button></div>';
+    var list2=_upgList(ME.name);
+    if(!list2.length) h+='<div class="empty" style="font-size:12px;padding:6px 0">아직 제안이 없어요 — 작게라도 시작해보세요</div>';
+    list2.slice().reverse().forEach(function(u){ h+=card(u, ME.name, true); });
+  }
+  h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-upg\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function upgAdd(){
+  var title=((document.getElementById('upg-title')||{}).value||'').trim();
+  var expect=((document.getElementById('upg-expect')||{}).value||'').trim();
+  if(!title){ toast('업그레이드할 내용을 입력하세요','var(--rd)'); return; }
+  _upgList(ME.name).push({id:'ug'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), title:title, expect:expect, date:today(), status:'proposed'});
+  try{ logChange('업무 업그레이드 제안', ME.name+' — '+title.slice(0,40)); }catch(e){}
+  saveAll(); renderUpgrades(); toast('💡 제안이 등록됐어요 (+1점 반영)','var(--g)');
+}
+function upgStatus(id, st){
+  var u=_upgList(ME.name).find(function(x){ return x.id===id; }); if(!u) return;
+  u.status=st;
+  if(st==='done'){
+    u.doneDate=today();
+    var r=prompt('시행 결과를 간단히 적어주세요 (선택)');
+    if(r) u.result=r.trim();
+    try{ logChange('업무 업그레이드 시행 완료', ME.name+' — '+u.title.slice(0,40)); }catch(e){}
+    toast('✓ 시행 완료 — 원장님 확인 후 점수가 반영돼요','var(--g)');
+  }
+  saveAll(); renderUpgrades();
+}
+function upgDel(name,id){
+  if(!(ME&&(ME.name===name||ME.role==='owner'))) return;
+  if(!confirm('이 제안을 삭제할까요?')) return;
+  DB.upg[name]=(DB.upg[name]||[]).filter(function(x){ return x.id!==id; });
+  saveAll(); renderUpgrades();
+}
+function upgConfirm(name,id){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 확인할 수 있어요','var(--rd)'); return; }
+  var u=_upgList(name).find(function(x){ return x.id===id; }); if(!u) return;
+  u.confirmed={by:ME.name, date:today()};
+  try{ logChange('업무 업그레이드 확인', name+' — '+u.title.slice(0,40)+' (점수 반영)'); }catch(e){}
+  saveAll(); renderUpgrades(); toast('✅ 확인됐어요 — '+name+' 점수에 가점 반영','var(--g)');
+}
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
@@ -7719,10 +7823,10 @@ function renderAdminHome() {
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
-     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지</button></div>':'')
+     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지</button><button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업그레이드'+(function(){ try{ var n=0; Object.keys(DB.upg||{}).forEach(function(nm){ (DB.upg[nm]||[]).forEach(function(u){ if(u.status==='done'&&!u.confirmed) n++; }); }); return n?' <span style="color:var(--rd);font-weight:700">'+n+'</span>':''; }catch(e){ return ''; } })()+'</button></div>':'')
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
-     + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지 작성</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
+     + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지 작성</button><button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업무 업그레이드</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
      + (function(){ var st=manMonthStat(); var td=myTodoOpenCnt(); return '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">'+st.ok+'/'+st.tot+'</span>':'')+'</button><button onclick="openMyTodos()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📆 날짜별 할 일'+(td?' <span style="font-weight:700;color:var(--am)">'+td+'</span>':'')+'</button></div>'; })()
