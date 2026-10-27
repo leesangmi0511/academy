@@ -6075,6 +6075,19 @@ function _renderTlj(){
         });
         return hh+'</div>';
       })()
+      +(function(){ // 🧑‍💼 기본 팀장 업무 (매뉴얼에서 관리 · 오늘 수행한 것 체크)
+        var bs=_manDB().basics||[];
+        if(!bs.length) return '';
+        return '<label class="fl">🧑‍💼 기본 팀장 업무 — 오늘 수행한 것 체크</label>'
+          +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">'
+          +bs.map(function(b,i){
+            return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--s2);cursor:pointer">'
+              +'<input type="checkbox" class="tlj-basic" data-t="'+dEsc(b.title)+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
+              +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+(b.freq?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700;margin-right:4px">'+dEsc(b.freq)+'</span>':'')+dEsc(b.title)
+              +(b.desc?'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+dEsc(b.desc.length>60?b.desc.slice(0,58)+'…':b.desc)+'</span>':'')+'</span></label>';
+          }).join('')
+          +'<div style="font-size:9.5px;color:var(--t3);padding:5px 0">＊ 체크하면 오늘 한 일에 자동 기록 · 목록 수정은 업무 매뉴얼에서 (원장)</div></div>';
+      })()
       +'<label class="fl">✅ 오늘 한 일 (작업시간 선택)</label><div id="tlj-done-rows"></div>'
       +'<button onclick="tljDoneAdd()" style="width:100%;margin:2px 0 10px;padding:8px;border-radius:9px;border:1px dashed var(--g);background:none;color:var(--g);font-size:12px;font-weight:700;cursor:pointer">+ 한 일 추가</button>'
       +'<label class="fl">📌 예정·진행 중</label><textarea class="fi" id="tlj-plan" rows="2" placeholder="내일/이번 주 예정 업무 (선택)"></textarea>'
@@ -6162,6 +6175,11 @@ function tljSave(){
   var date=(document.getElementById('tlj-date')||{}).value||today();
   _tljSyncDone();
   var doneItems=(window._tljDone||[]).map(function(r){ return {text:(r.text||'').trim(), hours:r.hours||'', st:r.st||'done'}; }).filter(function(r){ return r.text; });
+  // 체크한 기본 팀장 업무 → 오늘 한 일로 자동 기록
+  Array.prototype.forEach.call(document.querySelectorAll('.tlj-basic:checked'), function(c){
+    var t=c.getAttribute('data-t')||'';
+    if(t && !doneItems.some(function(r){ return r.text===t; })) doneItems.push({text:t, hours:'', st:'done', basic:1});
+  });
   var done=doneItems.map(function(r){ return r.text+(r.hours?' ('+r.hours+')':'')+(r.st==='ing'?' [진행 중]':r.st==='todo'?' [미완료]':''); }).join('\n');
   var plan=((document.getElementById('tlj-plan')||{}).value||'').trim();
   var issue=((document.getElementById('tlj-issue')||{}).value||'').trim();
@@ -7000,6 +7018,18 @@ function _manDB(){
     if(!Array.isArray(DB.manuals[d.key].monthly)) DB.manuals[d.key].monthly=[];
     if(!Array.isArray(DB.manuals[d.key].docs)) DB.manuals[d.key].docs=[]; });
   if(!DB.manuals.done) DB.manuals.done={};
+  // 기본 팀장 업무 1회 자동 등록 (이후 자유롭게 수정·삭제 가능)
+  if(!DB.manuals.basicsSeeded){
+    DB.manuals.basicsSeeded=1;
+    if(!Array.isArray(DB.manuals.basics)) DB.manuals.basics=[
+      {id:'bs1', title:'진도 추적', freq:'매일', desc:'담당 반의 진도를 과제앱 기준으로 확인하고, 늦어지는 반은 원인을 파악해 강사와 일정 조정'},
+      {id:'bs2', title:'반 회의', freq:'주 1회', desc:'반별 수업·학생 상황 점검 회의를 진행하고 결정 사항과 할 일을 기록'},
+      {id:'bs3', title:'퇴원 예방을 위한 시기별 방법', freq:'상시', desc:'상담 주기·시험 전후·방학 전 등 시기별로 이탈 징후(결석·과제 미제출·상담 회피)를 점검하고 선제 상담 진행'},
+      {id:'bs4', title:'강사 피드백', freq:'주 1회', desc:'강사별 수업·학생 관리 상태를 확인하고 잘한 점·개선점을 직접 전달'},
+      {id:'bs5', title:'강사 업무 기한 체크', freq:'매일', desc:'강사에게 걸린 제출물·업무 기한을 확인하고 임박·초과 건은 독려 및 원장 보고'}
+    ];
+  }
+  if(!Array.isArray(DB.manuals.basics)) DB.manuals.basics=[];
   return DB.manuals;
 }
 function _manYM(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); }
@@ -7032,6 +7062,22 @@ function renderManuals(){
   var h='';
   // ── 1. 월간 필수 업무 ──
   var okN=dept.monthly.filter(function(it){ return done[it.id]; }).length;
+  // ── 0. 기본 팀장 업무 (교무실 탭 · 상시 업무) ──
+  if(_manTab==='gyomu'){
+    h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--g)"></div>🧑‍💼 기본 팀장 업무 <span style="font-size:11px;color:var(--t3)">'+m.basics.length+'건 · 상시</span></div>';
+    if(!m.basics.length) h+='<div class="empty" style="font-size:12px;padding:6px 0">등록된 기본 업무가 없어요'+(isOw?' — 아래 버튼으로 추가하세요':'')+'</div>';
+    m.basics.forEach(function(b){
+      h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:10px 12px;margin-bottom:7px">'
+        +'<div style="display:flex;align-items:flex-start;gap:8px">'
+        +'<div style="flex:1;min-width:0">'
+        +'<div style="font-size:13px;font-weight:700">'+(b.freq?'<span style="font-size:10px;background:var(--gl);color:var(--g);border-radius:6px;padding:2px 7px;margin-right:6px;display:inline-block">'+dEsc(b.freq)+'</span>':'')+dEsc(b.title)+'</div>'
+        +(b.desc?'<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.5;white-space:pre-wrap">'+dEsc(b.desc)+'</div>':'')
+        +'</div>'
+        +(isOw?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditBasic(\''+b.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">수정</button><button onclick="manDelBasic(\''+b.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button></div>':'')
+        +'</div></div>';
+    });
+    if(isOw) h+='<button class="btn ghost" style="margin-bottom:4px;padding:9px;font-size:12.5px" onclick="manEditBasic(null)">+ 기본 팀장 업무 추가</button>';
+  }
   h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--acc)"></div>📅 '+now.getFullYear()+'년 '+(now.getMonth()+1)+'월 필수 업무'
     +(dept.monthly.length?' <span style="font-size:11px;color:'+(okN===dept.monthly.length?'var(--g)':'var(--am)')+';font-weight:700">'+okN+'/'+dept.monthly.length+' 완료</span>':'')+'</div>';
   if(!dept.monthly.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 월간 업무가 없어요.'+(isOw?' 아래 버튼으로 추가하세요.':'')+'</div>';
@@ -7249,6 +7295,40 @@ function manToggleDone(dept,id){
     try{ logChange('월간 업무 완료', (it?it.title:id)); }catch(e){}
   }
   saveAll(); renderManuals();
+}
+// ── 기본 팀장 업무 추가/수정/삭제 (원장) ──
+function manEditBasic(id){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 수정할 수 있어요','var(--rd)'); return; }
+  var m=_manDB(), it=id?(m.basics.find(function(x){return x.id===id;})||{}):{};
+  var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">'+(id?'기본 팀장 업무 수정':'기본 팀장 업무 추가')+'</div>'
+    +'<label class="fl">주기 (예: 매일, 주 1회, 상시)</label><input class="fi" id="mb-freq" value="'+dEsc(it.freq||'')+'" placeholder="예: 매일">'
+    +'<label class="fl">업무명</label><input class="fi" id="mb-title" value="'+dEsc(it.title||'')+'" placeholder="예: 진도 추적">'
+    +'<label class="fl">설명 (방법·기준)</label><textarea class="fi" id="mb-desc" rows="4" placeholder="어떻게 수행하는지">'+dEsc(it.desc||'')+'</textarea>'
+    +'<button class="btn" onclick="manSaveBasic('+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
+    +'</div></div>');
+}
+function manSaveBasic(id){
+  var m=_manDB();
+  var freq=((document.getElementById('mb-freq')||{}).value||'').trim();
+  var title=((document.getElementById('mb-title')||{}).value||'').trim();
+  var desc=((document.getElementById('mb-desc')||{}).value||'').trim();
+  if(!title){ toast('업무명을 입력해주세요','var(--rd)'); return; }
+  if(id){ var it=m.basics.find(function(x){return x.id===id;}); if(it){ it.freq=freq; it.title=title; it.desc=desc; } }
+  else m.basics.push({id:'bs'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), freq:freq, title:title, desc:desc});
+  logChange('기본 팀장 업무 '+(id?'수정':'추가'), title);
+  saveAll(); var ov=document.getElementById('ov-manedit'); if(ov) ov.remove(); renderManuals(); toast('저장됐어요 ✓','var(--g)');
+}
+function manDelBasic(id){
+  if(!(ME&&ME.role==='owner')) return;
+  var m=_manDB(); var it=m.basics.find(function(x){return x.id===id;});
+  if(!confirm('「'+((it&&it.title)||'')+'」 기본 업무를 삭제할까요?')) return;
+  m.basics=m.basics.filter(function(x){return x.id!==id;});
+  logChange('기본 팀장 업무 삭제', it?it.title:id);
+  saveAll(); renderManuals(); toast('삭제됐어요');
 }
 // ── 월간 업무 추가/수정 ──
 function manEditMonthly(dept,id){
