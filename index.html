@@ -2592,7 +2592,7 @@ function _renderMeetList(loading){
       if(Array.isArray(m.who)&&m.who.length){ whoTxt = m.who.length<=3 ? m.who.join('·') : (m.who.slice(0,2).join('·')+' 외 '+(m.who.length-2)+'명'); }
       return '<div onclick="mtView(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
         +'<div style="font-size:12.5px;font-weight:700;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(m.title||'(제목 없음)')+'</div>'
-        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+((m.fbs&&m.fbs.length)?' · 💬 '+m.fbs.length:'')+' · '+dEsc(m.by||'')+'</div></div>';
+        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+((m.fbs&&m.fbs.length)?' · 💬 '+m.fbs.length:'')+((m.cmts&&m.cmts.length)?' · 🗨 의견 '+m.cmts.length:'')+' · '+dEsc(m.by||'')+'</div></div>';
     }).join('') : '<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">'+(_mtFilter?'이 종류의 회의록이 없어요':'저장된 회의록이 없어요')+'</div>';
   }
   var h='<div class="ov" id="ov-meetings" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
@@ -2610,7 +2610,7 @@ function _renderMeetList(loading){
           +'</div>'; }).join('')
         +'</div>';
     })()
-    +'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 새 회의록 작성</button>'
+    +((ME&&ME.role==='owner')?'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 새 회의록 작성</button>':'<div style="font-size:11px;color:var(--t3);margin-bottom:10px;text-align:center">회의록 작성·편집은 원장만 — 열람하고 💬 의견을 남길 수 있어요</div>')
     +((!ME||ME.role==='owner'||canFeat('mttodo'))?'<button class="btn ghost" style="margin-bottom:10px;border-color:var(--acc);color:var(--acc)" onclick="openMtTodo()">📋 월별 할 일 정리 (회의 내용 자동 취합)</button>':'')
     +'<select class="fs" onchange="mtSetFilter(this.value)" style="margin-bottom:8px">'
       +'<option value="">전체 회의록 보기</option>'
@@ -2697,14 +2697,63 @@ function mtView(id){
         +'<button onclick="mtViewFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11.5px;background:none;border:1px solid var(--acc);color:var(--acc);border-radius:7px;padding:4px 10px;cursor:pointer;font-weight:600;flex-shrink:0">받기</button></div>';
     });
   }
+  // ── 💬 의견 (관리자: 열람 + 의견 · 원장: 확인) ──
+  (function(){
+    var cmts=Array.isArray(m.cmts)?m.cmts:[];
+    var pendN=cmts.filter(function(c){ return !c.ok; }).length;
+    h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--acc)"></div>💬 의견 '+cmts.length+'건'
+      +(ME&&ME.role==='owner'&&pendN?' <span style="font-size:11px;color:var(--am);font-weight:700">미확인 '+pendN+'건</span>':'')+'</div>';
+    cmts.forEach(function(c){
+      h+='<div style="background:var(--s1);border:1px solid '+(c.ok?'var(--s3)':'var(--am)')+';border-radius:10px;padding:9px 11px;margin-bottom:5px">'
+        +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:3px">'
+        +'<span style="font-size:11.5px;font-weight:700">'+dEsc(c.who||'')+' <span style="font-weight:400;color:var(--t3);font-size:10px">'+dEsc(c.date||'')+'</span></span>'
+        +'<span style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+        +(c.ok?'<span style="font-size:10px;color:var(--g);font-weight:700">✓ 원장 확인</span>'
+          :(ME&&ME.role==='owner'?'<button onclick="mtCmtOk(\''+m.id+'\',\''+c.id+'\')" style="font-size:10.5px;background:var(--g);color:#fff;border:none;border-radius:7px;padding:4px 9px;cursor:pointer;font-weight:700">확인</button>':'<span style="font-size:10px;color:var(--am);font-weight:700">대기</span>'))
+        +((ME&&(ME.role==='owner'||ME.name===c.who))?'<button onclick="mtCmtDel(\''+m.id+'\',\''+c.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')
+        +'</span></div>'
+        +'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap">'+dEsc(c.text||'')+'</div></div>';
+    });
+    if(isAdminLevel()){
+      h+='<div style="display:flex;gap:6px;margin-bottom:4px">'
+        +'<input class="fi" id="mt-cmt-in" placeholder="이 회의록에 대한 의견·건의" style="flex:1;margin:0" onkeydown="if(event.key===\'Enter\')mtCmtAdd(\''+m.id+'\')">'
+        +'<button onclick="mtCmtAdd(\''+m.id+'\')" style="flex:0 0 auto;padding:0 14px;border-radius:9px;border:none;background:var(--acc);color:#fff;font-size:12px;font-weight:700;cursor:pointer">💬 남기기</button></div>';
+    }
+  })();
   h+='<div style="display:flex;gap:8px;margin-top:12px">'
-    +'<button class="btn" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove();mtOpen(\''+m.id+'\')">✏️ 편집</button>'
-    +(ME&&ME.role==='owner'?'<button class="btn ghost" style="flex:1;color:var(--rd);border-color:var(--rd)" onclick="mtDelete(\''+m.id+'\')">🗑 삭제</button>':'')
+    +(ME&&ME.role==='owner'?'<button class="btn" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove();mtOpen(\''+m.id+'\')">✏️ 편집</button>'
+      +'<button class="btn ghost" style="flex:1;color:var(--rd);border-color:var(--rd)" onclick="mtDelete(\''+m.id+'\')">🗑 삭제</button>':'')
     +'<button class="btn ghost" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove()">닫기</button></div>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
 }
+// ── 회의록 의견 (관리자 제출 · 원장 확인) ──
+function mtCmtAdd(mid){
+  if(!isAdminLevel()) return;
+  var el=document.getElementById('mt-cmt-in'); var text=((el||{}).value||'').trim();
+  if(!text){ toast('의견 내용을 입력하세요','var(--rd)'); return; }
+  var c={id:'mc'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), ts:Date.now(), date:today(), who:(ME&&ME.name)||'', role:(ME&&ME.role)||'', text:text, ok:(ME&&ME.role==='owner')?1:0};
+  if(el) el.value='';
+  toast('의견 저장 중…');
+  _mtSync(function(list){ var m=list.find(function(x){ return x.id===mid; }); if(m){ if(!Array.isArray(m.cmts)) m.cmts=[]; m.cmts.push(c); } },
+    function(ok){ if(ok){ toast('💬 의견이 남겨졌어요'+(ME.role==='owner'?'':' — 원장님께 보여요'),'var(--g)'); mtView(mid); } else toast('저장 실패 · 인터넷을 확인하세요','var(--rd)'); });
+  try{ logChange('회의록 의견', text.slice(0,40)); }catch(e){}
+}
+function mtCmtOk(mid,cid){
+  if(!(ME&&ME.role==='owner')) return;
+  _mtSync(function(list){ var m=list.find(function(x){ return x.id===mid; }); var c=m&&(m.cmts||[]).find(function(x){ return x.id===cid; }); if(c){ c.ok=1; c.okDate=today(); } },
+    function(ok){ if(ok){ toast('확인 완료 ✓','var(--g)'); mtView(mid); } else toast('저장 실패','var(--rd)'); });
+}
+function mtCmtDel(mid,cid){
+  var m0=(_meetings||[]).find(function(x){ return x.id===mid; });
+  var c0=m0&&(m0.cmts||[]).find(function(x){ return x.id===cid; });
+  if(!c0 || !(ME&&(ME.role==='owner'||ME.name===c0.who))) return;
+  if(!confirm('이 의견을 삭제할까요?')) return;
+  _mtSync(function(list){ var m=list.find(function(x){ return x.id===mid; }); if(m) m.cmts=(m.cmts||[]).filter(function(x){ return x.id!==cid; }); },
+    function(ok){ if(ok){ toast('삭제됐어요'); mtView(mid); } else toast('저장 실패','var(--rd)'); });
+}
 function mtOpen(id){
+  if(!(ME&&ME.role==='owner')){ toast('회의록 작성·편집은 원장만 할 수 있어요 — 아래 의견으로 남겨주세요','var(--rd)'); return; }
   var m = id ? ((_meetings||[]).find(function(x){return x.id===id;})||{}) : {};
   var ex=document.getElementById('ov-mtedit'); if(ex) ex.remove();
   var h='<div class="ov" id="ov-mtedit" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
@@ -2785,6 +2834,7 @@ function _mtSync(mutate, cb){
   });
 }
 function mtSave(){
+  if(!(ME&&ME.role==='owner')) return;
   var id=document.getElementById('mt-id').value||('m'+Date.now());
   var date=document.getElementById('mt-date').value||today();
   var title=(document.getElementById('mt-title').value||'').trim();
@@ -8623,6 +8673,154 @@ function _wkLabel(wk){ var s=new Date(wk); var e=new Date(wk); e.setDate(s.getDa
 function _wkList(name, wk){ if(!DB.wkplan) DB.wkplan={}; if(!DB.wkplan[name]) DB.wkplan[name]={}; if(!Array.isArray(DB.wkplan[name][wk])) DB.wkplan[name][wk]=[]; return DB.wkplan[name][wk]; }
 function wkMyOpenCnt(){ if(!ME||!ME.name) return 0; var l=(DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]; return l.filter(function(x){ return !x.done; }).length; }
 var _wkFor=null, _wkCur=null;
+// ═══ 🔍 통합 검색 (회의록·관리자일지·업무 매뉴얼·주간 계획·날짜별 할 일 · 띄어쓰기 무시) ═══
+function _srNorm(t){ return String(t||'').toLowerCase().replace(/\s+/g,''); }
+function _srSnip(text, nq){
+  var o=String(text||'').replace(/\n+/g,' ');
+  var idxs=[], norm='';
+  for(var i=0;i<o.length;i++){ var c=o[i]; if(/\s/.test(c)) continue; norm+=c.toLowerCase(); idxs.push(i); }
+  var p=norm.indexOf(nq);
+  if(p<0 || !nq) return {pre:o.slice(0,64)+(o.length>64?'…':''), hit:'', post:''};
+  var st=idxs[p], en=(idxs[p+nq.length-1]!==undefined?idxs[p+nq.length-1]+1:o.length);
+  var a=Math.max(0,st-24), b=Math.min(o.length,en+44);
+  return {pre:(a>0?'…':'')+o.slice(a,st), hit:o.slice(st,en), post:o.slice(en,b)+(b<o.length?'…':'')};
+}
+function _srMatchField(fields, terms){
+  var nall=_srNorm(fields.join('\n'));
+  for(var i=0;i<terms.length;i++){ if(nall.indexOf(terms[i])<0) return null; }
+  for(var j=0;j<fields.length;j++){ if(fields[j] && _srNorm(fields[j]).indexOf(terms[0])>=0) return fields[j]; }
+  return fields[0]||'';
+}
+var _srActs=[];
+function _srGo(i){ var a=_srActs[i]; var ov=document.getElementById('ov-search'); if(ov) ov.remove(); if(a){ try{ a(); }catch(e){} } }
+function srOpenTlj(name){ openTlj(); setTimeout(function(){ try{ if(ME&&ME.role==='owner'&&typeof _tljViewFor!=='undefined'){ _tljViewFor=name; _renderTlj(); } }catch(e){} },600); }
+function srOpenMan(dept,docId){ _manTab=dept; _manOpenDoc=docId||null; openManuals(); }
+function srOpenWk(name,wk){ openWkPlan(); setTimeout(function(){ try{ _wkFor=name; _wkCur=wk; _renderWkPlan(); }catch(e){} },150); }
+function openSearch(){
+  if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
+  var ex=document.getElementById('ov-search'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-search" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">🔍 통합 검색</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">회의록·관리자일지·업무 매뉴얼·주간 계획·날짜별 할 일에서 핵심 단어로 찾아요. 띄어쓰기는 무시되고, 여러 단어를 쓰면 모두 포함된 것만 나옵니다.'+(ME.role!=='owner'?' (내가 볼 수 있는 범위만)':'')+'</div>'
+    +'<input class="fi" id="sr-q" placeholder="예: 수납 마감 / 설명회 / 피드백" oninput="clearTimeout(window._srT);window._srT=setTimeout(srRun,200)" onkeydown="if(event.key===\'Enter\')srRun()">'
+    +'<div id="sr-res"><div class="empty" style="font-size:12px;padding:14px 0">핵심 단어를 입력하세요</div></div>'
+    +'<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-search\').remove()">닫기</button>'
+    +'</div></div>');
+  var inp=document.getElementById('sr-q'); if(inp) inp.focus();
+  if(_meetings===null){ _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; srRun(); }).catch(function(){}); }
+}
+function srRun(){
+  var out=document.getElementById('sr-res'); if(!out) return;
+  var q=((document.getElementById('sr-q')||{}).value||'');
+  var terms=q.split(/\s+/).map(_srNorm).filter(Boolean);
+  if(!terms.length || terms.join('').length<2){ out.innerHTML='<div class="empty" style="font-size:12px;padding:14px 0">두 글자 이상 입력하세요 (띄어쓰기 무시)</div>'; return; }
+  var isOw=(ME&&ME.role==='owner');
+  var groups=[]; _srActs=[];
+  function grp(label){ var g={label:label, rows:[]}; groups.push(g); return g; }
+  function row(g, title, sub, field){
+    if(g.rows.length>=15) return;
+    var sn=_srSnip(field, terms[0]);
+    g.rows.push({title:title, sub:sub, sn:sn, act:_srActs.length});
+  }
+  // 1) 회의록
+  if(isOw || canFeat('meetings')){
+    var g1=grp('📝 회의록');
+    (_meetings||[]).forEach(function(m){
+      var fs=[m.title||'', m.date||'', mtTypeLabel(m)||'', m.summary||'', m.raw||'']
+        .concat((m.dls||[]).map(function(d){ return d.text||''; }))
+        .concat((m.fbs||[]).map(function(f){ return f.text||''; }))
+        .concat((m.cmts||[]).map(function(c){ return (c.who||'')+' '+(c.text||''); }));
+      var f=_srMatchField(fs, terms); if(f===null) return;
+      row(g1, m.title||'(제목 없음)', (m.date||'')+(m.by?' · '+m.by:''), f);
+      _srActs.push((function(id){ return function(){ mtView(id); }; })(m.id));
+    });
+  }
+  // 2) 관리자일지
+  var tnames=[];
+  if(isOw){ Object.keys(DB.tlj||{}).forEach(function(nm){ tnames.push(nm); }); }
+  else if(canFeat('tlj') && ME.name && (DB.tlj||{})[ME.name]) tnames=[ME.name];
+  if(tnames.length){
+    var g2=grp('🧑\u200d💼 관리자일지');
+    tnames.forEach(function(nm){
+      ((DB.tlj||{})[nm]||[]).forEach(function(e){
+        var fs=[e.date||'', e.done||'', e.plan||'', e.issue||''].concat((e.doneItems||[]).map(function(r){ return r.text||''; }));
+        var f=_srMatchField(fs, terms); if(f===null) return;
+        row(g2, nm+'의 일지', e.date||'', f);
+        _srActs.push((function(n){ return function(){ srOpenTlj(n); }; })(nm));
+      });
+    });
+  }
+  // 3) 업무 매뉴얼
+  if(isOw || canFeat('manuals')){
+    var g3=grp('📖 업무 매뉴얼');
+    var man=_manDB();
+    MAN_DEPTS.forEach(function(dp){
+      if(!manCanView(dp.key)) return;
+      if(dp.key==='gyomu') (man.basics||[]).forEach(function(bq){
+        var f=_srMatchField([bq.freq||'', bq.title||'', bq.desc||''], terms); if(f===null) return;
+        row(g3, '기본 업무 — '+(bq.title||''), dp.label, f);
+        _srActs.push(function(){ srOpenMan('gyomu',null); });
+      });
+      (man[dp.key].monthly||[]).forEach(function(it){
+        var f=_srMatchField([it.when||'', it.title||'', it.desc||''], terms); if(f===null) return;
+        row(g3, '월간 업무 — '+(it.title||''), dp.label+(it.when?' · '+it.when:''), f);
+        _srActs.push((function(k){ return function(){ srOpenMan(k,null); }; })(dp.key));
+      });
+      (man[dp.key].annual||[]).forEach(function(a){
+        var f=_srMatchField([(a.month?a.month+'월':''), a.when||'', a.title||'', a.desc||''], terms); if(f===null) return;
+        row(g3, '연간 일정 — '+(a.title||''), dp.label+' · '+(a.month||'')+'월', f);
+        _srActs.push((function(k){ return function(){ srOpenMan(k,null); }; })(dp.key));
+      });
+      (man[dp.key].docs||[]).forEach(function(dq){
+        var f=_srMatchField([dq.title||'', dq.body||''], terms); if(f===null) return;
+        row(g3, '상세 매뉴얼 — '+(dq.title||''), dp.label+(dq.upd?' · '+dq.upd:''), f);
+        _srActs.push((function(k,i2){ return function(){ srOpenMan(k,i2); }; })(dp.key, dq.id));
+      });
+    });
+  }
+  // 4) 주간 계획
+  var wnames=isOw?Object.keys(DB.wkplan||{}):((canFeat('wkplan')&&ME.name&&(DB.wkplan||{})[ME.name])?[ME.name]:[]);
+  if(wnames.length){
+    var g4=grp('🗓 주간 계획');
+    wnames.forEach(function(nm){
+      Object.keys((DB.wkplan||{})[nm]||{}).forEach(function(wk){
+        (((DB.wkplan||{})[nm]||{})[wk]||[]).forEach(function(t){
+          var f=_srMatchField([t.day?t.day+'요일':'', t.text||''], terms); if(f===null) return;
+          row(g4, nm+' — '+_wkLabel(wk), (t.done?'완료':'미완료')+(t.day?' · '+t.day:''), f);
+          _srActs.push((function(n,w){ return function(){ srOpenWk(n,w); }; })(nm,wk));
+        });
+      });
+    });
+  }
+  // 5) 날짜별 할 일
+  var mnames=isOw?Object.keys(DB.myTodos||{}):((canFeat('mytodos')&&ME.name&&(DB.myTodos||{})[ME.name])?[ME.name]:[]);
+  if(mnames.length){
+    var g5=grp('📆 날짜별 할 일');
+    mnames.forEach(function(nm){
+      ((DB.myTodos||{})[nm]||[]).forEach(function(t){
+        var f=_srMatchField([t.date||'', t.text||''], terms); if(f===null) return;
+        row(g5, nm+' — '+(t.date||''), (t.done?'완료':'미완료'), f);
+        _srActs.push(function(){ openMyTodos(); });
+      });
+    });
+  }
+  var tot=0; groups.forEach(function(g){ tot+=g.rows.length; });
+  if(!tot){ out.innerHTML='<div class="empty" style="font-size:12px;padding:14px 0">「'+dEsc(q)+'」 결과가 없어요</div>'; return; }
+  var h='<div style="font-size:11px;color:var(--t2);margin:6px 0 4px">'+tot+'건 찾음</div>';
+  groups.forEach(function(g){
+    if(!g.rows.length) return;
+    h+='<div class="sl2" style="margin:10px 0 6px"><div class="d8" style="background:var(--acc)"></div>'+g.label+' <span style="font-size:11px;color:var(--t3)">'+g.rows.length+'건</span></div>';
+    g.rows.forEach(function(r){
+      h+='<div onclick="_srGo('+r.act+')" style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:5px;cursor:pointer">'
+        +'<div style="font-size:12.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(r.title)+'</div>'
+        +(r.sub?'<div style="font-size:10px;color:var(--t3);margin-top:1px">'+dEsc(r.sub)+'</div>':'')
+        +'<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.5">'+dEsc(r.sn.pre)+(r.sn.hit?'<b style="color:var(--acc);background:var(--acc-l);border-radius:3px;padding:0 2px">'+dEsc(r.sn.hit)+'</b>':'')+dEsc(r.sn.post)+'</div>'
+        +'</div>';
+    });
+  });
+  out.innerHTML=h;
+}
 function openWkPlan(){
   if(ME && ME.role!=='owner' && !canFeat('wkplan')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
@@ -9001,6 +9199,12 @@ function wbOwnerAlerts(){
   try{
     var _ps=((DB.manuals||{}).suggests||[]).filter(function(x){ return x && x.st==='wait'; });
     if(_ps.length) alerts.push({sev:'warn', text:'매뉴얼 수정 의견 '+_ps.length+'건 — 반영 여부 결정 필요', info:_ps.slice(0,3).map(function(x){ return (x.who||'')+': '+((x.fields&&x.fields.title)||''); }).join(' · '), src:'📖 업무 매뉴얼'});
+  }catch(e){}
+  // 4-6) 회의록 의견 미확인
+  try{
+    var _mc=[];
+    (_meetings||[]).forEach(function(m){ (m.cmts||[]).forEach(function(c){ if(c && !c.ok) _mc.push((c.who||'')+': '+String(c.text||'').slice(0,24)); }); });
+    if(_mc.length) alerts.push({sev:'warn', text:'회의록 의견 '+_mc.length+'건 — 확인 필요', info:_mc.slice(0,3).join(' · '), src:'📝 회의록'});
   }catch(e){}
   alerts.sort(function(a,b){ return (a.sev==='late'?0:1)-(b.sev==='late'?0:1); });
   return alerts;
@@ -9494,6 +9698,7 @@ function renderAdminHome() {
          if(canFeat('manuals')) bs+='<button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">'+st.ok+'/'+st.tot+'</span>':'')+'</button>';
          if(canFeat('mytodos')) bs+='<button onclick="openMyTodos()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📆 날짜별 할 일'+(td?' <span style="font-weight:700;color:var(--am)">'+td+'</span>':'')+'</button>';
          if(canFeat('wkplan')) bs+='<button onclick="openWkPlan()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗓 주간 계획'+(wp?' <span style="font-weight:700;color:var(--am)">'+wp+'</span>':'')+'</button>';
+         bs+='<button onclick="openSearch()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 검색</button>';
          return bs?'<div style="display:flex;gap:8px;margin-bottom:10px">'+bs+'</div>':''; })()
      + (function(){
          if(_meetings===null && !window._mtBgLoad){ window._mtBgLoad=1;
