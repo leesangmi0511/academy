@@ -2286,7 +2286,8 @@ function canFeat(k){
   if(ME.role==='owner') return true;
   return permAllowed('f_'+k, ME.role);
 }
-var PERM_DEFAULT = { home:{staff:1,admin:1,teacher:1}, progress:{staff:1,admin:1,teacher:1}, consult:{staff:1,admin:1,teacher:1}, calendar:{staff:1,admin:1,teacher:1}, tuition:{staff:1,admin:0,teacher:0}, diagnosis:{staff:1,admin:1,teacher:1} };
+var PERM_DEFAULT = { home:{staff:1,admin:1,teacher:1}, progress:{staff:1,admin:1,teacher:1}, consult:{staff:1,admin:1,teacher:1}, calendar:{staff:1,admin:1,teacher:1}, tuition:{staff:1,admin:0,teacher:0}, diagnosis:{staff:1,admin:1,teacher:1},
+  m_gyomu:{staff:0,admin:1,teacher:0}, m_haengjung:{staff:1,admin:0,teacher:0} };
 function permAllowed(tab, role){
   if(role==='owner') return true;   // 원장은 항상 허용
   if(tab==='home') return true;     // 현황(홈)은 잠금 방지 위해 항상 허용
@@ -2329,6 +2330,19 @@ function permGridHTML(){
     +'<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr><th style="text-align:left;padding:7px 6px;color:var(--t2)">기능</th>'
     +'<th style="padding:7px 6px;text-align:center;color:var(--t2)">행정팀</th><th style="padding:7px 6px;text-align:center;color:var(--t2)">관리자</th></tr></thead><tbody>';
   PERM_FEATS.forEach(function(t){
+    h+='<tr style="border-top:1px solid var(--s3)"><td style="padding:9px 6px;font-weight:700">'+t.label+'</td>';
+    ['staff','admin'].forEach(function(r){
+      h+='<td style="text-align:center;padding:9px 6px"><input type="checkbox" '+(permAllowed(t.k,r)?'checked':'')+' onchange="togglePerm(\''+t.k+'\',\''+r+'\',this.checked)" style="width:19px;height:19px;accent-color:var(--acc);cursor:pointer"></td>';
+    });
+    h+='</tr>';
+  });
+  h+='</tbody></table>';
+  // ── 매뉴얼 부서별 열람 권한 ──
+  h+='<div style="font-size:13px;font-weight:800;margin:16px 0 4px">매뉴얼 열람 권한 (부서별)</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:6px">업무 매뉴얼의 부서 탭은 모두에게 보이지만, 내용은 체크된 역할만 볼 수 있어요. 기본값: 교무실 내용은 관리자만, 행정실 내용은 행정팀만. (원장은 항상 전체)</div>'
+    +'<table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr><th style="text-align:left;padding:7px 6px;color:var(--t2)">부서</th>'
+    +'<th style="padding:7px 6px;text-align:center;color:var(--t2)">행정팀</th><th style="padding:7px 6px;text-align:center;color:var(--t2)">관리자</th></tr></thead><tbody>';
+  [{k:'m_gyomu',label:'🏫 교무실 매뉴얼 내용'},{k:'m_haengjung',label:'🗂 행정실 매뉴얼 내용'}].forEach(function(t){
     h+='<tr style="border-top:1px solid var(--s3)"><td style="padding:9px 6px;font-weight:700">'+t.label+'</td>';
     ['staff','admin'].forEach(function(r){
       h+='<td style="text-align:center;padding:9px 6px"><input type="checkbox" '+(permAllowed(t.k,r)?'checked':'')+' onchange="togglePerm(\''+t.k+'\',\''+r+'\',this.checked)" style="width:19px;height:19px;accent-color:var(--acc);cursor:pointer"></td>';
@@ -7302,15 +7316,17 @@ function _manDB(){
   return DB.manuals;
 }
 function _manYM(){ var d=new Date(); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); }
-function manMonthStat(){ // 이번 달 전체 완료 현황 (배지용)
+function manMonthStat(){ // 이번 달 전체 완료 현황 (배지용 · 열람 가능한 부서만)
   var m=_manDB(), ym=_manYM(), done=m.done[ym]||{}, tot=0, ok=0;
-  MAN_DEPTS.forEach(function(d){ m[d.key].monthly.forEach(function(it){ tot++; if(done[it.id]) ok++; }); });
+  var dps=(ME&&ME.role==='owner')?MAN_DEPTS:MAN_DEPTS.filter(function(d){ return manCanView(d.key); });
+  dps.forEach(function(d){ m[d.key].monthly.forEach(function(it){ tot++; if(done[it.id]) ok++; }); });
   return {tot:tot, ok:ok};
 }
 function openManuals(){
   if(ME && ME.role!=='owner' && !canFeat('manuals')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
   _manDB();
+  if(ME && ME.role!=='owner' && !manCanView(_manTab)){ var _vd=manViewDepts(); if(_vd.length) _manTab=_vd[0].key; }
   var ex=document.getElementById('ov-manuals'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manuals" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
@@ -7340,6 +7356,17 @@ function renderManuals(){
   tabs.innerHTML=MAN_DEPTS.map(function(d){ return '<div class="rank-tab'+(_manTab===d.key?' on':'')+'" onclick="manTab(\''+d.key+'\')">'+d.label+'</div>'; }).join('');
   var isOw=(ME&&ME.role==='owner');
   var canEd=manCanEdit();
+  // 부서별 열람 잠금: 탭은 보여도 내용은 권한 있는 역할만
+  if(!manCanView(_manTab)){
+    var _lb=((MAN_DEPTS.find(function(d){return d.key===_manTab;})||{}).label||'이 부서');
+    var _bd=document.getElementById('man-body');
+    if(_bd) _bd.innerHTML='<div style="text-align:center;padding:38px 14px;color:var(--t3)">'
+      +'<div style="font-size:30px;margin-bottom:10px">🔒</div>'
+      +'<div style="font-size:13px;font-weight:700;color:var(--t2)">'+_lb+' 매뉴얼은 열람 권한이 없어요</div>'
+      +'<div style="font-size:11.5px;margin-top:6px;line-height:1.6">부서 내용은 기본적으로 담당 역할만 볼 수 있어요.<br>필요하면 원장님께 요청하세요 — [기능 권한 관리]에서 열 수 있습니다.</div></div>';
+    return;
+  }
+  var canEdHere=canEd;
   var now=new Date();
   var h='';
   // ── 수정 보고 (원장 확인) ──
@@ -7495,6 +7522,7 @@ function manFilePick(inp){
 function _manHandleFiles(files, mode){
   if(!files.length) return;
   if(!manCanEdit()){ toast('추가 권한이 없어요','var(--rd)'); return; }
+  if(!manCanView(_manTab)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
   toast(files.length>1?('파일 '+files.length+'개 읽는 중…'):('「'+files[0].name+'」 읽는 중…'));
   Promise.all(files.map(function(file){
     return _mtExtractText(file).then(function(txt){ return {name:file.name, txt:(txt||'').slice(0,50000)}; })
@@ -7583,7 +7611,7 @@ function manImpRemove(kind,i){ _manImpSyncEdits(); if(_manImp&&_manImp[kind]) _m
 function manImpToggle(i){ _manImpSyncEdits(); if(_manImp) _manImp._openDoc=(_manImp._openDoc===i)?null:i; _renderManImport(); }
 function manImportApply(){
   var p=_manImp; if(!p) return;
-  if(!manCanEdit()) return;
+  if(!manCanEdit() || !manCanView(p.dept)) return;
   _manImpSyncEdits();
   var m=_manDB(), dept=m[p.dept];
   var addM=0, addD=0;
@@ -7612,6 +7640,7 @@ function manImportApply(){
 }
 function manToggleDoc(id){ _manOpenDoc=(_manOpenDoc===id)?null:id; renderManuals(); }
 function manToggleDone(dept,id){
+  if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
   var m=_manDB(), ym=_manYM();
   if(!m.done[ym]) m.done[ym]={};
   if(m.done[ym][id]){ delete m.done[ym][id]; _markGone('mdone:'+ym+':'+id); }
@@ -7625,6 +7654,13 @@ function manToggleDone(dept,id){
 }
 // ── 매뉴얼 수정 권한(관리자·행정팀 가능) + 수정 보고(원장 확인) ──
 function manCanEdit(){ if(!ME) return false; if(ME.role==='owner') return true; return (ME.role==='admin'||ME.role==='staff') && canFeat('manedit'); }
+// ── 매뉴얼 부서별 열람 권한 (기본: 교무실=관리자, 행정실=행정팀 · 원장이 권한 관리에서 변경) ──
+function manCanView(dept){
+  if(!ME) return false;
+  if(ME.role==='owner') return true;
+  return permAllowed('m_'+dept, ME.role);
+}
+function manViewDepts(){ return MAN_DEPTS.filter(function(d){ return manCanView(d.key); }); }
 function _manCut(s){ s=String(s||'').replace(/\s+/g,' ').trim(); return s.length>70?s.slice(0,70)+'…':s; }
 function _manDiff(pairs){ var out=[]; pairs.forEach(function(p){ var b=String(p[1]||'').trim(), a=String(p[2]||'').trim(); if(b!==a) out.push(p[0]+': '+(b?'「'+_manCut(b)+'」 → ':'')+'「'+_manCut(a)+'」'); }); return out.join('\n'); }
 function manLogEdit(kind, action, title, detail){
@@ -7650,6 +7686,7 @@ function manToggleLog(){ _manLogOpen=!_manLogOpen; renderManuals(); }
 // ── 기본 팀장 업무 추가/수정/삭제 ──
 function manEditBasic(id){
   if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
+  if(!manCanView('gyomu')){ toast('교무실 매뉴얼 열람 권한이 없어요','var(--rd)'); return; }
   var m=_manDB(), it=id?(m.basics.find(function(x){return x.id===id;})||{}):{};
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
@@ -7663,7 +7700,7 @@ function manEditBasic(id){
     +'</div></div>');
 }
 function manSaveBasic(id){
-  if(!manCanEdit()) return;
+  if(!manCanEdit() || !manCanView('gyomu')) return;
   var m=_manDB();
   var freq=((document.getElementById('mb-freq')||{}).value||'').trim();
   var title=((document.getElementById('mb-title')||{}).value||'').trim();
@@ -7687,6 +7724,7 @@ function manDelBasic(id){
 // ── 월간 업무 추가/수정 ──
 function manEditMonthly(dept,id){
   if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
+  if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
   var m=_manDB(), it=id?(m[dept].monthly.find(function(x){return x.id===id;})||{}):{};
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
@@ -7700,7 +7738,7 @@ function manEditMonthly(dept,id){
     +'</div></div>');
 }
 function manSaveMonthly(dept,id){
-  if(!manCanEdit()) return;
+  if(!manCanEdit() || !manCanView(dept)) return;
   var m=_manDB();
   var when=(document.getElementById('mm-when')||{}).value.trim();
   var title=(document.getElementById('mm-title')||{}).value.trim();
@@ -7725,6 +7763,7 @@ function manDelMonthly(dept,id){
 // ── 상세 매뉴얼 추가/수정 ──
 function manEditDoc(dept,id){
   if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
+  if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
   var m=_manDB(), it=id?(m[dept].docs.find(function(x){return x.id===id;})||{}):{};
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
@@ -7751,7 +7790,7 @@ function manDocFileFill(inp){
   }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
 }
 function manSaveDoc(dept,id){
-  if(!manCanEdit()) return;
+  if(!manCanEdit() || !manCanView(dept)) return;
   var m=_manDB();
   var title=(document.getElementById('md-title')||{}).value.trim();
   var body=(document.getElementById('md-body')||{}).value;
@@ -7798,7 +7837,8 @@ function wbCollect(){
     (e.linked||[]).forEach(function(l){ done.push({type:'일지 처리', text:l.text, date:e.date, who:nm, hours:l.hours||'', src:'🧑‍💼 관리자일지'}); });
   }); });
   var man=_manDB(), mdone=man.done[_manYM()]||{};
-  MAN_DEPTS.forEach(function(dp){ man[dp.key].monthly.forEach(function(it){
+  var _mdps=(ME&&ME.role==='owner')?MAN_DEPTS:MAN_DEPTS.filter(function(d){ return manCanView(d.key); });
+  _mdps.forEach(function(dp){ man[dp.key].monthly.forEach(function(it){
     var dn=mdone[it.id];
     var txt=(it.when?('['+it.when+'] '):'')+it.title;
     if(dn) done.push({type:'매뉴얼 업무', text:txt, date:dn.date||'', who:dn.by||'', src:dp.label});
