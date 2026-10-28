@@ -2026,7 +2026,7 @@ function renderWithdraw(){
   var years=Array.from(new Set(all.map(function(r){return r.date?r.date.slice(0,4):null;}).filter(Boolean))).sort().reverse();
   if(wdFilterY!=='all' && years.indexOf(wdFilterY)<0) years.unshift(wdFilterY);
   var h='';
-  h+='<button class="btn" style="margin-bottom:8px" onclick="autoWdSync()">🔄 과제앱 자동 퇴원 동기화</button>';
+  if(!ME||ME.role==='owner'||canFeat('wd')) h+='<button class="btn" style="margin-bottom:8px" onclick="autoWdSync()">🔄 과제앱 자동 퇴원 동기화</button>';
   h+='<button class="btn ghost" style="margin-bottom:12px" onclick="openWdAdd()">+ 퇴원 학생 직접 추가</button>';
   // 연/월 필터
   h+='<div style="display:flex;gap:8px;margin-bottom:12px">';
@@ -2100,6 +2100,7 @@ function restoreWd(gi){
 // 과제앱 동기화: 명단에서 사라진 학생 = 퇴원 후보
 var wdCandidates=[];
 function openWdSync(){
+  if(ME && ME.role!=='owner' && !canFeat('wd')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   document.getElementById('wds-date').value=today();
   document.getElementById('wds-list').innerHTML='<div class="empty">과제앱 명단 불러오는 중...</div>';
   openModal('ov-wdsync');
@@ -2138,6 +2139,7 @@ function confirmWdSync(){
 }
 // 과제앱 명단에서 사라진 학생 = 자동 퇴원 처리 (동기화한 날을 퇴원일로)
 function autoWdSync(){
+  if(ME && ME.role!=='owner' && !canFeat('wd')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   toast('과제앱 명단 확인 중...');
   hwFetch(HW_SYNC_BASE + '/appData/main?key=' + HW_SYNC_KEY).then(function(r){return r.json();}).then(function(doc){
     var users=(doc.fields&&doc.fields.users&&doc.fields.users.arrayValue&&doc.fields.users.arrayValue.values)||[];
@@ -2231,7 +2233,13 @@ var PERM_FEATS = [
   {k:'f_mttodo',label:'📋 월별 할 일'},
   {k:'f_workboard',label:'📋 업무 현황판'},
   {k:'f_manuals',label:'📖 업무 매뉴얼'},
-  {k:'f_upgrades',label:'💡 업무 업그레이드'}
+  {k:'f_upgrades',label:'💡 업무 업그레이드'},
+  {k:'f_sync',label:'🔄 학원→과제 동기화'},
+  {k:'f_import',label:'📥 과제→학원 불러오기'},
+  {k:'f_csv',label:'📋 CSV 명단 가져오기'},
+  {k:'f_teval',label:'📋 강사 평가 입력'},
+  {k:'f_rank',label:'🏆 순위·성적표 조회'},
+  {k:'f_wd',label:'🚪 퇴원 처리·동기화'}
 ];
 function canFeat(k){
   if(!ME) return false;
@@ -5457,6 +5465,7 @@ function importFromHwApp() {
 
 // 불러오기 모달 열기 (미리보기 포함)
 function openImportModal() {
+  if(ME && ME.role!=='owner' && !canFeat('import')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   document.getElementById('import-status').style.display = 'none';
   document.getElementById('import-inst-count').textContent = '...';
   document.getElementById('import-stu-count').textContent = '...';
@@ -5485,6 +5494,7 @@ function openImportModal() {
 
 // ═══ CSV 학생 명단 가져오기 ═══
 function openCsvImport() {
+  if(ME && ME.role!=='owner' && !canFeat('csv')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   document.getElementById('csv-input').value = '';
   document.getElementById('csv-preview').textContent = '';
   document.getElementById('csv-status').style.display = 'none';
@@ -5550,6 +5560,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function openSyncModal() {
+  if(ME && ME.role!=='owner' && !canFeat('sync')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   openModal('ov-sync');
   document.getElementById('sync-status').textContent = '';
   document.getElementById('sync-status').style.display = 'none';
@@ -5738,6 +5749,7 @@ function changeStaffPw(idx) {
 
 
 function openEvalPeriod() {
+  if(ME && ME.role!=='owner' && !canFeat('rank')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   var now = new Date();
   var ym = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
   // 3개월 전 기본값
@@ -5871,6 +5883,7 @@ function showEvalRemindPopup(notDone, adminUndone){
 }
 
 function openTeacherEvalMenu() {
+  if(ME && ME.role!=='owner' && !canFeat('teval')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   // 강사 목록 선택 모달 (간단히 prompt 대신 기존 모달 활용)
   var T = DB.cfg.teachers;
   if(!T.length){toast('강사가 없어요','var(--rd)');return;}
@@ -8333,10 +8346,16 @@ function renderAdminHome() {
            + wbOwnerAlertCardHTML()
            + wbHomeCardHTML();
        })()
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button><button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button></div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMetricRank()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 항목별 순위 (상담·퇴원율 등)</button></div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button><button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button></div>'
-     + '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button>'
+     + (function(){ var bs='';
+         if(canFeat('teval')) bs+='<button onclick="openTeacherEvalMenu()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 강사 평가</button>';
+         if(canFeat('rank')) bs+='<button onclick="openEvalPeriod()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📊 기간 조회</button><button onclick="openRankSummary()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🏆 순위 합산</button><button onclick="openTReport()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📄 강사 성적표</button>';
+         return bs?'<div style="display:flex;gap:8px;margin-bottom:10px">'+bs+'</div>':''; })()
+     + (canFeat('rank')?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMetricRank()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 항목별 순위 (상담·퇴원율 등)</button></div>':'')
+     + (function(){ var bs='';
+         if(canFeat('sync')) bs+='<button onclick="openSyncModal()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔄 학원→과제 동기화</button>';
+         if(canFeat('import')) bs+='<button onclick="openImportModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 과제→학원 불러오기</button>';
+         return bs?'<div style="display:flex;gap:8px;margin-bottom:10px">'+bs+'</div>':''; })()
+     + '<div style="display:flex;gap:8px;margin-bottom:10px">'+(canFeat('csv')?'<button onclick="openCsvImport()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📋 CSV로 학생 명단 가져오기</button>':'')
      + (isOwnerLevel()?'<button onclick="dlStuRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 학생 명단 (엑셀)</button><button onclick="dlStaffRoster()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📥 직원 명단 (엑셀)</button>':'')
      + '</div>'
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openPromote()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🎓 학년 일괄 승급</button></div>':'');
@@ -8542,6 +8561,7 @@ function calcMyRank(myName) {
 // 강사 순위 반기·연간 합산 (관리자 이상)
 var _rkYear=null;
 function openRankSummary(){
+  if(ME && ME.role!=='owner' && !canFeat('rank')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
   var ex=document.getElementById('ov-rksum'); if(ex) ex.remove();
   var year=_rkYear||new Date().getFullYear();
@@ -10548,6 +10568,7 @@ function _metricValue(k, m){
   return null;
 }
 function openMetricRank(){
+  if(ME && ME.role!=='owner' && !canFeat('rank')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
   var ex=document.getElementById('ov-mrank'); if(ex) ex.remove();
   var def=METRIC_DEFS.find(function(d){ return d.k===_mrKey; })||METRIC_DEFS[0];
@@ -10583,6 +10604,7 @@ function openMetricRank(){
   document.body.insertAdjacentHTML('beforeend', h);
 }
 function openTReport(){
+  if(ME && ME.role!=='owner' && !canFeat('rank')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
   var ex=document.getElementById('ov-treport'); if(ex) ex.remove();
   var T=(DB.cfg.teachers||[]).filter(function(t){return t&&t.name;});
