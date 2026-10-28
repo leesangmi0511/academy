@@ -7531,13 +7531,15 @@ function renderManuals(){
       +(open?('<div style="padding:0 12px 11px">'
         +'<div style="font-size:12.5px;color:var(--te);line-height:1.7;white-space:pre-wrap;background:var(--s2);border-radius:9px;padding:11px 13px">'+dEsc(doc.body||'')+'</div>'
         +((doc.files||[]).filter(function(f){return f.img;}).map(function(f){
-            return '<div style="margin-top:8px"><img class="man-att" data-fid="'+f.fid+'" alt="'+dEsc(f.name)+'" onclick="manAttView(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="width:100%;border:1px solid var(--s3);border-radius:9px;background:var(--s2);min-height:48px;cursor:zoom-in">'
-              +'<div style="font-size:10px;color:var(--t3);margin-top:2px">🖼 '+dEsc(f.name)+' — 누르면 크게 보고 저장할 수 있어요</div></div>';
+            return '<div style="margin-top:8px"><img class="man-att" data-fid="'+f.fid+'" alt="'+dEsc(f.name)+'" onclick="manAttView(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="width:100%;border:1px solid var(--s3);border-radius:9px;background:var(--s2);min-height:48px;cursor:zoom-in"'+(isOw?'':' oncontextmenu="return false" ondragstart="return false"')+'>'
+              +'<div style="font-size:10px;color:var(--t3);margin-top:2px">🖼 '+dEsc(f.name)+(isOw?' — 누르면 크게 보고 저장할 수 있어요':' — 누르면 크게 볼 수 있어요')+'</div></div>';
           }).join(''))
         +((doc.files||[]).filter(function(f){return !f.img;}).length?('<div style="margin-top:8px">'+(doc.files||[]).filter(function(f){return !f.img;}).map(function(f){
-            return '<button onclick="manFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11px;background:var(--s2);border:1px solid var(--s3);border-radius:7px;padding:5px 10px;margin:2px 4px 0 0;cursor:pointer;color:var(--acc);font-weight:600">📎 '+dEsc(f.name)+'</button>';
+            return isOw
+              ?'<button onclick="manFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11px;background:var(--s2);border:1px solid var(--s3);border-radius:7px;padding:5px 10px;margin:2px 4px 0 0;cursor:pointer;color:var(--acc);font-weight:600">📎 '+dEsc(f.name)+'</button>'
+              :'<span style="font-size:11px;background:var(--s2);border:1px solid var(--s3);border-radius:7px;padding:5px 10px;margin:2px 4px 0 0;display:inline-block;color:var(--t3)">📎 '+dEsc(f.name)+' 🔒 원장만 내려받기</span>';
           }).join('')+'</div>'):'')
-        +'<button onclick="manExportImage(\''+doc.id+'\')" style="width:100%;margin-top:8px;font-size:11.5px;background:var(--s1);border:1px solid var(--g);color:var(--g);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🖼 이 매뉴얼을 그림으로 저장</button>'
+
         +(canAct?'<div style="display:flex;gap:8px;margin-top:8px"><button onclick="manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--acc);color:var(--acc);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">'+(canEd?'✎ 수정':'✍ 수정 의견')+'</button>'+(isOw?'<button onclick="manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--rd);color:var(--rd);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🗑 삭제</button>':'')+'</div>':'')
         +'</div>'):'')
       +'</div>';
@@ -7548,7 +7550,7 @@ function renderManuals(){
     +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--pu);color:var(--pu)" onclick="manPickFile(\'docs\')">📂 파일·캡쳐 올리기 → 상세 매뉴얼로</button>'
     +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'all\')">📂 파일·캡쳐 올리기 → 자동 분류 (월간+상세)</button>'
     +'<div style="border:1.5px dashed var(--s3);border-radius:var(--rs);padding:11px;margin-top:8px;text-align:center;font-size:11.5px;color:var(--t3)">📎 파일을 이 창에 <b>끌어다 놓아도</b> 자동 인식돼요<br>한글(hwpx)·워드·PDF·텍스트·<b>캡쳐 이미지</b> (여러 개 가능)</div>';
-  h+='<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:10px;border-color:var(--g);color:var(--g)" onclick="manExportImage()">🖼 이 탭 전체를 그림파일(PNG)로 저장</button>';
+  if(isOw) h+='<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:10px;border-color:var(--g);color:var(--g)" onclick="manExportImage()">🖼 이 탭 전체를 그림파일(PNG)로 저장 (원장 전용)</button>';
   var body=document.getElementById('man-body'); if(body) body.innerHTML=h;
   _manAttHydrate();
 }
@@ -8013,6 +8015,7 @@ function _imgWrap(ctx, text, maxW){
   return out;
 }
 function manExportImage(singleDocId){
+  if(!(ME&&ME.role==='owner')){ toast('매뉴얼 저장(다운로드)은 원장만 할 수 있어요','var(--rd)'); return; }
   if(!manCanView(_manTab)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
   try{
     var m=_manDB(), dept=m[_manTab], ym=_manYM(), done=m.done[ym]||{};
@@ -8105,13 +8108,15 @@ function manExportImage(singleDocId){
   }catch(e){ toast('그림 생성 중 오류가 났어요','var(--rd)'); }
 }
 function _manImgShow(url, fname){
+  var isOw=(ME&&ME.role==='owner');
   var ex=document.getElementById('ov-manimg'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manimg" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1300"><div class="modal" style="max-height:90vh;overflow-y:auto"><div class="mh"></div>'
-    +'<div class="mt2">🖼 그림파일 미리보기</div>'
-    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">[저장]을 누르면 PNG 파일로 내려받아요. 휴대폰에서는 그림을 길게 눌러 저장하거나 공유할 수도 있어요.</div>'
-    +'<img src="'+url+'" alt="매뉴얼 그림" style="width:100%;border:1px solid var(--s3);border-radius:10px;background:#fff">'
-    +'<a href="'+url+'" download="'+dEsc(fname||'매뉴얼.png')+'" style="display:block;text-align:center;background:var(--acc);color:#fff;border-radius:12px;padding:12px;font-weight:800;text-decoration:none;margin-top:10px">💾 저장 (PNG)</a>'
+    +'<div class="mt2">🖼 그림 크게 보기</div>'
+    +(isOw?'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">[저장]을 누르면 PNG 파일로 내려받아요. 휴대폰에서는 그림을 길게 눌러 저장할 수도 있어요.</div>'
+          :'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">열람 전용이에요 — 저장(다운로드)은 원장만 할 수 있어요.</div>')
+    +'<img src="'+url+'" alt="매뉴얼 그림" style="width:100%;border:1px solid var(--s3);border-radius:10px;background:#fff"'+(isOw?'':' oncontextmenu="return false" ondragstart="return false"')+'>'
+    +(isOw?'<a href="'+url+'" download="'+dEsc(fname||'매뉴얼.png')+'" style="display:block;text-align:center;background:var(--acc);color:#fff;border-radius:12px;padding:12px;font-weight:800;text-decoration:none;margin-top:10px">💾 저장 (PNG)</a>':'')
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manimg\').remove()">닫기</button>'
     +'</div></div>');
 }
@@ -8416,6 +8421,7 @@ function manAttView(fid,name){
   }).catch(function(){ toast('불러오기 실패','var(--rd)'); });
 }
 function manFileDl(fid,name){
+  if(!(ME&&ME.role==='owner')){ toast('첨부 내려받기는 원장만 할 수 있어요','var(--rd)'); return; }
   toast('내려받는 중…');
   _FS.get('academy/manfile_'+fid).then(function(doc){
     var o=_FS.docToObj(doc)||{};
