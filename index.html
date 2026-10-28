@@ -3020,6 +3020,19 @@ function _xmlToText(xml, paraTag){
   return t.replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();
 }
 // 파일에서 텍스트 추출 (txt·md·csv / docx / hwpx / pdf)
+// 문서 속 표를 '셀 | 셀 | 셀' 줄로 변환 (월간 업무 표 인식용)
+function _xmlTablesToRows(xml, tbl, tr, tc, para){
+  try{
+    return xml.replace(new RegExp('<'+tbl+'[^>]*>[\\s\\S]*?</'+tbl+'>','g'), function(t){
+      var rows=t.match(new RegExp('<'+tr+'[^>]*>[\\s\\S]*?</'+tr+'>','g'))||[];
+      var out=rows.map(function(r){
+        var cells=r.match(new RegExp('<'+tc+'[^>]*>[\\s\\S]*?</'+tc+'>','g'))||[];
+        return cells.map(function(c){ return _xmlToText(c,para).replace(/\n+/g,' ').replace(/[|<>&]/g,' ').replace(/\s+/g,' ').trim(); }).join(' | ');
+      }).filter(Boolean).join('\n');
+      return '\n'+out+'\n';
+    });
+  }catch(e){ return xml; }
+}
 function _mtExtractText(file){
   var ext=(file.name.split('.').pop()||'').toLowerCase();
   if(['txt','md','csv','log','html','htm'].indexOf(ext)>=0){
@@ -3032,13 +3045,13 @@ function _mtExtractText(file){
       if(ext==='docx'){
         var f=zip.file('word/document.xml');
         if(!f) throw new Error('no doc');
-        return f.async('string').then(function(x){ return _xmlToText(x,'w:p'); });
+        return f.async('string').then(function(x){ return _xmlToText(_xmlTablesToRows(x,'w:tbl','w:tr','w:tc','w:p'),'w:p'); });
       }
       // hwpx: Contents/section*.xml 전부
       var secs=Object.keys(zip.files).filter(function(k){ return /^Contents\/section\d+\.xml$/.test(k); }).sort();
       if(!secs.length) throw new Error('no sec');
       return Promise.all(secs.map(function(k){ return zip.file(k).async('string'); }))
-        .then(function(xs){ return xs.map(function(x){ return _xmlToText(x,'hp:p'); }).join('\n'); });
+        .then(function(xs){ return xs.map(function(x){ return _xmlToText(_xmlTablesToRows(x,'hp:tbl','hp:tr','hp:tc','hp:p'),'hp:p'); }).join('\n'); });
     });
   }
   if(ext==='pdf'){
@@ -3060,10 +3073,17 @@ var _ocrWorker=null;
 function _ocrImage(file){
   toast('🔍 「'+file.name+'」 캡쳐 글자 인식 중… 최초 1회는 준비에 20초쯤 걸려요');
   return _loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js').then(function(){
-    if(!_ocrWorker) _ocrWorker=window.Tesseract.createWorker('kor+eng');
+    if(!_ocrWorker) _ocrWorker=window.Tesseract.createWorker('kor+eng').then(function(w){
+      var pr=(w.setParameters?w.setParameters({preserve_interword_spaces:'1'}):null);
+      return pr&&pr.then?pr.then(function(){ return w; }):w;
+    });
     return _ocrWorker;
   }).then(function(w){ return w.recognize(file); })
-  .then(function(r){ return ((r&&r.data&&r.data.text)||'').replace(/[ \t]+/g,' '); });
+  .then(function(r){
+    var t=((r&&r.data&&r.data.text)||'');
+    t=t.replace(/[ \t]{3,}/g,' | ');            // 넓은 간격 = 표의 칸 구분
+    return t.replace(/[ \t]+/g,' ');
+  });
 }
 function mtFilePick(inp){
   var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
@@ -7466,6 +7486,7 @@ function manParseText(text, fileName){
     var prev=lines.length?lines[lines.length-1]:'';
     // 이전 줄이 문장 중간에서 끊겼으면 이어붙이기 (제목·번호·기호 줄은 새 줄 유지)
     if(prev && prev.length>12 && !/[.!?:;…다요함음됨임함죠까]$/.test(prev)
+       && l.indexOf('|')<0 && prev.indexOf('|')<0
        && !/^[\d■◆●□▶※·•\-–—*>#【\[(]/.test(l) && !isHeading(l) && !isHeading(prev) && !WHEN_RE.test(l.slice(0,14))){
       lines[lines.length-1]=prev+' '+l; return;
     }
@@ -7473,7 +7494,51 @@ function manParseText(text, fileName){
   });
   // ── 1) 월간 필수 업무: 시기 표현이 있는 짧은 문장 ──
   var monthly=[], seenM={};
+  // 1-0) 표(칸 구분 |)로 된 월간 업무 — 열 역할을 찾아 자연스럽게 정리
+  (function(){
+    var tRows=lines.filter(function(l){ return l.indexOf('|')>=0 && l.split('|').length>=2; })
+      .map(function(l){ return l.split('|').map(function(c){ return c.trim(); }); });
+    if(tRows.length<2) return;
+    var head=tRows[0], whenCol=-1, titleCol=-1, hasHead=false;
+    head.forEach(function(c,i){
+      if(whenCol<0 && /시기|날짜|일자|기한|주기|요일|일시/.test(c)){ whenCol=i; hasHead=true; }
+      else if(titleCol<0 && /업무|할\s*일|항목|내용|제목|과제|일정/.test(c)){ titleCol=i; hasHead=true; }
+    });
+    var body=hasHead?tRows.slice(1):tRows;
+    if(!body.length) return;
+    if(whenCol<0){ // 시기 같은 값이 가장 많은 열
+      var best=-1,bn=0;
+      for(var ci=0; ci<6; ci++){
+        var n=body.filter(function(r){ return r[ci] && (WHEN_RE.test(r[ci])||/^\d{1,2}\s*일?(\s*까지)?$/.test(r[ci])); }).length;
+        if(n>bn){ bn=n; best=ci; }
+      }
+      if(bn>=Math.max(1,Math.ceil(body.length/2))) whenCol=best;
+    }
+    if(titleCol<0){ // when 열 제외하고 평균 글자 수가 가장 긴 열
+      var bl=-1,bs=0;
+      for(var cj=0; cj<6; cj++){
+        if(cj===whenCol) continue;
+        var tot=0,n2=0; body.forEach(function(r){ if(r[cj]){ tot+=r[cj].length; n2++; } });
+        var avg=n2?tot/n2:0; if(avg>bs){ bs=avg; bl=cj; }
+      }
+      titleCol=bl;
+    }
+    if(titleCol<0) return;
+    body.forEach(function(r){
+      var title=(r[titleCol]||'').trim();
+      if(!title || title.length<2 || title.length>60 || /^[-–—=\s]+$/.test(title)) return;
+      var when=(whenCol>=0?String(r[whenCol]||''):'').replace(/\s+/g,' ').trim();
+      if(/^[-–—=\s]*$/.test(when)) when='';
+      if(!when){ var wm=title.match(WHEN_RE); if(wm){ when=wm[0].trim(); title=title.replace(wm[0],'').replace(/^[\s:：\-–—,.]+|[\s:：\-–—,.]+$/g,'').trim(); } }
+      if(!title || title.length<2) return;
+      var desc=[];
+      r.forEach(function(c,i){ if(i!==whenCol && i!==titleCol && c && c.length>1 && !/^[-–—=\s]+$/.test(c) && !/시기|날짜|업무|내용|비고/.test(c)) desc.push(c); });
+      var k=title.replace(/\s+/g,'').slice(0,40); if(seenM[k]) return; seenM[k]=1;
+      monthly.push({when:when, title:title, desc:desc.join(' · ')});
+    });
+  })();
   lines.forEach(function(l){
+    if(l.indexOf('|')>=0) return; // 표 줄은 위에서 처리
     var t=l.replace(/^[\s■□▶◆●·•\-–—*※>0-9.)(]+/,'').trim();
     if(t.length<5 || t.length>80) return;
     var m=t.match(WHEN_RE);
@@ -7574,6 +7639,7 @@ function _renderManImport(){
       +'<span style="flex:1;min-width:0">'
       +'<span style="display:flex;gap:5px"><input class="fi mi-mw" data-i="'+i+'" value="'+dEsc(it.when)+'" placeholder="시기" style="flex:0 0 34%;margin:0;padding:6px 8px;font-size:11.5px">'
       +'<input class="fi mi-mt" data-i="'+i+'" value="'+dEsc(it.title)+'" placeholder="업무명" style="flex:1;margin:0;padding:6px 8px;font-size:11.5px"></span>'
+      +(it.desc?'<input class="fi mi-mdc" data-i="'+i+'" value="'+dEsc(it.desc)+'" placeholder="비고·설명" style="margin:4px 0 0;padding:5px 8px;font-size:11px;color:var(--t2)">':'')
       +(p.multi&&it.src?'<span style="display:block;font-size:9.5px;color:var(--t3);margin-top:2px">📄 '+dEsc(it.src)+'</span>':'')+'</span>'
       +'<button onclick="manImpRemove(\'monthly\','+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0;margin-top:5px">✕</button>'
       +'</div>';
@@ -7604,6 +7670,7 @@ function _manImpSyncEdits(){ // 화면의 수정 내용을 _manImp에 반영
   var p=_manImp; if(!p) return;
   document.querySelectorAll('.mi-mw').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.when=el.value.trim(); });
   document.querySelectorAll('.mi-mt').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.title=el.value.trim(); });
+  document.querySelectorAll('.mi-mdc').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.desc=el.value.trim(); });
   document.querySelectorAll('.mi-dt').forEach(function(el){ var d=p.docs[parseInt(el.getAttribute('data-i'))]; if(d) d.title=el.value.trim(); });
   document.querySelectorAll('.mi-db').forEach(function(el){ var d=p.docs[parseInt(el.getAttribute('data-i'))]; if(d) d.body=el.value; });
 }
@@ -7619,7 +7686,7 @@ function manImportApply(){
     var it=p.monthly[parseInt(c.getAttribute('data-i'))]; if(!it||!it.title) return;
     var k=it.title.replace(/\s+/g,'');
     if(dept.monthly.some(function(x){ return x.title.replace(/\s+/g,'')===k; })) return;
-    dept.monthly.push({id:'mm'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), when:it.when, title:it.title, desc:''});
+    dept.monthly.push({id:'mm'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), when:it.when, title:it.title, desc:it.desc||''});
     addM++;
   });
   document.querySelectorAll('.mi-d:checked').forEach(function(c){
