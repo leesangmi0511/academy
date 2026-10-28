@@ -1402,6 +1402,61 @@ function _tbChunkLoad(n){
   var gets=[]; for(var i=0;i<n;i++) gets.push(_tbGetRetry('academy/tb'+i, 3));
   return Promise.all(gets).then(function(docs){ var all=[]; docs.forEach(function(doc){ var o=_FS.docToObj(doc); if(o && o.items) all=all.concat(_tbExpand(o.items)); }); return all; });
 }
+// ═══ 기록 보존: 저장 전 서버 최신본과 병합 (여러 기기 동시 사용 시 유실 방지) ═══
+function _goneSet(){ if(!Array.isArray(DB.gone)) DB.gone=[]; return DB.gone; }
+function _markGone(id){ var g=_goneSet(); if(id && g.indexOf(id)<0){ g.push(id); if(g.length>3000) g.splice(0, g.length-3000); } }
+function _unGone(id){ var g=_goneSet(); var i=g.indexOf(id); if(i>=0) g.splice(i,1); }
+function _mergeById(loc, srv, gone){
+  var L=Array.isArray(loc)?loc:[], S=Array.isArray(srv)?srv:[];
+  var out=L.filter(function(x){ return !(x&&x.id&&gone&&gone[x.id]); }); // 다른 기기에서 삭제된 항목은 내 쪽에서도 제거
+  var ids={}; out.forEach(function(x){ if(x&&x.id) ids[x.id]=1; });
+  S.forEach(function(x){ if(x&&x.id&&!ids[x.id]&&!(gone&&gone[x.id])) out.push(x); });
+  return out;
+}
+function _mergeNameMap(loc, srv, gone){
+  var out={}; loc=loc||{}; srv=srv||{};
+  Object.keys(loc).forEach(function(k){ out[k]=_mergeById(loc[k], srv[k], gone); });
+  Object.keys(srv).forEach(function(k){ if(!(k in out)) out[k]=(srv[k]||[]).filter(function(x){ return !(x&&x.id&&gone&&gone[x.id]); }); });
+  return out;
+}
+function _mergeServerDB(d){
+  if(!d) return;
+  try{
+    // 삭제 기록(tombstone) 합집합 → 삭제한 항목이 되살아나지 않게
+    var g=_goneSet(); (d.gone||[]).forEach(function(id){ if(g.indexOf(id)<0) g.push(id); });
+    var gone={}; g.forEach(function(id){ gone[id]=1; });
+    DB.tlj=_mergeNameMap(DB.tlj, d.tlj, gone);
+    DB.myTodos=_mergeNameMap(DB.myTodos, d.myTodos, gone);
+    DB.upg=_mergeNameMap(DB.upg, d.upg, gone);
+    (function(){ var L=DB.tchChanges||[], S=d.tchChanges||[]; var k={}; L.forEach(function(x){ k[(x.ts||'')+'|'+(x.stu||'')]=1; }); S.forEach(function(x){ var kk=(x.ts||'')+'|'+(x.stu||''); if(!k[kk]) L.push(x); }); DB.tchChanges=L; })();
+    if(d.manuals){
+      if(!DB.manuals) DB.manuals=d.manuals;
+      else{
+        ['gyomu','haengjung'].forEach(function(dept){
+          if(!d.manuals[dept]) return;
+          if(!DB.manuals[dept]) DB.manuals[dept]={monthly:[],docs:[]};
+          DB.manuals[dept].monthly=_mergeById(DB.manuals[dept].monthly, d.manuals[dept].monthly, gone);
+          DB.manuals[dept].docs=_mergeById(DB.manuals[dept].docs, d.manuals[dept].docs, gone);
+        });
+        DB.manuals.basics=_mergeById(DB.manuals.basics, d.manuals.basics, gone);
+        if(d.manuals.basicsSeeded) DB.manuals.basicsSeeded=1;
+        var sd=d.manuals.done||{}; if(!DB.manuals.done) DB.manuals.done={};
+        Object.keys(DB.manuals.done).forEach(function(ym){ Object.keys(DB.manuals.done[ym]||{}).forEach(function(id){ if(gone['mdone:'+ym+':'+id]) delete DB.manuals.done[ym][id]; }); });
+        Object.keys(sd).forEach(function(ym){
+          if(!DB.manuals.done[ym]) DB.manuals.done[ym]={};
+          Object.keys(sd[ym]||{}).forEach(function(id){ if(!DB.manuals.done[ym][id] && !gone['mdone:'+ym+':'+id]) DB.manuals.done[ym][id]=sd[ym][id]; });
+        });
+      }
+    }
+    if(d.evalHistory){ if(!DB.evalHistory) DB.evalHistory={}; Object.keys(d.evalHistory).forEach(function(ym){ if(!DB.evalHistory[ym]) DB.evalHistory[ym]=d.evalHistory[ym]; }); }
+  }catch(e){}
+}
+function _dbPayload(nchunks, ver){
+  return {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [],
+    withdrawn: DB.withdrawn||[], tlj: DB.tlj||{}, myTodos: DB.myTodos||{}, upg: DB.upg||{},
+    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[],
+    tbChunks: nchunks, tbVer: ver, tbCount: (_tbReady ? (DB.typeBank||[]).length : (_srvTbMeta.cnt||0))};
+}
 function saveAll() {
   _lastLocalSave = Date.now();  // 변경 시각 기록 → 폴링 덮어쓰기 방지
   _saveDirty = true;            // 저장 대기 중 → 폴링이 옛 데이터로 덮어쓰지 않도록
@@ -1415,6 +1470,12 @@ function saveAll() {
     // 보안: 기기 저장 사본에는 학생·학부모 전화번호를 남기지 않음 (서버 원본에는 유지)
     try{ localStorage.setItem('ac_stu', JSON.stringify(DB.stu.map(function(s){ var c=Object.assign({},s); delete c.phone; if(c.tuition){ c.tuition=Object.assign({},c.tuition); delete c.tuition.phone; } return c; }))); }catch(_e){}
     try{ localStorage.setItem('ac_evalHistory', JSON.stringify(DB.evalHistory||{})); }catch(_e){}
+    try{ localStorage.setItem('ac_tlj', JSON.stringify(DB.tlj||{})); }catch(_e){}
+    try{ localStorage.setItem('ac_myTodos', JSON.stringify(DB.myTodos||{})); }catch(_e){}
+    try{ localStorage.setItem('ac_upg', JSON.stringify(DB.upg||{})); }catch(_e){}
+    try{ localStorage.setItem('ac_manuals', JSON.stringify(DB.manuals||{})); }catch(_e){}
+    try{ localStorage.setItem('ac_tchChanges', JSON.stringify(DB.tchChanges||[])); }catch(_e){}
+    try{ localStorage.setItem('ac_gone', JSON.stringify(DB.gone||[])); }catch(_e){}
     var _ver = Date.now();
     if(_tbReady){
       _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
@@ -1422,8 +1483,10 @@ function saveAll() {
       try{ localStorage.setItem('ac_tbVer', String(_ver)); }catch(_e){}
     }
     // 유형은행 로드 전이면 조각 저장을 건너뛰고 서버의 기존 조각 정보를 그대로 유지 (빈 값 덮어쓰기 방지)
-    (_tbReady ? _tbChunkSave() : Promise.resolve(_srvTbMeta.n))
-      .then(function(nchunks){ return _FS.set('academy/data', {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [], withdrawn: DB.withdrawn||[], tbChunks: nchunks, tbVer: (_tbReady ? _ver : _srvTbMeta.ver), tbCount: (_tbReady ? (DB.typeBank||[]).length : (_srvTbMeta.cnt||0))}); })
+    // 저장 직전 서버 최신본과 병합 → 다른 기기(팀장 폰 등)가 그 사이 저장한 일지·할 일·매뉴얼 체크가 절대 지워지지 않게
+    _FS.get('academy/data').then(function(doc){ try{ _mergeServerDB(_FS.docToObj(doc)); }catch(_e){} }).catch(function(){})
+      .then(function(){ return (_tbReady ? _tbChunkSave() : Promise.resolve(_srvTbMeta.n)); })
+      .then(function(nchunks){ return _FS.set('academy/data', _dbPayload(nchunks, (_tbReady ? _ver : _srvTbMeta.ver))); })
       .then(function(){ _saving = false; _saveDirty = false; _saveFailed = false; _fbFailNotified = false; _saveRetries = 0; _tbLoadedVer = (_tbReady ? _ver : _srvTbMeta.ver); _lastLocalSave = Date.now(); })
       .catch(function(e) {
         _saving = false; _saveFailed = true; window._lastSaveErr = (e && (e.message||e.status||e.code)) ? ((e.status?('HTTP '+e.status+' '):'')+(e.message||e.code||'')) : String(e); console.warn('FB save error:', e, window._lastSaveErr);
@@ -3628,7 +3691,7 @@ function tbSaveDiag(){
   toast('저장 점검 중…');
   _FS.set('academy/_diag', {t:Date.now(), ok:1})
     .then(function(){
-      var payload={cfg:DB.cfg, subj:DB.subj, stu:DB.stu, evalHistory:DB.evalHistory||{}, typeBank:[], withdrawn:DB.withdrawn||[], tbChunks:0, tbVer:Date.now()};
+      var payload=_dbPayload((_srvTbMeta&&_srvTbMeta.n)||0, (_srvTbMeta&&_srvTbMeta.ver)||Date.now());
       var kb=Math.round(JSON.stringify(payload).length/1024);
       var stuKb=Math.round(JSON.stringify(DB.stu||[]).length/1024);
       var evKb=Math.round(JSON.stringify(DB.evalHistory||{}).length/1024);
@@ -6224,6 +6287,7 @@ function tljDel(name,id){
   if(!confirm('이 일지를 삭제할까요?')) return;
   if(!(ME && (ME.role==='owner' || ME.name===name))) return;
   DB.tlj[name]=(DB.tlj[name]||[]).filter(function(e){ return e.id!==id; });
+  _markGone(id);
   try{ logChange('팀장일지 삭제', name+' '+id); }catch(e){}
   saveAll(); _renderTlj();
 }
@@ -7290,8 +7354,9 @@ function manToggleDoc(id){ _manOpenDoc=(_manOpenDoc===id)?null:id; renderManuals
 function manToggleDone(dept,id){
   var m=_manDB(), ym=_manYM();
   if(!m.done[ym]) m.done[ym]={};
-  if(m.done[ym][id]){ delete m.done[ym][id]; }
+  if(m.done[ym][id]){ delete m.done[ym][id]; _markGone('mdone:'+ym+':'+id); }
   else{
+    _unGone('mdone:'+ym+':'+id);
     var it=(m[dept].monthly||[]).find(function(x){ return x.id===id; });
     m.done[ym][id]={by:(ME?ME.name||'관리자':''), date:today()};
     try{ logChange('월간 업무 완료', (it?it.title:id)); }catch(e){}
@@ -7329,6 +7394,7 @@ function manDelBasic(id){
   var m=_manDB(); var it=m.basics.find(function(x){return x.id===id;});
   if(!confirm('「'+((it&&it.title)||'')+'」 기본 업무를 삭제할까요?')) return;
   m.basics=m.basics.filter(function(x){return x.id!==id;});
+  _markGone(id);
   logChange('기본 팀장 업무 삭제', it?it.title:id);
   saveAll(); renderManuals(); toast('삭제됐어요');
 }
@@ -7363,6 +7429,7 @@ function manDelMonthly(dept,id){
   if(!confirm('이 월간 업무를 삭제할까요? (이전 달 완료 기록은 남습니다)')) return;
   var m=_manDB(); var it=m[dept].monthly.find(function(x){return x.id===id;});
   m[dept].monthly=m[dept].monthly.filter(function(x){return x.id!==id;});
+  _markGone(id);
   logChange('월간 업무 삭제', it?it.title:id);
   saveAll(); renderManuals(); toast('삭제됐어요');
 }
@@ -7398,6 +7465,7 @@ function manDelDoc(dept,id){
   if(!confirm('이 매뉴얼을 삭제할까요?')) return;
   var m=_manDB(); var it=m[dept].docs.find(function(x){return x.id===id;});
   m[dept].docs=m[dept].docs.filter(function(x){return x.id!==id;});
+  _markGone(id);
   logChange('업무 매뉴얼 삭제', it?it.title:id);
   saveAll(); _manOpenDoc=null; renderManuals(); toast('삭제됐어요');
 }
@@ -7592,6 +7660,7 @@ function mtdDel(name,id){
   if(!(ME && (ME.name===name || ME.role==='owner'))) return;
   if(!confirm('이 할 일을 삭제할까요?')) return;
   DB.myTodos[name]=(DB.myTodos[name]||[]).filter(function(x){ return x.id!==id; });
+  _markGone(id);
   saveAll(); _renderMyTodos();
 }
 // ═══ 원장 알림: 꼭 해야 하는 일이 미완료일 때 ═══
@@ -7800,6 +7869,7 @@ function upgDel(name,id){
   if(!(ME&&(ME.name===name||ME.role==='owner'))) return;
   if(!confirm('이 제안을 삭제할까요?')) return;
   DB.upg[name]=(DB.upg[name]||[]).filter(function(x){ return x.id!==id; });
+  _markGone(id);
   saveAll(); renderUpgrades();
 }
 function upgConfirm(name,id){
@@ -10834,6 +10904,8 @@ _loadFirebase().then(function() {
     if(d&&d.cfg){
       DB.cfg=d.cfg;
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){}if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
+      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[];
+      if(d.manuals) DB.manuals=d.manuals;
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
       DB.cfg=JSON.parse(localStorage.getItem('ac_cfg')||'{"adminPw":"","adminPhone":"","ownerPw":"7193455","admins":[],"teachers":[]}')
@@ -10842,6 +10914,12 @@ _loadFirebase().then(function() {
       DB.typeBank=_tbExpand(JSON.parse(localStorage.getItem('ac_typeBank')||'[]'));
       DB.subj=JSON.parse(localStorage.getItem('ac_subj')||'[]');
       DB.stu=JSON.parse(localStorage.getItem('ac_stu')||'[]');
+      try{ DB.tlj=JSON.parse(localStorage.getItem('ac_tlj')||'{}'); }catch(_e){ DB.tlj={}; }
+      try{ DB.myTodos=JSON.parse(localStorage.getItem('ac_myTodos')||'{}'); }catch(_e){ DB.myTodos={}; }
+      try{ DB.upg=JSON.parse(localStorage.getItem('ac_upg')||'{}'); }catch(_e){ DB.upg={}; }
+      try{ var _mn=JSON.parse(localStorage.getItem('ac_manuals')||'null'); if(_mn) DB.manuals=_mn; }catch(_e){}
+      try{ DB.tchChanges=JSON.parse(localStorage.getItem('ac_tchChanges')||'[]'); }catch(_e){ DB.tchChanges=[]; }
+      try{ DB.gone=JSON.parse(localStorage.getItem('ac_gone')||'[]'); }catch(_e){ DB.gone=[]; }
       // 오프라인: 기기 백업(IndexedDB)이 더 크면 그걸로 복구 후 저장 허용
       _idbGet('tb', function(idb){ if(idb && idb.items && idb.items.length > (DB.typeBank||[]).length){ DB.typeBank = idb.items; } _tbReady = true; if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } });
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
@@ -10901,6 +10979,8 @@ _loadFirebase().then(function() {
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[];
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){} if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
+      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone;
+      if(d2.manuals) DB.manuals=d2.manuals;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
       var _pcnt=(d2 && d2.tbCount) ? d2.tbCount : 0;
