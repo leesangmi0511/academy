@@ -1436,7 +1436,7 @@ function _mergeServerDB(d){
       Object.keys(S).forEach(function(nm){ if(!L[nm]) L[nm]={}; var sw=S[nm]||{}; Object.keys(sw).forEach(function(wk){ L[nm][wk]=_mergeById(L[nm][wk], sw[wk], gone); }); });
       Object.keys(L).forEach(function(nm){ Object.keys(L[nm]||{}).forEach(function(wk){ L[nm][wk]=_mergeById(L[nm][wk], null, gone); }); });
       DB.wkplan=L; })();
-    (function(){ var L=DB.tchChanges||[], S=d.tchChanges||[]; var k={}; L.forEach(function(x){ k[(x.ts||'')+'|'+(x.stu||'')]=1; }); S.forEach(function(x){ var kk=(x.ts||'')+'|'+(x.stu||''); if(!k[kk]) L.push(x); }); DB.tchChanges=L; })();
+    (function(){ var L=DB.tchChanges||[], S=d.tchChanges||[]; var k={}; L.forEach(function(x){ k[(x.ts||'')+'|'+(x.stu||'')]=1; }); S.forEach(function(x){ var kk=(x.ts||'')+'|'+(x.stu||''); if(!k[kk] && !gone['tchg:'+kk]) L.push(x); }); DB.tchChanges=L; })();
     if(d.manuals){
       if(!DB.manuals) DB.manuals=d.manuals;
       else{
@@ -8283,6 +8283,70 @@ function pwRecentChanges(days){
   var lim=Date.now()-(days||7)*86400000;
   return ((DB.cfg&&DB.cfg.pwLog)||[]).filter(function(x){ return (x.ts||0)>=lim; });
 }
+// ═══ 평가 리셋 (원장 전용 · 선택 항목 초기화) ═══
+function openEvalReset(){
+  if(!(ME && ME.role==='owner')){ toast('원장만 이용할 수 있어요','var(--rd)'); return; }
+  var items=[
+    {k:'teval', lb:'📋 강사 평가 입력 (상·중·하)', d:'강사별 평가 점수를 비웁니다'},
+    {k:'aeval', lb:'👔 관리자 평가 입력', d:'관리자별 10항목 평가를 비웁니다'},
+    {k:'dls', lb:'⏱ 회의 기한 체크 (지킴·어김)', d:'모든 회의록의 기한 체크를 미체크로 되돌립니다'},
+    {k:'upg', lb:'💡 업무 업그레이드 기록', d:'제안·시행·확인 기록을 모두 지웁니다'},
+    {k:'tchg', lb:'🔄 담임 교체 기록', d:'담임유지 점수 계산이 100점부터 다시 시작됩니다'},
+    {k:'histM', lb:'📊 월별 점수 기록 — 이번 달만', d:'이번 달 스냅샷만 지우고 과거 기록은 보존'},
+    {k:'histA', lb:'📊 월별 점수 기록 — 전체', d:'반기·연간 합산용 기록 전체 삭제 (신중히!)'}
+  ];
+  var ex=document.getElementById('ov-evreset'); if(ex) ex.remove();
+  var h='<div class="ov open" id="ov-evreset" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">♻️ 평가 리셋</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">선택한 평가 기록만 초기화합니다. 실행 전 현재 상태가 자동 백업으로 보관되어 자동 백업 화면에서 되돌릴 수 있어요.</div>'
+    +items.map(function(it){
+      return '<label style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:9px 11px;margin-bottom:5px;cursor:pointer">'
+        +'<input type="checkbox" class="evr-ck" value="'+it.k+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--rd)">'
+        +'<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700">'+it.lb
+        +'<span style="display:block;font-size:10.5px;color:var(--t3);font-weight:500;margin-top:1px">'+it.d+'</span></span></label>';
+    }).join('')
+    +'<button class="btn" style="background:var(--rd)" onclick="doEvalReset()">선택 항목 리셋 실행</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-evreset\').remove()">취소</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function doEvalReset(){
+  if(!(ME && ME.role==='owner')) return;
+  var picked=Array.prototype.map.call(document.querySelectorAll('.evr-ck:checked'),function(c){ return c.value; });
+  if(!picked.length){ toast('리셋할 항목을 선택하세요','var(--rd)'); return; }
+  if(!confirm('선택한 '+picked.length+'개 항목을 초기화할까요?\n(실행 전 상태는 자동 백업으로 보관됩니다)')) return;
+  // 안전망: 현재 상태 백업
+  try{ _autoBkSave({date:today(), ts:Date.now(), stuCnt:(DB.stu||[]).length, data:_autoBkSnap()}); }catch(e){}
+  var done=[];
+  if(picked.indexOf('teval')>=0){ (DB.cfg.teachers||[]).forEach(function(t){ if(t){ delete t.evalScores; delete t.evalTotal; delete t.evalDate; } }); done.push('강사 평가'); }
+  if(picked.indexOf('aeval')>=0){ (DB.cfg.admins||[]).forEach(function(a){ if(a){ delete a.adminEvalScores; delete a.adminEvalTotal; delete a.adminEvalDate; } }); done.push('관리자 평가'); }
+  if(picked.indexOf('upg')>=0){
+    Object.keys(DB.upg||{}).forEach(function(nm){ (DB.upg[nm]||[]).forEach(function(u){ if(u&&u.id) _markGone(u.id); }); });
+    DB.upg={}; done.push('업그레이드');
+  }
+  if(picked.indexOf('tchg')>=0){
+    (DB.tchChanges||[]).forEach(function(x){ _markGone('tchg:'+(x.ts||'')+'|'+(x.stu||'')); });
+    DB.tchChanges=[]; done.push('담임 교체');
+  }
+  if(picked.indexOf('histA')>=0){
+    if(!DB.evalHistory) DB.evalHistory={};
+    Object.keys(DB.evalHistory).forEach(function(ym0){ DB.evalHistory[ym0]={}; }); // 빈 값으로 두어 서버 병합 시 되살아나지 않게
+    done.push('월별 기록 전체');
+  }
+  else if(picked.indexOf('histM')>=0){ var ym=getYearMonth(); if(!DB.evalHistory) DB.evalHistory={}; DB.evalHistory[ym]={}; done.push('이번 달 기록'); }
+  var fin=function(){
+    try{ logChange('평가 리셋', done.join('·')); }catch(e){}
+    saveAll();
+    var m=document.getElementById('ov-evreset'); if(m) m.remove();
+    try{ renderAdminHome(); }catch(e){}
+    toast('♻️ 리셋 완료: '+done.join(' · ')+' — 되돌리려면 자동 백업에서 복원하세요','var(--g)');
+  };
+  if(picked.indexOf('dls')>=0){
+    done.push('회의 기한 체크');
+    _mtSync(function(list){ list.forEach(function(m){ (m.dls||[]).forEach(function(d){ d.status=''; }); }); }, function(){ fin(); });
+  } else fin();
+}
+
 // ═══ 일지·현황판 백업 (원장 전용 · 파일 내보내기/복원) ═══
 function openJournalBackup(){
   if(!(ME && ME.role==='owner')){ toast('원장만 이용할 수 있어요','var(--rd)'); return; }
@@ -8513,7 +8577,7 @@ function renderAdminHome() {
      + '</div>'
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 관리자일지</button><button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업그레이드'+(function(){ try{ var n=0; Object.keys(DB.upg||{}).forEach(function(nm){ (DB.upg[nm]||[]).forEach(function(u){ if(u.status==='done'&&!u.confirmed) n++; }); }); return n?' <span style="color:var(--rd);font-weight:700">'+n+'</span>':''; }catch(e){ return ''; } })()+'</button></div>':'')
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openOwnerList()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👑 원장 명단</button><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업</button><button onclick="openJournalBackup()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗃 일지·현황판 백업</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openOwnerList()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👑 원장 명단</button><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업</button><button onclick="openJournalBackup()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗃 일지·현황판 백업</button><button onclick="openEvalReset()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">♻️ 평가 리셋</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
      + (ME.role!=='owner'?(function(){ var bs='';
          if(canFeat('tlj')) bs+='<button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 관리자일지 작성</button>';
          if(canFeat('upgrades')) bs+='<button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업무 업그레이드</button>';
