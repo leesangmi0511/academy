@@ -6318,11 +6318,16 @@ function _renderTlj(){
           }).join('')
           +'<div style="font-size:9.5px;color:var(--t3);padding:5px 0">＊ 체크하면 오늘 한 일에 자동 기록 · 목록 수정은 업무 매뉴얼에서 (원장)</div></div>';
       })()
-      +(function(){ // 🗓 이번 주 계획 (주간 계획에서 미완료 항목 체크 → 오늘 한 일 기록 + 완료 처리)
-        var wl=((DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]).filter(function(x){ return !x.done; });
-        if(!wl.length) return '';
+      +(function(){ // 🗓 이번 주 계획 (주간 계획과 연동: 체크 → 한 일 기록 + 계획 완료 처리)
+        var _all=((DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]);
+        var wl=_all.filter(function(x){ return !x.done; });
+        if(!_all.length) return '<label class="fl">🗓 이번 주 계획</label>'
+          +'<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:var(--t3)">이번 주 계획이 아직 없어요 — 주간 계획에서 직접 넣거나 계획표 파일·캡쳐로 올릴 수 있어요'
+          +'<button onclick="openWkPlan()" style="display:block;width:100%;margin-top:7px;padding:7px;border-radius:8px;border:1px solid var(--g);background:none;color:var(--g);font-size:11.5px;font-weight:700;cursor:pointer">🗓 주간 계획 열기</button></div>';
+        if(!wl.length) return '<label class="fl">🗓 이번 주 계획 ('+_all.length+'/'+_all.length+' 완료)</label>'
+          +'<div style="background:var(--s1);border:1px solid var(--g);border-radius:10px;padding:9px 12px;margin-bottom:10px;font-size:11.5px;color:var(--g);font-weight:700">✅ 이번 주 계획을 모두 완료했어요!</div>';
         var _dm=wkDupMap(_wkKey());
-        return '<label class="fl">🗓 이번 주 계획 ('+wl.length+'건 남음) — 오늘 완료한 것 체크</label>'
+        return '<label class="fl">🗓 이번 주 계획 ('+(_all.length-wl.length)+'/'+_all.length+' 완료 · '+wl.length+'건 남음) — 오늘 완료한 것 체크</label>'
           +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">'
           +wl.map(function(t){
             return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--s2);cursor:pointer">'
@@ -6367,7 +6372,8 @@ function _renderTlj(){
   if(!list.length) h+='<div class="empty" style="font-size:12px;padding:6px 0">작성된 일지가 없어요</div>';
   list.slice(0,40).forEach(function(e){
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:10px 12px;margin-bottom:7px">'
-      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:12px;font-weight:800;color:var(--acc)">'+dEsc(e.date||'')+'</span>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:12px;font-weight:800;color:var(--acc)">'+dEsc(e.date||'')
+      +(function(){ var n=((e.doneItems||[]).filter(function(r){ return r.wk; })).length; return n?' <span style="font-size:10px;background:var(--gl);color:var(--g);border-radius:6px;padding:1.5px 7px;font-weight:700">🗓 주간 계획 '+n+'건</span>':''; })()+'</span>'
       +((isOw||e.date===today())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>'
       +((e.doneItems&&e.doneItems.length)?('<div style="font-size:12px;line-height:1.6"><b>✅ 한 일</b>'
         +e.doneItems.map(function(r){
@@ -6375,7 +6381,7 @@ function _renderTlj(){
           var tag=st==='done'?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700">완료</span>'
             :st==='ing'?'<span style="font-size:9.5px;background:var(--s2);color:var(--am);border-radius:5px;padding:1px 6px;font-weight:700">진행 중</span>'
             :'<span style="font-size:9.5px;background:var(--s2);color:var(--rd);border-radius:5px;padding:1px 6px;font-weight:700">미완료</span>';
-          return '<div style="margin-top:3px">'+tag+' '+dEsc(r.text)+(r.hours?' <span style="color:var(--acc);font-weight:700;font-size:11px">· '+dEsc(r.hours)+'</span>':'')+'</div>';
+          return '<div style="margin-top:3px">'+tag+(r.wk?' <span style="font-size:9px;background:var(--s2);color:var(--g);border-radius:5px;padding:1px 5px;font-weight:700">🗓 주간계획</span>':'')+' '+dEsc(r.text)+(r.hours?' <span style="color:var(--acc);font-weight:700;font-size:11px">· '+dEsc(r.hours)+'</span>':'')+'</div>';
         }).join('')+'</div>')
         :(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':''))
       +(e.plan?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--t2)"><b>📌 예정</b>\n'+dEsc(e.plan)+'</div>':'')
@@ -6482,7 +6488,7 @@ function tljSave(){
     var t=c.getAttribute('data-t')||'', wid=c.getAttribute('data-id')||'';
     if(t && !doneItems.some(function(r){ return r.text===t; })) doneItems.push({text:t, hours:'', st:'done', wk:1});
     var item=((DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]).find(function(x){ return x.id===wid; });
-    if(item){ item.done=true; item.doneDate=today(); }
+    if(item){ item.done=true; item.doneDate=today(); item.viaTlj=1; }
   });
   var done=doneItems.map(function(r){ return r.text+(r.hours?' ('+r.hours+')':'')+(r.st==='ing'?' [진행 중]':r.st==='todo'?' [미완료]':''); }).join('\n');
   var plan=((document.getElementById('tlj-plan')||{}).value||'').trim();
@@ -8649,9 +8655,11 @@ function _renderWkPlan(){
       +'<input class="fi" id="wk-text" placeholder="계획 내용" style="flex:1;margin:0" onkeydown="if(event.key===\'Enter\')wkAdd()"></div>'
       +'<button onclick="wkAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--g);background:none;color:var(--g);font-size:12px;font-weight:700;cursor:pointer">+ 계획 추가</button></div>';
   }
+  h+='<input type="file" id="wk-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif" onchange="wkPlanFilePick(this)">';
   if(isOw){
-    h+='<input type="file" id="wk-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md" onchange="wkPlanFilePick(this)">'
-      +'<button onclick="document.getElementById(\'wk-file-in\').click()" style="width:100%;margin-bottom:12px;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12.5px;font-weight:700;cursor:pointer">📂 계획표 파일 불러오기 (한글·PDF → 관리자별 할 일 자동 분배)</button>';
+    h+='<button onclick="document.getElementById(\'wk-file-in\').click()" style="width:100%;margin-bottom:12px;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12.5px;font-weight:700;cursor:pointer">📂 계획표 파일·캡쳐 불러오기 (→ 관리자별 할 일 자동 분배)</button>';
+  } else if(mine){
+    h+='<button onclick="document.getElementById(\'wk-file-in\').click()" style="width:100%;margin-bottom:12px;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12.5px;font-weight:700;cursor:pointer">📂 내 계획표 파일·캡쳐 올리기 (이번 주 계획으로)</button>';
   }
   var list=_wkList(_wkFor,_wkCur);
   var dn=list.filter(function(x){ return x.done; }).length;
@@ -8670,7 +8678,7 @@ function _renderWkPlan(){
       +(t.day?'<span style="font-size:10px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700;margin-right:5px;text-decoration:none;display:inline-block">'+dEsc(t.day)+'</span>':'')+dEsc(t.text)
       +(isDup?'<span style="display:block;font-size:10.5px;color:var(--am);font-weight:700;text-decoration:none;margin-top:2px">⚠ 중복 — '+dEsc(others.join('·'))+'님 계획에도 있어요'
         +(t.dupSt==='talk'?' · <span style="color:var(--am)">🤝 협의 중</span>':t.dupSt==='ok'?' · <span style="color:var(--g)">✔ 확인됨 (진행)</span>':'')+'</span>':'')
-      +(t.done&&t.doneDate?'<span style="display:block;font-size:10px;color:var(--g);text-decoration:none;margin-top:1px">✓ '+dEsc(t.doneDate)+' 완료</span>':'')+'</span>'
+      +(t.done&&t.doneDate?'<span style="display:block;font-size:10px;color:var(--g);text-decoration:none;margin-top:1px">✓ '+dEsc(t.doneDate)+' 완료'+(t.viaTlj?' · 📔 일지에서 기록':'')+'</span>':'')+'</span>'
       +((mine||isOw)?'<button onclick="wkDel(\''+dEsc(_wkFor)+'\',\''+t.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button>':'')
       +'</div>';
     if(isDup && mine && !t.done){
@@ -8714,15 +8722,23 @@ var _wkImp=null;
 function wkPlanFilePick(inp){
   var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
   if(!files.length) return;
-  if(!(ME&&ME.role==='owner')){ toast('원장만 불러올 수 있어요','var(--rd)'); return; }
+  var isOw=(ME&&ME.role==='owner');
+  if(!ME || (!isOw && !((ME.role==='admin'||ME.role==='staff')&&canFeat('wkplan')))){ toast('권한이 없어요','var(--rd)'); return; }
   toast(files.length>1?('파일 '+files.length+'개 읽는 중…'):('「'+files[0].name+'」 읽는 중…'));
   Promise.all(files.map(function(f){ return _mtExtractText(f).then(function(t){ return (t||'').slice(0,50000); }).catch(function(){ return ''; }); }))
   .then(function(txts){
     var all=txts.join('\n');
     if(!all.trim()){ toast('파일에서 텍스트를 읽지 못했어요 — 한글은 hwpx 형식으로 저장해주세요','var(--rd)'); return; }
     var items=wkParsePlan(all);
-    if(!items.length){ toast('인식된 할 일이 없어요 — 줄마다 "이름 + 내용" 형태인지 확인하세요','var(--rd)'); return; }
-    _wkImp={items:items, fname:files.map(function(f){return f.name;}).join(', ')};
+    var dropped=0;
+    if(!isOw){ // 관리자는 자기 계획으로만: 다른 사람 이름이 붙은 항목은 제외
+      var kept=[];
+      items.forEach(function(it){ if(!it.name || it.name===ME.name){ it.name=ME.name; kept.push(it); } else dropped++; });
+      items=kept;
+    }
+    if(!items.length){ toast(dropped?('내 항목이 없어요 — 다른 사람 이름 항목 '+dropped+'건만 인식됐어요'):'인식된 할 일이 없어요 — 줄마다 "이름 + 내용" 형태인지 확인하세요','var(--rd)'); return; }
+    if(dropped) toast('다른 사람 이름이 붙은 '+dropped+'건은 제외했어요 (내 계획만 추가돼요)','var(--am)');
+    _wkImp={items:items, fname:files.map(function(f){return f.name;}).join(', '), self:isOw?0:1};
     _renderWkImport();
   }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
 }
@@ -8732,12 +8748,16 @@ function _renderWkImport(){
   var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
   var h='<div class="ov open" id="ov-wkimport" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
     +'<div class="mt2">📂 계획표 인식 결과</div>'
-    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+dEsc(p.fname)+' → <b>'+_wkLabel(_wkCur)+'</b> 주간 계획으로 분배됩니다. 담당·요일·내용을 확인하고 고치세요. 담당이 없는 항목은 담당을 골라야 추가됩니다.</div>';
+    +(p.self
+      ?'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+dEsc(p.fname)+' → <b>'+_wkLabel(_wkCur)+'</b> 내 주간 계획으로 추가됩니다. 요일·내용을 확인하고 고치세요.</div>'
+      :'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+dEsc(p.fname)+' → <b>'+_wkLabel(_wkCur)+'</b> 주간 계획으로 분배됩니다. 담당·요일·내용을 확인하고 고치세요. 담당이 없는 항목은 담당을 골라야 추가됩니다.</div>');
   p.items.forEach(function(it,i){
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 10px;margin-bottom:5px">'
       +'<div style="display:flex;gap:5px;align-items:center;margin-bottom:5px">'
       +'<input type="checkbox" class="wi-ck" data-i="'+i+'" '+(it.name?'checked':'')+' style="width:18px;height:18px;flex-shrink:0;accent-color:var(--acc)">'
-      +'<select class="fs wi-nm" data-i="'+i+'" style="flex:0 0 32%;margin:0;padding:6px 4px;font-size:11.5px"><option value="">담당 선택</option>'+admins.map(function(nm){ return '<option value="'+dEsc(nm)+'"'+(it.name===nm?' selected':'')+'>'+dEsc(nm)+'</option>'; }).join('')+'</select>'
+      +(p.self
+        ?'<span style="flex:0 0 32%;font-size:11.5px;font-weight:700;color:var(--g);padding:6px 4px">'+dEsc((ME&&ME.name)||'')+' (나)</span>'
+        :'<select class="fs wi-nm" data-i="'+i+'" style="flex:0 0 32%;margin:0;padding:6px 4px;font-size:11.5px"><option value="">담당 선택</option>'+admins.map(function(nm){ return '<option value="'+dEsc(nm)+'"'+(it.name===nm?' selected':'')+'>'+dEsc(nm)+'</option>'; }).join('')+'</select>')
       +'<select class="fs wi-dy" data-i="'+i+'" style="flex:0 0 22%;margin:0;padding:6px 4px;font-size:11.5px"><option value="">요일</option>'+WK_DAYS.map(function(d){ return '<option value="'+d+'"'+(it.day===d?' selected':'')+'>'+d+'</option>'; }).join('')+'</select>'
       +'<button onclick="wkImpRm('+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">✕</button></div>'
       +'<input class="fi wi-tx" data-i="'+i+'" value="'+dEsc(it.text)+'" style="margin:0;padding:7px 9px;font-size:12px">'
@@ -8762,6 +8782,7 @@ function wkImportApply(){
   document.querySelectorAll('.wi-ck:checked').forEach(function(c){
     var it=p.items[parseInt(c.getAttribute('data-i'))];
     if(!it || !it.text) return;
+    if(p.self) it.name=(ME&&ME.name)||it.name;
     if(!it.name){ skip++; return; }
     var list=_wkList(it.name, _wkCur);
     var k=it.text.replace(/\s+/g,'');
