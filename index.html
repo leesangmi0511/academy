@@ -1470,9 +1470,10 @@ function _mergeServerDB(d){
       else{
         ['gyomu','haengjung'].forEach(function(dept){
           if(!d.manuals[dept]) return;
-          if(!DB.manuals[dept]) DB.manuals[dept]={monthly:[],docs:[]};
+          if(!DB.manuals[dept]) DB.manuals[dept]={monthly:[],docs:[],annual:[]};
           DB.manuals[dept].monthly=_mergeById(DB.manuals[dept].monthly, d.manuals[dept].monthly, gone);
           DB.manuals[dept].docs=_mergeById(DB.manuals[dept].docs, d.manuals[dept].docs, gone);
+          DB.manuals[dept].annual=_mergeById(DB.manuals[dept].annual||[], d.manuals[dept].annual, gone);
         });
         DB.manuals.basics=_mergeById(DB.manuals.basics, d.manuals.basics, gone);
         if(d.manuals.basicsSeeded) DB.manuals.basicsSeeded=1;
@@ -7317,9 +7318,10 @@ var MAN_DEPTS=[ {key:'gyomu', label:'🏫 교무실 관리자'}, {key:'haengjung
 var _manTab='gyomu', _manOpenDoc=null;
 function _manDB(){
   if(!DB.manuals) DB.manuals={};
-  MAN_DEPTS.forEach(function(d){ if(!DB.manuals[d.key]) DB.manuals[d.key]={monthly:[],docs:[]};
+  MAN_DEPTS.forEach(function(d){ if(!DB.manuals[d.key]) DB.manuals[d.key]={monthly:[],docs:[],annual:[]};
     if(!Array.isArray(DB.manuals[d.key].monthly)) DB.manuals[d.key].monthly=[];
-    if(!Array.isArray(DB.manuals[d.key].docs)) DB.manuals[d.key].docs=[]; });
+    if(!Array.isArray(DB.manuals[d.key].docs)) DB.manuals[d.key].docs=[];
+    if(!Array.isArray(DB.manuals[d.key].annual)) DB.manuals[d.key].annual=[]; });
   if(!DB.manuals.done) DB.manuals.done={};
   // 기본 팀장 업무 1회 자동 등록 (이후 자유롭게 수정·삭제 가능)
   if(!DB.manuals.basicsSeeded){
@@ -7444,6 +7446,36 @@ function renderManuals(){
   });
   if(canEd) h+='<div style="display:flex;gap:6px;margin-bottom:4px"><button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0" onclick="manEditMonthly(\''+_manTab+'\',null)">+ 월간 필수 업무 추가</button>'
     +'<button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'monthly\')">📂 파일·캡쳐 올리기</button></div>';
+  // ── 1-2. 연간 일정 (월별 그룹 · 이번 달 강조) ──
+  var ann=dept.annual||[];
+  var curMo=now.getMonth()+1;
+  h+='<div class="sl2" style="margin:16px 0 8px"><div class="d8" style="background:var(--am)"></div>📆 연간 일정 <span style="font-size:11px;color:var(--t3)">'+ann.length+'건</span>'
+    +(ann.length?'<button onclick="manYrToggle()" style="margin-left:auto;background:none;border:none;color:var(--t3);font-size:11px;cursor:pointer;font-weight:600">'+(_manYrAll?'이번 달만 보기':'연간 전체 보기')+'</button>':'')+'</div>';
+  if(!ann.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 연간 일정이 없어요.'+(canEd?' 아래 버튼으로 추가하세요.':'')+'</div>';
+  else{
+    var byMo={}; ann.forEach(function(a){ var mo=parseInt(a.month,10)||0; if(!byMo[mo]) byMo[mo]=[]; byMo[mo].push(a); });
+    var mos=Object.keys(byMo).map(Number).sort(function(a,b){ return a-b; });
+    var shown=0;
+    mos.forEach(function(mo){
+      var isCur=(mo===curMo);
+      if(!_manYrAll && !isCur) return;
+      shown++;
+      h+='<div style="background:var(--s1);border:1.5px solid '+(isCur?'var(--am)':'var(--s3)')+';border-radius:var(--rs);padding:9px 12px;margin-bottom:7px">'
+        +'<div style="font-size:12.5px;font-weight:800;margin-bottom:6px;color:'+(isCur?'var(--am)':'var(--te)')+'">'+mo+'월'+(isCur?' <span style="font-size:10px;background:var(--am);color:#fff;border-radius:6px;padding:1.5px 7px;vertical-align:1px">이번 달</span>':'')+'</div>';
+      byMo[mo].slice().sort(function(a,b){ return (a.when||'').localeCompare(b.when||''); }).forEach(function(a){
+        h+='<div style="display:flex;align-items:flex-start;gap:8px;padding:5px 0;border-top:1px dashed var(--s3)">'
+          +'<div style="flex:1;min-width:0">'
+          +'<div style="font-size:12.5px;font-weight:700">'+(a.when?'<span style="font-size:10px;background:var(--s2);color:var(--t2);border-radius:6px;padding:2px 7px;margin-right:6px;display:inline-block">'+dEsc(a.when)+'</span>':'')+dEsc(a.title)+'</div>'
+          +(a.desc?'<div style="font-size:11px;color:var(--t2);margin-top:2px;line-height:1.5;white-space:pre-wrap">'+dEsc(a.desc)+'</div>':'')
+          +'</div>'
+          +(canEd?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditAnnual(\''+_manTab+'\',\''+a.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">수정</button>'+(isOw?'<button onclick="manDelAnnual(\''+_manTab+'\',\''+a.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
+          +'</div>';
+      });
+      h+='</div>';
+    });
+    if(!shown) h+='<div class="empty" style="font-size:12px;padding:6px 0">이번 달('+curMo+'월) 일정은 없어요 — [연간 전체 보기]로 확인하세요</div>';
+  }
+  if(canEd) h+='<button class="btn ghost" style="margin-bottom:4px;padding:9px;font-size:12.5px" onclick="manEditAnnual(\''+_manTab+'\',null)">+ 연간 일정 추가</button>';
   // ── 2. 업무별 상세 매뉴얼 ──
   h+='<div class="sl2" style="margin:16px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 업무별 상세 매뉴얼 <span style="font-size:11px;color:var(--t3)">'+dept.docs.length+'건</span></div>';
   if(!dept.docs.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 매뉴얼이 없어요.'+(canEd?' 아래 버튼으로 추가하세요.':'')+'</div>';
@@ -7704,6 +7736,55 @@ function manImportApply(){
   _manImp=null;
   renderManuals();
   toast('✓ 월간 업무 '+addM+'건, 상세 매뉴얼 '+addD+'건이 추가됐어요','var(--g)');
+}
+var _manYrAll=false;
+function manYrToggle(){ _manYrAll=!_manYrAll; renderManuals(); }
+// ── 연간 일정 추가/수정/삭제 ──
+function manEditAnnual(dept,id){
+  if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
+  if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
+  var m=_manDB(), it=id?((m[dept].annual||[]).find(function(x){return x.id===id;})||{}):{};
+  var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
+  var mo=parseInt(it.month,10)||(new Date().getMonth()+1);
+  var opts=''; for(var i=1;i<=12;i++) opts+='<option value="'+i+'"'+(i===mo?' selected':'')+'>'+i+'월</option>';
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">'+(id?'연간 일정 수정':'연간 일정 추가')+'</div>'
+    +'<label class="fl">월</label><select class="fi" id="ma-month">'+opts+'</select>'
+    +'<label class="fl">시기 상세 (선택 · 예: 둘째 주, 15일경, 월말)</label><input class="fi" id="ma-when" value="'+dEsc(it.when||'')+'" placeholder="예: 둘째 주">'
+    +'<label class="fl">일정명</label><input class="fi" id="ma-title" value="'+dEsc(it.title||'')+'" placeholder="예: 여름 특강 설명회">'
+    +'<label class="fl">설명 (선택 · 준비할 것)</label><textarea class="fi" id="ma-desc" rows="3" placeholder="무엇을 준비하는지 간단히">'+dEsc(it.desc||'')+'</textarea>'
+    +'<button class="btn" onclick="manSaveAnnual(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
+    +'</div></div>');
+}
+function manSaveAnnual(dept,id){
+  if(!manCanEdit() || !manCanView(dept)) return;
+  var m=_manDB(); if(!Array.isArray(m[dept].annual)) m[dept].annual=[];
+  var month=parseInt((document.getElementById('ma-month')||{}).value,10)||0;
+  var when=((document.getElementById('ma-when')||{}).value||'').trim();
+  var title=((document.getElementById('ma-title')||{}).value||'').trim();
+  var desc=((document.getElementById('ma-desc')||{}).value||'').trim();
+  if(!month||month<1||month>12){ toast('월을 선택해주세요','var(--rd)'); return; }
+  if(!title){ toast('일정명을 입력해주세요','var(--rd)'); return; }
+  var _dl=((MAN_DEPTS.find(function(x){return x.key===dept;})||{}).label||dept);
+  if(id){ var it=m[dept].annual.find(function(x){return x.id===id;});
+    if(it){ var _df=_manDiff([['월',String(it.month||'')+'월',String(month)+'월'],['시기',it.when,when],['일정명',it.title,title],['설명',it.desc,desc]]);
+      it.month=month; it.when=when; it.title=title; it.desc=desc; manLogEdit('연간 일정·'+_dl,'수정',title,_df); } }
+  else{ m[dept].annual.push({id:'ma'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), month:month, when:when, title:title, desc:desc});
+    manLogEdit('연간 일정·'+_dl,'추가',title,_manDiff([['월','',String(month)+'월'],['시기','',when],['설명','',desc]])); }
+  logChange('연간 일정 '+(id?'수정':'추가'), title);
+  saveAll(); var ov=document.getElementById('ov-manedit'); if(ov) ov.remove(); renderManuals(); toast('저장됐어요 ✓','var(--g)');
+}
+function manDelAnnual(dept,id){
+  if(!(ME&&ME.role==='owner')) return;
+  var m=_manDB(); var it=(m[dept].annual||[]).find(function(x){return x.id===id;});
+  if(!confirm('「'+((it&&it.title)||'')+'」 연간 일정을 삭제할까요?')) return;
+  m[dept].annual=(m[dept].annual||[]).filter(function(x){return x.id!==id;});
+  _markGone(id);
+  logChange('연간 일정 삭제', it?it.title:id);
+  manLogEdit('연간 일정','삭제', it?it.title:id, '');
+  saveAll(); renderManuals(); toast('삭제됐어요');
 }
 function manToggleDoc(id){ _manOpenDoc=(_manOpenDoc===id)?null:id; renderManuals(); }
 function manToggleDone(dept,id){
