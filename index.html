@@ -7480,13 +7480,13 @@ function renderManuals(){
   // ── 2. 업무별 상세 매뉴얼 ──
   h+='<div class="sl2" style="margin:16px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 업무별 상세 매뉴얼 <span style="font-size:11px;color:var(--t3)">'+dept.docs.length+'건</span></div>';
   if(!dept.docs.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 매뉴얼이 없어요.'+(canEd?' 아래 버튼으로 추가하세요.':'')+'</div>';
-  dept.docs.forEach(function(doc){
+  _manDocsOrdered(dept).forEach(function(doc){
     var open=(_manOpenDoc===doc.id);
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);margin-bottom:7px;overflow:hidden">'
       +'<div onclick="manToggleDoc(\''+doc.id+'\')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer">'
       +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">'+dEsc(doc.title)+((doc.files||[]).length?' <span style="font-size:10px;color:var(--pu);font-weight:600">📎'+(doc.files||[]).length+'</span>':'')+'</div>'
       +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(doc.upd||doc.date||'')+(doc.by?' · '+dEsc(doc.by):'')+'</div></div>'
-      +(canEd?'<span style="flex-shrink:0;display:flex;gap:2px;margin-right:4px"><button onclick="event.stopPropagation();manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:2px 5px">✎</button>'+(isOw?'<button onclick="event.stopPropagation();manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;padding:2px 5px">🗑</button>':'')+'</span>':'')
+      +(canEd?'<span style="flex-shrink:0;display:flex;gap:2px;margin-right:4px"><button onclick="event.stopPropagation();manDocMove(\''+_manTab+'\',\''+doc.id+'\',-1)" style="font-size:11px;background:none;border:none;color:var(--t2);cursor:pointer;padding:2px 4px">▲</button><button onclick="event.stopPropagation();manDocMove(\''+_manTab+'\',\''+doc.id+'\',1)" style="font-size:11px;background:none;border:none;color:var(--t2);cursor:pointer;padding:2px 4px">▼</button><button onclick="event.stopPropagation();manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:2px 5px">✎</button>'+(isOw?'<button onclick="event.stopPropagation();manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;padding:2px 5px">🗑</button>':'')+'</span>':'')
       +'<span style="font-size:11px;color:var(--t2);font-weight:600;flex-shrink:0">'+(open?'▲ 접기':'▼ 펼치기')+'</span></div>'
       +(open?('<div style="padding:0 12px 11px">'
         +'<div style="font-size:12.5px;color:var(--te);line-height:1.7;white-space:pre-wrap;background:var(--s2);border-radius:9px;padding:11px 13px">'+dEsc(doc.body||'')+'</div>'
@@ -7859,6 +7859,30 @@ function manImportApply(){
 }
 var _manYrAll=false;
 function manYrToggle(){ _manYrAll=!_manYrAll; renderManuals(); }
+// ── 상세 매뉴얼 순서: 기본은 제목 속 숫자 순, ▲▼로 직접 바꾸면 그 순서 유지 ──
+function _manTitleNum(t){ var m=String(t||'').match(/\d{1,3}/); return m?parseInt(m[0],10):null; }
+function _manDocsOrdered(dept){
+  var arr=(dept.docs||[]);
+  if(dept.ordManual) return arr;
+  return arr.slice().map(function(d,i){ return {d:d,i:i}; }).sort(function(a,b){
+    var na=_manTitleNum(a.d.title), nb=_manTitleNum(b.d.title);
+    if(na===null && nb===null) return a.i-b.i;
+    if(na===null) return 1;
+    if(nb===null) return -1;
+    return na===nb ? a.i-b.i : na-nb;
+  }).map(function(x){ return x.d; });
+}
+function manDocMove(dept,id,dir){
+  if(!manCanEdit() || !manCanView(dept)) return;
+  var m=_manDB();
+  if(!m[dept].ordManual){ m[dept].docs=_manDocsOrdered(m[dept]); m[dept].ordManual=1; } // 현재 보이는(숫자순) 순서를 기준으로 시작
+  var arr=m[dept].docs;
+  var i=arr.findIndex(function(x){ return x.id===id; });
+  var j=i+dir;
+  if(i<0 || j<0 || j>=arr.length) return;
+  var t=arr[i]; arr[i]=arr[j]; arr[j]=t;
+  saveAll(); renderManuals();
+}
 // ── 매뉴얼을 그림(PNG)으로 저장해 보거나 공유 ──
 function _imgWrap(ctx, text, maxW){
   var out=[];
@@ -8229,8 +8253,16 @@ function _manDocRenderFiles(){
   el.innerHTML=_manDocFiles.map(function(f,i){
     return '<div style="display:flex;align-items:center;gap:8px;background:var(--s2);border-radius:8px;padding:6px 10px;margin-bottom:4px">'
       +'<span style="flex:1;min-width:0;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.img?'🖼':'📎')+' '+dEsc(f.name)+' <span style="color:var(--t3);font-weight:400">'+(f.size?Math.round(f.size/1024)+'KB':'')+'</span></span>'
+      +'<button onclick="manDocFileMove('+i+',-1)" style="font-size:12px;background:none;border:none;color:var(--t2);cursor:pointer;flex-shrink:0;padding:0 2px">▲</button>'
+      +'<button onclick="manDocFileMove('+i+',1)" style="font-size:12px;background:none;border:none;color:var(--t2);cursor:pointer;flex-shrink:0;padding:0 2px">▼</button>'
       +'<button onclick="manDocFileRm('+i+')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button></div>';
   }).join('');
+}
+function manDocFileMove(i,dir){
+  var j=i+dir;
+  if(i<0 || j<0 || j>=(_manDocFiles||[]).length) return;
+  var t=_manDocFiles[i]; _manDocFiles[i]=_manDocFiles[j]; _manDocFiles[j]=t;
+  _manDocRenderFiles();
 }
 function _manFileDocDelete(fid){
   _auth.token().then(function(tok){ var h=tok?{Authorization:'Bearer '+tok}:{};
