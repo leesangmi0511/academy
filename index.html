@@ -5571,7 +5571,7 @@ function renderAdminListBody() {
            + '<div style="width:32px;height:32px;border-radius:50%;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">'+a.name.slice(0,1)+'</div>'
            + '<div style="flex:1">'
              + '<div style="font-size:14px;font-weight:600">'+a.name+'</div>'
-             + '<div style="font-size:11px;color:var(--t3)">등록일: '+(a.date||'—')+'</div>'
+             + '<div style="font-size:11px;color:var(--t3)">등록일: '+(a.date||'—')+' · 현재 비밀번호: <b style="color:var(--acc)">'+dEsc(a.pw||'—')+'</b>'+(a.pwChanged?' <span style="color:var(--am);font-weight:700">(본인 변경 '+dEsc(a.pwChanged.date||'')+')</span>':'')+'</div>'
            + '</div>'
            + '<button onclick="deleteAdmin('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:18px;padding:4px">✕</button>'
          + '</div>'
@@ -5643,7 +5643,7 @@ function renderStaffListBody() {
            + '<div style="width:32px;height:32px;border-radius:50%;background:var(--gl);color:var(--g);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">'+a.name.slice(0,1)+'</div>'
            + '<div style="flex:1">'
              + '<div style="font-size:14px;font-weight:600">'+a.name+'</div>'
-             + '<div style="font-size:11px;color:var(--t3)">등록일: '+(a.date||'—')+'</div>'
+             + '<div style="font-size:11px;color:var(--t3)">등록일: '+(a.date||'—')+' · 현재 비밀번호: <b style="color:var(--g)">'+dEsc(a.pw||'—')+'</b>'+(a.pwChanged?' <span style="color:var(--am);font-weight:700">(본인 변경 '+dEsc(a.pwChanged.date||'')+')</span>':'')+'</div>'
            + '</div>'
            + '<button onclick="deleteStaff('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:18px;padding:4px">✕</button>'
          + '</div>'
@@ -7982,6 +7982,55 @@ function upgConfirm(name,id){
   try{ logChange('업무 업그레이드 확인', name+' — '+u.title.slice(0,40)+' (점수 반영)'); }catch(e){}
   saveAll(); renderUpgrades(); toast('✅ 확인됐어요 — '+name+' 점수에 가점 반영','var(--g)');
 }
+// ═══ 내 비밀번호 변경 (관리자·행정팀 본인) + 원장 알림 ═══
+function _pwLogAdd(role, name){
+  if(!DB.cfg) DB.cfg={};
+  if(!Array.isArray(DB.cfg.pwLog)) DB.cfg.pwLog=[];
+  DB.cfg.pwLog.push({name:name, role:role, date:today(), ts:Date.now()});
+  if(DB.cfg.pwLog.length>100) DB.cfg.pwLog.splice(0, DB.cfg.pwLog.length-100);
+}
+function pwRecentChanges(days){
+  var lim=Date.now()-(days||7)*86400000;
+  return ((DB.cfg&&DB.cfg.pwLog)||[]).filter(function(x){ return (x.ts||0)>=lim; });
+}
+function openMyPw2(){
+  var rec=null, role=ME&&ME.role;
+  if(role==='admin') rec=(DB.cfg.admins||[]).find(function(a){ return a&&a.name===ME.name; });
+  else if(role==='staff') rec=(DB.cfg.staff||[]).find(function(a){ return a&&a.name===ME.name; });
+  if(!rec){ toast('명단에서 내 정보를 찾을 수 없어요 — 원장님께 문의하세요','var(--rd)'); return; }
+  var ex=document.getElementById('ov-mypw2'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-mypw2" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">🔑 내 비밀번호 변경</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:10px">변경하면 바로 적용되고, 변경 사실과 새 비밀번호는 원장님이 확인할 수 있습니다.</div>'
+    +'<label class="fl">현재 비밀번호</label><input class="fi" type="password" id="mp2-cur">'
+    +'<label class="fl">새 비밀번호 (4자리 이상)</label><input class="fi" type="password" id="mp2-n1">'
+    +'<label class="fl">새 비밀번호 확인</label><input class="fi" type="password" id="mp2-n2">'
+    +'<button class="btn" onclick="saveMyPw2()">변경</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-mypw2\').remove()">취소</button>'
+    +'</div></div>');
+}
+function saveMyPw2(){
+  var role=ME&&ME.role;
+  var list=role==='admin'?(DB.cfg.admins||[]):role==='staff'?(DB.cfg.staff||[]):[];
+  var rec=list.find(function(a){ return a&&a.name===ME.name; });
+  if(!rec) return;
+  var cur=(document.getElementById('mp2-cur')||{}).value||'';
+  var n1=(document.getElementById('mp2-n1')||{}).value||'';
+  var n2=(document.getElementById('mp2-n2')||{}).value||'';
+  if(rec.pw!==cur){ toast('현재 비밀번호가 틀렸어요','var(--rd)'); return; }
+  if(!n1 || n1.length<4){ toast('새 비밀번호는 4자리 이상으로 해주세요','var(--rd)'); return; }
+  if(n1!==n2){ toast('새 비밀번호가 서로 달라요','var(--rd)'); return; }
+  if(n1===cur){ toast('현재 비밀번호와 달라야 해요','var(--rd)'); return; }
+  try{ _fbRotate(role, ME.name, cur, n1); }catch(e){}
+  rec.pw=n1;
+  rec.pwChanged={date:today(), ts:Date.now()};
+  _pwLogAdd(role, ME.name);
+  try{ logChange('비밀번호 본인 변경', ME.name+' ('+(role==='admin'?'관리자':'행정팀')+')'); }catch(e){}
+  saveAll();
+  var m=document.getElementById('ov-mypw2'); if(m) m.remove();
+  toast('🔑 비밀번호가 변경됐어요 — 다음 로그인부터 새 비밀번호를 쓰세요 ✓','var(--g)');
+}
 function renderAdminHome() {
   var S=DB.subj, T=DB.cfg.teachers, ST=DB.stu;
   var urgStu = ST.filter(function(s){ return cSt(s).lv==='urgent'; });
@@ -8001,6 +8050,7 @@ function renderAdminHome() {
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
      + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지 작성</button><button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업무 업그레이드</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button></div>':'')
+     + (ME.role!=='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openMyPw2()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 내 비밀번호 변경</button></div>':'')
      + '<div onclick="togglePledgeFull(\'plg-full-a\',\'plg-arrow-a\')" style="display:flex;justify-content:space-between;align-items:center;background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">📜 관리에 관한 약정 · CCTV 안내'+pledgeStatusBadge()+'</span><span id="plg-arrow-a" style="font-size:11px;color:var(--am);font-weight:600">▼ 펼치기</span></div>'
      + '<div id="plg-full-a" style="display:none">'+pledgeBoxHTML(ME.role)+'</div>'
      + (function(){ var st=manMonthStat(); var td=myTodoOpenCnt(); var wp=wkMyOpenCnt(); return '<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">'+st.ok+'/'+st.tot+'</span>':'')+'</button><button onclick="openMyTodos()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📆 날짜별 할 일'+(td?' <span style="font-weight:700;color:var(--am)">'+td+'</span>':'')+'</button><button onclick="openWkPlan()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗓 주간 계획'+(wp?' <span style="font-weight:700;color:var(--am)">'+wp+'</span>':'')+'</button></div>'; })()
@@ -8010,6 +8060,8 @@ function renderAdminHome() {
          }
          var pend=mtMyPendingFb();
          return (pend.length?'<div onclick="openMeetings()" style="background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--pu)">💬 회의록 피드백 확인 필요 '+pend.length+'건</span><span style="font-size:11px;color:var(--pu)">확인하기 →</span></div>':'')
+           + (function(){ var pc=pwRecentChanges(7); if(!(ME&&ME.role==='owner')||!pc.length) return '';
+               return '<div onclick="openAdminList()" style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer"><span style="font-size:12px;font-weight:700;color:var(--am)">🔑 비밀번호 변경됨: '+pc.slice(-5).map(function(x){ return dEsc(x.name)+'('+(x.date||'').slice(5)+')'; }).join(' · ')+'</span><span style="display:block;font-size:10.5px;color:var(--t3);margin-top:2px">명단에서 새 비밀번호를 확인할 수 있어요 →</span></div>'; })()
            + wbOwnerAlertCardHTML()
            + wbHomeCardHTML();
        })()
@@ -10752,7 +10804,7 @@ function saveMyPw() {
   if(!pw||pw.length<4){st.textContent='4자리 이상으로 입력하세요.';st.style.color='var(--rd)';return;}
   if(pw!==pw2){st.textContent='비밀번호가 일치하지 않아요.';st.style.color='var(--rd)';return;}
   try{ _fbRotate('teacher', ME.name, cur, pw); }catch(e){}
-  DB.cfg.teachers[tIdx].pw=pw;logChange('강사 수정', ME.name+' 비밀번호 변경');saveAll();
+  DB.cfg.teachers[tIdx].pw=pw;DB.cfg.teachers[tIdx].pwChanged={date:today(),ts:Date.now()};_pwLogAdd('teacher', ME.name);logChange('강사 수정', ME.name+' 비밀번호 변경');saveAll();
   document.getElementById('my-cur').value='';document.getElementById('my-pw1').value='';document.getElementById('my-pw2').value='';
   st.textContent='변경됐어요 ✓';st.style.color='var(--g)';toast('비밀번호 변경됐어요 ✓');
 }
