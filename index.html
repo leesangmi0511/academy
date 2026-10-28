@@ -7480,6 +7480,7 @@ function _renderWorkBoard(){
     +'<span style="flex:1;text-align:center;background:var(--gl);color:var(--g);border-radius:8px;padding:7px 0">완료 '+wb.done.length+'건</span>'
     +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--pu);border-radius:8px;padding:7px 0">매뉴얼 '+st.ok+'/'+st.tot+'</span></div>'
     +(function(){
+      if(!(ME&&ME.role==='owner')) return ''; // 처리율·순위는 원장 전용 (팀장 간 비공개)
       var rates=wbAdminRates();
       if(!rates.length) return '';
       var h2='<div class="sl2" style="margin:2px 0 8px"><div class="d8" style="background:var(--pu)"></div>👤 관리자별 할 일 처리율 <span style="font-size:10.5px;color:var(--t3);font-weight:500">회의 기한 + 피드백 기준</span></div>';
