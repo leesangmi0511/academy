@@ -1490,6 +1490,13 @@ function _mergeServerDB(d){
             if(!l){ if(!gone[x.id]){ eL.push(x); emap[x.id]=x; } }
             else if(x.ok && !l.ok){ l.ok=1; l.okBy=x.okBy||''; l.okDate=x.okDate||''; } });
           eL.sort(function(a,b){ return (b.ts||0)-(a.ts||0); }); DB.manuals.editLog=eL.slice(0,150); })();
+        // 수정 의견 병합 (반영/반영 안 함 상태가 대기보다 우선)
+        (function(){ if(!Array.isArray(DB.manuals.suggests)) DB.manuals.suggests=[];
+          var sL=DB.manuals.suggests, sS=(d.manuals.suggests||[]); var smap={}; sL.forEach(function(x){ if(x&&x.id) smap[x.id]=x; });
+          sS.forEach(function(x){ if(!x||!x.id) return; var l=smap[x.id];
+            if(!l){ if(!gone[x.id]){ sL.push(x); smap[x.id]=x; } }
+            else if(l.st==='wait' && x.st && x.st!=='wait'){ l.st=x.st; l.okBy=x.okBy||''; l.okDate=x.okDate||''; } });
+          sL.sort(function(a,b){ return (b.ts||0)-(a.ts||0); }); DB.manuals.suggests=sL.slice(0,120); })();
       }
     }
     if(d.evalHistory){ if(!DB.evalHistory) DB.evalHistory={}; Object.keys(d.evalHistory).forEach(function(ym){ if(!DB.evalHistory[ym]) DB.evalHistory[ym]=d.evalHistory[ym]; }); }
@@ -2273,7 +2280,7 @@ var PERM_FEATS = [
   {k:'f_mttodo',label:'📋 월별 할 일'},
   {k:'f_workboard',label:'📋 업무 현황판'},
   {k:'f_manuals',label:'📖 업무 매뉴얼'},
-  {k:'f_manedit',label:'✏️ 매뉴얼 수정·추가 (원장 보고)'},
+  {k:'f_manedit',label:'✍ 매뉴얼 수정 의견 제출'},
   {k:'f_upgrades',label:'💡 업무 업그레이드'},
   {k:'f_sync',label:'🔄 학원→과제 동기화'},
   {k:'f_import',label:'📥 과제→학원 불러오기'},
@@ -7353,7 +7360,7 @@ function openManuals(){
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manuals" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
     +'<div class="mt2">📖 업무 매뉴얼</div>'
-    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">월마다 꼭 해야 하는 일은 체크로 관리하고, 업무별 상세 매뉴얼은 펼쳐서 확인합니다.'+(ME.role==='owner'?' 관리자가 수정하면 아래 [수정 보고]에 표시됩니다.':(manCanEdit()?' 추가·수정하면 원장님께 자동 보고됩니다.':' 내용 추가·수정이 필요하면 원장님께 요청하세요.'))+'</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">월마다 꼭 해야 하는 일은 체크로 관리하고, 업무별 상세 매뉴얼은 펼쳐서 확인합니다.'+(ME.role==='owner'?' 관리자의 수정 의견은 아래 [✍ 수정 의견]에서 [반영]을 눌러 적용해요.':(_manSuggestable(_manTab)?' 내용은 원장만 직접 바꿔요 — ✍ 버튼으로 수정 의견을 내면 원장님이 반영합니다.':' 내용 추가·수정이 필요하면 원장님께 요청하세요.'))+'</div>'
     +'<div class="rank-tab-row" id="man-tabs"></div>'
     +'<div id="man-body"></div>'
     +'<button class="btn ghost" style="margin-top:12px" onclick="document.getElementById(\'ov-manuals\').remove()">닫기</button>'
@@ -7389,8 +7396,41 @@ function renderManuals(){
     return;
   }
   var canEdHere=canEd;
+  var canSg=_manSuggestable(_manTab);
+  var canAct=canEd||canSg;
+  var edLb=canEd?'수정':'✍ 의견';
   var now=new Date();
   var h='';
+  // ── ✍ 수정 의견 (원장: 반영/반영 안 함) ──
+  if(isOw){
+    var sgPend=(m.suggests||[]).filter(function(x){ return x && x.st==='wait'; });
+    if(sgPend.length){
+      h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--acc)"></div>✍ 수정 의견 <span style="font-size:11px;color:var(--acc);font-weight:700">대기 '+sgPend.length+'건</span></div>';
+      sgPend.forEach(function(sg){
+        var df=''; try{ df=manSugDiff(sg); }catch(_e){}
+        h+='<div style="background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:10px 12px;margin-bottom:6px">'
+          +'<div style="font-size:12.5px;font-weight:700">'+dEsc(sg.who||'')+' · '+dEsc(manSugKindLabel(sg))+(sg.targetId?' 수정':' 추가')+' — '+dEsc((sg.fields&&sg.fields.title)||'')+'</div>'
+          +(df?'<div style="font-size:11px;color:var(--t2);margin-top:4px;white-space:pre-wrap;line-height:1.5;background:var(--s2);border-radius:8px;padding:7px 9px">'+dEsc(df)+'</div>':'')
+          +(sg.note?'<div style="font-size:11px;color:var(--am);margin-top:4px">💬 '+dEsc(sg.note)+'</div>':'')
+          +'<div style="font-size:10px;color:var(--t3);margin-top:3px">'+(sg.date||'')+'</div>'
+          +'<div style="display:flex;gap:8px;margin-top:7px">'
+          +'<button onclick="manSuggestApply(\''+sg.id+'\')" style="flex:1;font-size:12px;background:var(--g);color:#fff;border:none;border-radius:8px;padding:8px;cursor:pointer;font-weight:700">✓ 반영</button>'
+          +'<button onclick="manSuggestReject(\''+sg.id+'\')" style="flex:1;font-size:12px;background:var(--s1);border:1px solid var(--rd);color:var(--rd);border-radius:8px;padding:8px;cursor:pointer;font-weight:700">✕ 반영 안 함</button>'
+          +'</div></div>';
+      });
+    }
+  }
+  // ── 내 수정 의견 현황 (제출자) ──
+  if(canSg){
+    var mine=(m.suggests||[]).filter(function(x){ return x && x.who===ME.name; }).slice(0,5);
+    if(mine.length){
+      h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--acc)"></div>✍ 내 수정 의견</div>';
+      mine.forEach(function(sg){
+        var st=sg.st==='ok'?'<span style="color:var(--g);font-weight:700">반영됨'+(sg.okDate?(' '+sg.okDate):'')+'</span>':sg.st==='no'?'<span style="color:var(--rd);font-weight:700">반영 안 함</span>':'<span style="color:var(--am);font-weight:700">대기 중</span>';
+        h+='<div style="font-size:11.5px;color:var(--t2);padding:5px 2px;border-bottom:1px dashed var(--s3)">'+(sg.date||'')+' · '+dEsc(manSugKindLabel(sg))+' 「'+dEsc(_manCut((sg.fields&&sg.fields.title)||''))+'」 — '+st+'</div>';
+      });
+    }
+  }
   // ── 수정 보고 (원장 확인) ──
   if(isOw){
     var pend=manPendingEdits(), elog=(m.editLog||[]);
@@ -7423,10 +7463,10 @@ function renderManuals(){
         +'<div style="font-size:13px;font-weight:700">'+(b.freq?'<span style="font-size:10px;background:var(--gl);color:var(--g);border-radius:6px;padding:2px 7px;margin-right:6px;display:inline-block">'+dEsc(b.freq)+'</span>':'')+dEsc(b.title)+'</div>'
         +(b.desc?'<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.5;white-space:pre-wrap">'+dEsc(b.desc)+'</div>':'')
         +'</div>'
-        +(canEd?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditBasic(\''+b.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">수정</button>'+(isOw?'<button onclick="manDelBasic(\''+b.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
+        +(canAct?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditBasic(\''+b.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">'+edLb+'</button>'+(isOw?'<button onclick="manDelBasic(\''+b.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
         +'</div></div>';
     });
-    if(canEd) h+='<button class="btn ghost" style="margin-bottom:4px;padding:9px;font-size:12.5px" onclick="manEditBasic(null)">+ 기본 팀장 업무 추가</button>';
+    if(canAct) h+='<button class="btn ghost" style="margin-bottom:4px;padding:9px;font-size:12.5px" onclick="manEditBasic(null)">'+(canEd?'+ 기본 팀장 업무 추가':'✍ 기본 업무 추가 의견')+'</button>';
   }
   h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--acc)"></div>📅 '+now.getFullYear()+'년 '+(now.getMonth()+1)+'월 필수 업무'
     +(dept.monthly.length?' <span style="font-size:11px;color:'+(okN===dept.monthly.length?'var(--g)':'var(--am)')+';font-weight:700">'+okN+'/'+dept.monthly.length+' 완료</span>':'')+'</div>';
@@ -7441,11 +7481,11 @@ function renderManuals(){
       +(it.desc?'<div style="font-size:11.5px;color:var(--t2);margin-top:3px;line-height:1.5;white-space:pre-wrap">'+dEsc(it.desc)+'</div>':'')
       +(dn?'<div style="font-size:10.5px;color:var(--g);margin-top:3px">✓ '+dEsc(dn.by||'')+' · '+(dn.date||'')+'</div>':'')
       +'</div>'
-      +(canEd?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">수정</button>'+(isOw?'<button onclick="manDelMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
+      +(canAct?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">'+edLb+'</button>'+(isOw?'<button onclick="manDelMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
       +'</div></div>';
   });
-  if(canEd) h+='<div style="display:flex;gap:6px;margin-bottom:4px"><button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0" onclick="manEditMonthly(\''+_manTab+'\',null)">+ 월간 필수 업무 추가</button>'
-    +'<button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'monthly\')">📂 파일·캡쳐 올리기</button></div>';
+  if(canAct) h+='<div style="display:flex;gap:6px;margin-bottom:4px"><button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0" onclick="manEditMonthly(\''+_manTab+'\',null)">'+(canEd?'+ 월간 필수 업무 추가':'✍ 월간 업무 추가 의견')+'</button>'
+    +(canEd?'<button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'monthly\')">📂 파일·캡쳐 올리기</button>':'')+'</div>';
   // ── 1-2. 연간 일정 (월별 그룹 · 이번 달 강조) ──
   var ann=dept.annual||[];
   var curMo=now.getMonth()+1;
@@ -7468,15 +7508,15 @@ function renderManuals(){
           +'<div style="font-size:12.5px;font-weight:700">'+(a.when?'<span style="font-size:10px;background:var(--s2);color:var(--t2);border-radius:6px;padding:2px 7px;margin-right:6px;display:inline-block">'+dEsc(a.when)+'</span>':'')+dEsc(a.title)+'</div>'
           +(a.desc?'<div style="font-size:11px;color:var(--t2);margin-top:2px;line-height:1.5;white-space:pre-wrap">'+dEsc(a.desc)+'</div>':'')
           +'</div>'
-          +(canEd?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditAnnual(\''+_manTab+'\',\''+a.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">수정</button>'+(isOw?'<button onclick="manDelAnnual(\''+_manTab+'\',\''+a.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
+          +(canAct?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditAnnual(\''+_manTab+'\',\''+a.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">'+edLb+'</button>'+(isOw?'<button onclick="manDelAnnual(\''+_manTab+'\',\''+a.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
           +'</div>';
       });
       h+='</div>';
     });
     if(!shown) h+='<div class="empty" style="font-size:12px;padding:6px 0">이번 달('+curMo+'월) 일정은 없어요 — [연간 전체 보기]로 확인하세요</div>';
   }
-  if(canEd) h+='<div style="display:flex;gap:6px;margin-bottom:4px"><button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0" onclick="manEditAnnual(\''+_manTab+'\',null)">+ 연간 일정 추가</button>'
-    +'<button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0;border-color:var(--am);color:var(--am)" onclick="manPickFile(\'annual\')">📂 파일·캡쳐 올리기</button></div>';
+  if(canAct) h+='<div style="display:flex;gap:6px;margin-bottom:4px"><button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0" onclick="manEditAnnual(\''+_manTab+'\',null)">'+(canEd?'+ 연간 일정 추가':'✍ 연간 일정 추가 의견')+'</button>'
+    +(canEd?'<button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0;border-color:var(--am);color:var(--am)" onclick="manPickFile(\'annual\')">📂 파일·캡쳐 올리기</button>':'')+'</div>';
   // ── 2. 업무별 상세 매뉴얼 ──
   h+='<div class="sl2" style="margin:16px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 업무별 상세 매뉴얼 <span style="font-size:11px;color:var(--t3)">'+dept.docs.length+'건</span></div>';
   if(!dept.docs.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 매뉴얼이 없어요.'+(canEd?' 아래 버튼으로 추가하세요.':'')+'</div>';
@@ -7486,7 +7526,7 @@ function renderManuals(){
       +'<div onclick="manToggleDoc(\''+doc.id+'\')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer">'
       +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">'+dEsc(doc.title)+((doc.files||[]).length?' <span style="font-size:10px;color:var(--pu);font-weight:600">📎'+(doc.files||[]).length+'</span>':'')+'</div>'
       +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(doc.upd||doc.date||'')+(doc.by?' · '+dEsc(doc.by):'')+'</div></div>'
-      +(canEd?'<span style="flex-shrink:0;display:flex;gap:2px;margin-right:4px"><button onclick="event.stopPropagation();manDocMove(\''+_manTab+'\',\''+doc.id+'\',-1)" style="font-size:11px;background:none;border:none;color:var(--t2);cursor:pointer;padding:2px 4px">▲</button><button onclick="event.stopPropagation();manDocMove(\''+_manTab+'\',\''+doc.id+'\',1)" style="font-size:11px;background:none;border:none;color:var(--t2);cursor:pointer;padding:2px 4px">▼</button><button onclick="event.stopPropagation();manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:2px 5px">✎</button>'+(isOw?'<button onclick="event.stopPropagation();manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;padding:2px 5px">🗑</button>':'')+'</span>':'')
+      +(canAct?'<span style="flex-shrink:0;display:flex;gap:2px;margin-right:4px">'+(canEd?'<button onclick="event.stopPropagation();manDocMove(\''+_manTab+'\',\''+doc.id+'\',-1)" style="font-size:11px;background:none;border:none;color:var(--t2);cursor:pointer;padding:2px 4px">▲</button><button onclick="event.stopPropagation();manDocMove(\''+_manTab+'\',\''+doc.id+'\',1)" style="font-size:11px;background:none;border:none;color:var(--t2);cursor:pointer;padding:2px 4px">▼</button>':'')+'<button onclick="event.stopPropagation();manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:2px 5px">'+(canEd?'✎':'✍')+'</button>'+(isOw?'<button onclick="event.stopPropagation();manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;padding:2px 5px">🗑</button>':'')+'</span>':'')
       +'<span style="font-size:11px;color:var(--t2);font-weight:600;flex-shrink:0">'+(open?'▲ 접기':'▼ 펼치기')+'</span></div>'
       +(open?('<div style="padding:0 12px 11px">'
         +'<div style="font-size:12.5px;color:var(--te);line-height:1.7;white-space:pre-wrap;background:var(--s2);border-radius:9px;padding:11px 13px">'+dEsc(doc.body||'')+'</div>'
@@ -7498,11 +7538,12 @@ function renderManuals(){
             return '<button onclick="manFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11px;background:var(--s2);border:1px solid var(--s3);border-radius:7px;padding:5px 10px;margin:2px 4px 0 0;cursor:pointer;color:var(--acc);font-weight:600">📎 '+dEsc(f.name)+'</button>';
           }).join('')+'</div>'):'')
         +'<button onclick="manExportImage(\''+doc.id+'\')" style="width:100%;margin-top:8px;font-size:11.5px;background:var(--s1);border:1px solid var(--g);color:var(--g);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🖼 이 매뉴얼을 그림으로 저장</button>'
-        +(canEd?'<div style="display:flex;gap:8px;margin-top:8px"><button onclick="manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--acc);color:var(--acc);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">✎ 수정</button>'+(isOw?'<button onclick="manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--rd);color:var(--rd);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🗑 삭제</button>':'')+'</div>':'')
+        +(canAct?'<div style="display:flex;gap:8px;margin-top:8px"><button onclick="manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--acc);color:var(--acc);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">'+(canEd?'✎ 수정':'✍ 수정 의견')+'</button>'+(isOw?'<button onclick="manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--rd);color:var(--rd);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🗑 삭제</button>':'')+'</div>':'')
         +'</div>'):'')
       +'</div>';
   });
-  if(canEd) h+='<button class="btn ghost" style="padding:9px;font-size:12.5px" onclick="manEditDoc(\''+_manTab+'\',null)">+ 상세 매뉴얼 추가</button>'
+  if(canAct) h+='<button class="btn ghost" style="padding:9px;font-size:12.5px" onclick="manEditDoc(\''+_manTab+'\',null)">'+(canEd?'+ 상세 매뉴얼 추가':'✍ 상세 매뉴얼 추가 의견')+'</button>';
+  if(canEd) h+=''
     +'<input type="file" id="man-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif" onchange="manFilePick(this)">'
     +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--pu);color:var(--pu)" onclick="manPickFile(\'docs\')">📂 파일·캡쳐 올리기 → 상세 매뉴얼로</button>'
     +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'all\')">📂 파일·캡쳐 올리기 → 자동 분류 (월간+상세)</button>'
@@ -7859,6 +7900,79 @@ function manImportApply(){
 }
 var _manYrAll=false;
 function manYrToggle(){ _manYrAll=!_manYrAll; renderManuals(); }
+// ── ✍ 수정 의견: 관리자·행정팀 제출 → 원장이 [반영] ──
+function manSubmitSuggest(kind,dept,targetId,fields){
+  if(!_manSuggestable(dept)){ toast('수정 의견 권한이 없어요','var(--rd)'); return; }
+  var m=_manDB(); if(!Array.isArray(m.suggests)) m.suggests=[];
+  var note=((document.getElementById('ms-note')||{}).value||'').trim();
+  m.suggests.unshift({id:'ms'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), ts:Date.now(), date:today(), who:(ME?ME.name:''), role:(ME?ME.role:''), dept:dept, kind:kind, targetId:targetId||null, fields:fields||{}, note:note, st:'wait'});
+  m.suggests=m.suggests.slice(0,120);
+  try{ logChange('매뉴얼 수정 의견', (fields&&fields.title)||kind); }catch(_e){}
+  saveAll();
+  var ov=document.getElementById('ov-manedit'); if(ov) ov.remove();
+  _manDocFiles=[]; _manDocRemoved=[];
+  renderManuals();
+  toast('✍ 수정 의견이 제출됐어요 — 원장님이 확인 후 반영합니다','var(--g)');
+}
+function _manSugTarget(s){
+  var m=_manDB();
+  if(s.kind==='basic') return {arr:m.basics, it:(s.targetId?m.basics.find(function(x){return x.id===s.targetId;}):null)};
+  var dep=m[s.dept]; if(!dep) return null;
+  if(s.kind==='monthly') return {arr:dep.monthly, it:(s.targetId?dep.monthly.find(function(x){return x.id===s.targetId;}):null)};
+  if(s.kind==='annual'){ if(!Array.isArray(dep.annual)) dep.annual=[]; return {arr:dep.annual, it:(s.targetId?dep.annual.find(function(x){return x.id===s.targetId;}):null)}; }
+  if(s.kind==='doc') return {arr:dep.docs, it:(s.targetId?dep.docs.find(function(x){return x.id===s.targetId;}):null)};
+  return null;
+}
+function manSugKindLabel(s){
+  var dl=((MAN_DEPTS.find(function(x){return x.key===s.dept;})||{}).label||'');
+  var k=s.kind==='basic'?'기본 업무':s.kind==='monthly'?'월간 업무':s.kind==='annual'?'연간 일정':'상세 매뉴얼';
+  return s.kind==='basic'?k:(k+'·'+dl);
+}
+function manSugDiff(s){
+  var t=_manSugTarget(s), it=(t&&t.it)||{}, f=s.fields||{};
+  if(s.kind==='basic') return _manDiff([['주기',it.freq,f.freq],['업무명',it.title,f.title],['설명',it.desc,f.desc]]);
+  if(s.kind==='monthly') return _manDiff([['시기',it.when,f.when],['업무명',it.title,f.title],['설명',it.desc,f.desc]]);
+  if(s.kind==='annual') return _manDiff([['월',(it.month?it.month+'월':''),(f.month?f.month+'월':'')],['시기',it.when,f.when],['일정명',it.title,f.title],['설명',it.desc,f.desc]]);
+  var ofn=((it.files)||[]).map(function(x){return x.name;}).join(', ');
+  var nfn=((f.files)||[]).map(function(x){return x.name;}).join(', ');
+  return _manDiff([['제목',it.title,f.title],['내용',it.body,f.body],['첨부',ofn,nfn]]);
+}
+function manSuggestApply(id){
+  if(!(ME&&ME.role==='owner')) return;
+  var m=_manDB(); var sgt=(m.suggests||[]).find(function(x){return x.id===id;});
+  if(!sgt||sgt.st!=='wait') return;
+  var diff=''; try{ diff=manSugDiff(sgt); }catch(_e){}
+  var t=_manSugTarget(sgt); if(!t){ toast('반영할 수 없는 의견이에요','var(--rd)'); return; }
+  var f=sgt.fields||{};
+  if(t.it){
+    if(sgt.kind==='basic'){ t.it.freq=f.freq||''; t.it.title=f.title||t.it.title; t.it.desc=f.desc||''; }
+    else if(sgt.kind==='monthly'){ t.it.when=f.when||''; t.it.title=f.title||t.it.title; t.it.desc=f.desc||''; }
+    else if(sgt.kind==='annual'){ t.it.month=parseInt(f.month,10)||t.it.month; t.it.when=f.when||''; t.it.title=f.title||t.it.title; t.it.desc=f.desc||''; }
+    else{ t.it.title=f.title||t.it.title; if(f.body!==undefined) t.it.body=f.body; if(Array.isArray(f.files)) t.it.files=f.files; t.it.upd=today();
+      (f.removed||[]).forEach(function(fid){ _manFileDocDelete(fid); delete _manFileCache[fid]; }); }
+  } else {
+    var nid=(sgt.kind==='basic'?'bs':sgt.kind==='monthly'?'mm':sgt.kind==='annual'?'ma':'md')+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    if(sgt.kind==='basic') t.arr.push({id:nid, freq:f.freq||'', title:f.title||'', desc:f.desc||''});
+    else if(sgt.kind==='monthly') t.arr.push({id:nid, when:f.when||'', title:f.title||'', desc:f.desc||''});
+    else if(sgt.kind==='annual') t.arr.push({id:nid, month:parseInt(f.month,10)||1, when:f.when||'', title:f.title||'', desc:f.desc||''});
+    else t.arr.push({id:nid, title:f.title||'', body:f.body||'', files:(Array.isArray(f.files)?f.files:[]), by:sgt.who||'', date:today(), upd:today()});
+  }
+  sgt.st='ok'; sgt.okBy=(ME.name||'원장'); sgt.okDate=today();
+  manLogEdit(manSugKindLabel(sgt),'의견 반영 — '+(sgt.who||''), (f.title||''), diff);
+  try{ logChange('매뉴얼 의견 반영', f.title||''); }catch(_e){}
+  saveAll(); renderManuals(); toast('✓ 반영됐어요','var(--g)');
+}
+function manSuggestReject(id){
+  if(!(ME&&ME.role==='owner')) return;
+  var m=_manDB(); var sgt=(m.suggests||[]).find(function(x){return x.id===id;});
+  if(!sgt||sgt.st!=='wait') return;
+  if(sgt.kind==='doc'){ // 의견과 함께 새로 올라온 첨부는 정리
+    var t=_manSugTarget(sgt); var cur=((t&&t.it&&t.it.files)||[]).map(function(x){return x.fid;});
+    ((sgt.fields&&sgt.fields.files)||[]).forEach(function(fl){ if(cur.indexOf(fl.fid)<0){ _manFileDocDelete(fl.fid); delete _manFileCache[fl.fid]; } });
+  }
+  sgt.st='no'; sgt.okBy=(ME.name||'원장'); sgt.okDate=today();
+  saveAll(); renderManuals(); toast('반영하지 않음으로 처리했어요');
+}
 // ── 상세 매뉴얼 순서: 기본은 제목 속 숫자 순, ▲▼로 직접 바꾸면 그 순서 유지 ──
 function _manTitleNum(t){ var m=String(t||'').match(/\d{1,3}/); return m?parseInt(m[0],10):null; }
 function _manDocsOrdered(dept){
@@ -8003,25 +8117,27 @@ function _manImgShow(url, fname){
 }
 // ── 연간 일정 추가/수정/삭제 ──
 function manEditAnnual(dept,id){
-  if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
-  if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
+  if(!manCanEdit() && !_manSuggestable(dept)){ toast('수정 의견 권한이 없어요','var(--rd)'); return; }
+  var sg=!manCanEdit();
   var m=_manDB(), it=id?((m[dept].annual||[]).find(function(x){return x.id===id;})||{}):{};
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   var mo=parseInt(it.month,10)||(new Date().getMonth()+1);
   var opts=''; for(var i=1;i<=12;i++) opts+='<option value="'+i+'"'+(i===mo?' selected':'')+'>'+i+'월</option>';
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
-    +'<div class="mt2">'+(id?'연간 일정 수정':'연간 일정 추가')+'</div>'
+    +'<div class="mt2">'+(sg?(id?'✍ 연간 일정 수정 의견':'✍ 연간 일정 추가 의견'):(id?'연간 일정 수정':'연간 일정 추가'))+'</div>'
+    +(sg?'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">바꾸고 싶은 내용으로 고쳐서 제출하면 원장님이 확인 후 반영해요.</div>':'')
     +'<label class="fl">월</label><select class="fi" id="ma-month">'+opts+'</select>'
     +'<label class="fl">시기 상세 (선택 · 예: 둘째 주, 15일경, 월말)</label><input class="fi" id="ma-when" value="'+dEsc(it.when||'')+'" placeholder="예: 둘째 주">'
     +'<label class="fl">일정명</label><input class="fi" id="ma-title" value="'+dEsc(it.title||'')+'" placeholder="예: 여름 특강 설명회">'
     +'<label class="fl">설명 (선택 · 준비할 것)</label><textarea class="fi" id="ma-desc" rows="3" placeholder="무엇을 준비하는지 간단히">'+dEsc(it.desc||'')+'</textarea>'
-    +'<button class="btn" onclick="manSaveAnnual(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +(sg?'<label class="fl">의견·사유 (선택)</label><textarea class="fi" id="ms-note" rows="2" placeholder="왜 바꾸면 좋은지 간단히"></textarea>':'')
+    +'<button class="btn" onclick="manSaveAnnual(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">'+(sg?'✍ 의견 제출':'저장')+'</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
     +'</div></div>');
 }
 function manSaveAnnual(dept,id){
-  if(!manCanEdit() || !manCanView(dept)) return;
+  if(!manCanEdit() && !_manSuggestable(dept)) return;
   var m=_manDB(); if(!Array.isArray(m[dept].annual)) m[dept].annual=[];
   var month=parseInt((document.getElementById('ma-month')||{}).value,10)||0;
   var when=((document.getElementById('ma-when')||{}).value||'').trim();
@@ -8029,6 +8145,7 @@ function manSaveAnnual(dept,id){
   var desc=((document.getElementById('ma-desc')||{}).value||'').trim();
   if(!month||month<1||month>12){ toast('월을 선택해주세요','var(--rd)'); return; }
   if(!title){ toast('일정명을 입력해주세요','var(--rd)'); return; }
+  if(!manCanEdit()){ manSubmitSuggest('annual',dept,id,{month:month,when:when,title:title,desc:desc}); return; }
   var _dl=((MAN_DEPTS.find(function(x){return x.key===dept;})||{}).label||dept);
   if(id){ var it=m[dept].annual.find(function(x){return x.id===id;});
     if(it){ var _df=_manDiff([['월',String(it.month||'')+'월',String(month)+'월'],['시기',it.when,when],['일정명',it.title,title],['설명',it.desc,desc]]);
@@ -8063,7 +8180,11 @@ function manToggleDone(dept,id){
   saveAll(); renderManuals();
 }
 // ── 매뉴얼 수정 권한(관리자·행정팀 가능) + 수정 보고(원장 확인) ──
-function manCanEdit(){ if(!ME) return false; if(ME.role==='owner') return true; return (ME.role==='admin'||ME.role==='staff') && canFeat('manedit'); }
+function manCanEdit(){ return !!(ME && ME.role==='owner'); } // 내용 직접 수정은 원장만
+function _manSuggestable(dept){ // 관리자·행정팀은 '수정 의견' 제출 (원장이 반영)
+  if(!ME || ME.role==='owner') return false;
+  return (ME.role==='admin'||ME.role==='staff') && canFeat('manedit') && manCanView(dept);
+}
 // ── 매뉴얼 부서별 열람 권한 (기본: 교무실=관리자, 행정실=행정팀 · 원장이 권한 관리에서 변경) ──
 function manCanView(dept){
   if(!ME) return false;
@@ -8095,27 +8216,30 @@ var _manLogOpen=false;
 function manToggleLog(){ _manLogOpen=!_manLogOpen; renderManuals(); }
 // ── 기본 팀장 업무 추가/수정/삭제 ──
 function manEditBasic(id){
-  if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
-  if(!manCanView('gyomu')){ toast('교무실 매뉴얼 열람 권한이 없어요','var(--rd)'); return; }
+  if(!manCanEdit() && !_manSuggestable('gyomu')){ toast('수정 의견 권한이 없어요','var(--rd)'); return; }
+  var sg=!manCanEdit();
   var m=_manDB(), it=id?(m.basics.find(function(x){return x.id===id;})||{}):{};
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
-    +'<div class="mt2">'+(id?'기본 팀장 업무 수정':'기본 팀장 업무 추가')+'</div>'
+    +'<div class="mt2">'+(sg?(id?'✍ 기본 업무 수정 의견':'✍ 기본 업무 추가 의견'):(id?'기본 팀장 업무 수정':'기본 팀장 업무 추가'))+'</div>'
+    +(sg?'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">바꾸고 싶은 내용으로 고쳐서 제출하면 원장님이 확인 후 반영해요.</div>':'')
     +'<label class="fl">주기 (예: 매일, 주 1회, 상시)</label><input class="fi" id="mb-freq" value="'+dEsc(it.freq||'')+'" placeholder="예: 매일">'
     +'<label class="fl">업무명</label><input class="fi" id="mb-title" value="'+dEsc(it.title||'')+'" placeholder="예: 진도 추적">'
     +'<label class="fl">설명 (방법·기준)</label><textarea class="fi" id="mb-desc" rows="4" placeholder="어떻게 수행하는지">'+dEsc(it.desc||'')+'</textarea>'
-    +'<button class="btn" onclick="manSaveBasic('+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +(sg?'<label class="fl">의견·사유 (선택)</label><textarea class="fi" id="ms-note" rows="2" placeholder="왜 바꾸면 좋은지 간단히"></textarea>':'')
+    +'<button class="btn" onclick="manSaveBasic('+(id?('\''+id+'\''):'null')+')">'+(sg?'✍ 의견 제출':'저장')+'</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
     +'</div></div>');
 }
 function manSaveBasic(id){
-  if(!manCanEdit() || !manCanView('gyomu')) return;
+  if(!manCanEdit() && !_manSuggestable('gyomu')) return;
   var m=_manDB();
   var freq=((document.getElementById('mb-freq')||{}).value||'').trim();
   var title=((document.getElementById('mb-title')||{}).value||'').trim();
   var desc=((document.getElementById('mb-desc')||{}).value||'').trim();
   if(!title){ toast('업무명을 입력해주세요','var(--rd)'); return; }
+  if(!manCanEdit()){ manSubmitSuggest('basic','gyomu',id,{freq:freq,title:title,desc:desc}); return; }
   if(id){ var it=m.basics.find(function(x){return x.id===id;}); if(it){ var _df=_manDiff([['주기',it.freq,freq],['업무명',it.title,title],['설명',it.desc,desc]]); it.freq=freq; it.title=title; it.desc=desc; manLogEdit('기본 업무','수정',title,_df); } }
   else{ m.basics.push({id:'bs'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), freq:freq, title:title, desc:desc}); manLogEdit('기본 업무','추가',title,_manDiff([['주기','',freq],['설명','',desc]])); }
   logChange('기본 팀장 업무 '+(id?'수정':'추가'), title);
@@ -8133,27 +8257,30 @@ function manDelBasic(id){
 }
 // ── 월간 업무 추가/수정 ──
 function manEditMonthly(dept,id){
-  if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
-  if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
+  if(!manCanEdit() && !_manSuggestable(dept)){ toast('수정 의견 권한이 없어요','var(--rd)'); return; }
+  var sg=!manCanEdit();
   var m=_manDB(), it=id?(m[dept].monthly.find(function(x){return x.id===id;})||{}):{};
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
-    +'<div class="mt2">'+(id?'월간 업무 수정':'월간 필수 업무 추가')+'</div>'
+    +'<div class="mt2">'+(sg?(id?'✍ 월간 업무 수정 의견':'✍ 월간 업무 추가 의견'):(id?'월간 업무 수정':'월간 필수 업무 추가'))+'</div>'
+    +(sg?'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">바꾸고 싶은 내용으로 고쳐서 제출하면 원장님이 확인 후 반영해요.</div>':'')
     +'<label class="fl">시기 (예: 1일, 첫 근무일, 매월 15일, 월말)</label><input class="fi" id="mm-when" value="'+dEsc(it.when||'')+'" placeholder="예: 첫 근무일">'
     +'<label class="fl">업무명</label><input class="fi" id="mm-title" value="'+dEsc(it.title||'')+'" placeholder="예: 급여명세서 발송">'
     +'<label class="fl">설명 (선택 · 처리 방법 요약)</label><textarea class="fi" id="mm-desc" rows="3" placeholder="어떻게 처리하는지 간단히">'+dEsc(it.desc||'')+'</textarea>'
-    +'<button class="btn" onclick="manSaveMonthly(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +(sg?'<label class="fl">의견·사유 (선택)</label><textarea class="fi" id="ms-note" rows="2" placeholder="왜 바꾸면 좋은지 간단히"></textarea>':'')
+    +'<button class="btn" onclick="manSaveMonthly(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">'+(sg?'✍ 의견 제출':'저장')+'</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
     +'</div></div>');
 }
 function manSaveMonthly(dept,id){
-  if(!manCanEdit() || !manCanView(dept)) return;
+  if(!manCanEdit() && !_manSuggestable(dept)) return;
   var m=_manDB();
   var when=(document.getElementById('mm-when')||{}).value.trim();
   var title=(document.getElementById('mm-title')||{}).value.trim();
   var desc=(document.getElementById('mm-desc')||{}).value.trim();
   if(!title){ toast('업무명을 입력해주세요','var(--rd)'); return; }
+  if(!manCanEdit()){ manSubmitSuggest('monthly',dept,id,{when:when,title:title,desc:desc}); return; }
   var _dl=((MAN_DEPTS.find(function(x){return x.key===dept;})||{}).label||dept);
   if(id){ var it=m[dept].monthly.find(function(x){return x.id===id;}); if(it){ var _df=_manDiff([['시기',it.when,when],['업무명',it.title,title],['설명',it.desc,desc]]); it.when=when; it.title=title; it.desc=desc; manLogEdit('월간 업무·'+_dl,'수정',title,_df); } }
   else{ m[dept].monthly.push({id:'mm'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), when:when, title:title, desc:desc}); manLogEdit('월간 업무·'+_dl,'추가',title,_manDiff([['시기','',when],['설명','',desc]])); }
@@ -8172,15 +8299,16 @@ function manDelMonthly(dept,id){
 }
 // ── 상세 매뉴얼 추가/수정 ──
 function manEditDoc(dept,id){
-  if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
-  if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
+  if(!manCanEdit() && !_manSuggestable(dept)){ toast('수정 의견 권한이 없어요','var(--rd)'); return; }
+  var sg=!manCanEdit();
   var m=_manDB(), it=id?(m[dept].docs.find(function(x){return x.id===id;})||{}):{};
   _manDocFiles=(it.files||[]).map(function(f){ return {fid:f.fid, name:f.name, size:f.size||0, img:f.img?1:0}; });
   _manDocRemoved=[];
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:85vh;overflow-y:auto"><div class="mh"></div>'
-    +'<div class="mt2">'+(id?'매뉴얼 수정':'상세 매뉴얼 추가')+'</div>'
+    +'<div class="mt2">'+(sg?(id?'✍ 매뉴얼 수정 의견':'✍ 매뉴얼 추가 의견'):(id?'매뉴얼 수정':'상세 매뉴얼 추가'))+'</div>'
+    +(sg?'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">바꾸고 싶은 내용으로 고쳐서 제출하면 원장님이 확인 후 반영해요. 캡쳐 첨부도 함께 제출돼요.</div>':'')
     +'<label class="fl">업무 제목</label><input class="fi" id="md-title" value="'+dEsc(it.title||'')+'" placeholder="예: 신규생 등록 처리 절차">'
     +'<label class="fl">내용 (순서·방법을 자유롭게 · 줄바꿈 그대로 표시됩니다)</label>'
     +'<textarea class="fi" id="md-body" rows="12" placeholder="1. 먼저 …\n2. 다음으로 …\n※ 주의: …">'+dEsc(it.body||'')+'</textarea>'
@@ -8190,7 +8318,8 @@ function manEditDoc(dept,id){
     +'<div id="md-files"></div>'
     +'<input type="file" id="md-att" multiple style="display:none" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.pdf,.hwpx,.docx,.xlsx,.txt" onchange="manDocFilePick(this)">'
     +'<button class="btn ghost" style="font-size:12px;padding:8px;margin-bottom:2px;border-color:var(--pu);color:var(--pu)" onclick="document.getElementById(\'md-att\').click()">📎 파일 첨부 (그림은 자동 축소 · 여러 개 가능)</button>'
-    +'<button class="btn" onclick="manSaveDoc(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
+    +(sg?'<label class="fl">의견·사유 (선택)</label><textarea class="fi" id="ms-note" rows="2" placeholder="왜 바꾸면 좋은지 간단히"></textarea>':'')
+    +'<button class="btn" onclick="manSaveDoc(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">'+(sg?'✍ 의견 제출':'저장')+'</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
     +'</div></div>');
   _manDocRenderFiles();
@@ -8324,12 +8453,18 @@ function manDocFileFill(inp){
   }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
 }
 function manSaveDoc(dept,id){
-  if(!manCanEdit() || !manCanView(dept)) return;
+  if(!manCanEdit() && !_manSuggestable(dept)) return;
   var m=_manDB();
   var title=(document.getElementById('md-title')||{}).value.trim();
   var body=(document.getElementById('md-body')||{}).value;
   if(!title){ toast('업무 제목을 입력해주세요','var(--rd)'); return; }
   if(!body.trim()){ toast('내용을 입력해주세요','var(--rd)'); return; }
+  if(!manCanEdit()){
+    manSubmitSuggest('doc',dept,id,{title:title, body:body,
+      files:(_manDocFiles||[]).map(function(f){ return {fid:f.fid, name:f.name, size:f.size||0, img:f.img?1:0}; }),
+      removed:(_manDocRemoved||[]).slice()});
+    return;
+  }
   var _dl=((MAN_DEPTS.find(function(x){return x.key===dept;})||{}).label||dept);
   var _nf=(_manDocFiles||[]).map(function(f){ return {fid:f.fid, name:f.name, size:f.size||0, img:f.img?1:0}; });
   var _nfn=_nf.map(function(f){ return f.name; }).join(', ');
@@ -8834,6 +8969,11 @@ function wbOwnerAlerts(){
   try{
     var _pe=((DB.manuals||{}).editLog||[]).filter(function(e){ return e && !e.ok; });
     if(_pe.length) alerts.push({sev:'warn', text:'매뉴얼 수정 보고 '+_pe.length+'건 — 확인 필요', info:_pe.slice(0,3).map(function(e){ return (e.who||'')+': '+(e.title||''); }).join(' · '), src:'📖 업무 매뉴얼'});
+  }catch(e){}
+  // 4-5) 매뉴얼 수정 의견 대기
+  try{
+    var _ps=((DB.manuals||{}).suggests||[]).filter(function(x){ return x && x.st==='wait'; });
+    if(_ps.length) alerts.push({sev:'warn', text:'매뉴얼 수정 의견 '+_ps.length+'건 — 반영 여부 결정 필요', info:_ps.slice(0,3).map(function(x){ return (x.who||'')+': '+((x.fields&&x.fields.title)||''); }).join(' · '), src:'📖 업무 매뉴얼'});
   }catch(e){}
   alerts.sort(function(a,b){ return (a.sev==='late'?0:1)-(b.sev==='late'?0:1); });
   return alerts;
