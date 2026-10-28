@@ -7484,12 +7484,19 @@ function renderManuals(){
     var open=(_manOpenDoc===doc.id);
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);margin-bottom:7px;overflow:hidden">'
       +'<div onclick="manToggleDoc(\''+doc.id+'\')" style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;cursor:pointer">'
-      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">'+dEsc(doc.title)+'</div>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">'+dEsc(doc.title)+((doc.files||[]).length?' <span style="font-size:10px;color:var(--pu);font-weight:600">📎'+(doc.files||[]).length+'</span>':'')+'</div>'
       +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+(doc.upd||doc.date||'')+(doc.by?' · '+dEsc(doc.by):'')+'</div></div>'
       +(canEd?'<span style="flex-shrink:0;display:flex;gap:2px;margin-right:4px"><button onclick="event.stopPropagation();manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer;padding:2px 5px">✎</button>'+(isOw?'<button onclick="event.stopPropagation();manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;padding:2px 5px">🗑</button>':'')+'</span>':'')
       +'<span style="font-size:11px;color:var(--t2);font-weight:600;flex-shrink:0">'+(open?'▲ 접기':'▼ 펼치기')+'</span></div>'
       +(open?('<div style="padding:0 12px 11px">'
         +'<div style="font-size:12.5px;color:var(--te);line-height:1.7;white-space:pre-wrap;background:var(--s2);border-radius:9px;padding:11px 13px">'+dEsc(doc.body||'')+'</div>'
+        +((doc.files||[]).filter(function(f){return f.img;}).map(function(f){
+            return '<div style="margin-top:8px"><img class="man-att" data-fid="'+f.fid+'" alt="'+dEsc(f.name)+'" onclick="manAttView(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="width:100%;border:1px solid var(--s3);border-radius:9px;background:var(--s2);min-height:48px;cursor:zoom-in">'
+              +'<div style="font-size:10px;color:var(--t3);margin-top:2px">🖼 '+dEsc(f.name)+' — 누르면 크게 보고 저장할 수 있어요</div></div>';
+          }).join(''))
+        +((doc.files||[]).filter(function(f){return !f.img;}).length?('<div style="margin-top:8px">'+(doc.files||[]).filter(function(f){return !f.img;}).map(function(f){
+            return '<button onclick="manFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11px;background:var(--s2);border:1px solid var(--s3);border-radius:7px;padding:5px 10px;margin:2px 4px 0 0;cursor:pointer;color:var(--acc);font-weight:600">📎 '+dEsc(f.name)+'</button>';
+          }).join('')+'</div>'):'')
         +'<button onclick="manExportImage(\''+doc.id+'\')" style="width:100%;margin-top:8px;font-size:11.5px;background:var(--s1);border:1px solid var(--g);color:var(--g);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🖼 이 매뉴얼을 그림으로 저장</button>'
         +(canEd?'<div style="display:flex;gap:8px;margin-top:8px"><button onclick="manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--acc);color:var(--acc);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">✎ 수정</button>'+(isOw?'<button onclick="manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--rd);color:var(--rd);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🗑 삭제</button>':'')+'</div>':'')
         +'</div>'):'')
@@ -7502,6 +7509,7 @@ function renderManuals(){
     +'<div style="border:1.5px dashed var(--s3);border-radius:var(--rs);padding:11px;margin-top:8px;text-align:center;font-size:11.5px;color:var(--t3)">📎 파일을 이 창에 <b>끌어다 놓아도</b> 자동 인식돼요<br>한글(hwpx)·워드·PDF·텍스트·<b>캡쳐 이미지</b> (여러 개 가능)</div>';
   h+='<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:10px;border-color:var(--g);color:var(--g)" onclick="manExportImage()">🖼 이 탭 전체를 그림파일(PNG)로 저장</button>';
   var body=document.getElementById('man-body'); if(body) body.innerHTML=h;
+  _manAttHydrate();
 }
 // ── 연간 일정 파일/캡쳐 인식: 표·"N월" 구간·인라인 문장 ──
 function manParseAnnual(text){
@@ -8143,6 +8151,8 @@ function manEditDoc(dept,id){
   if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
   if(!manCanView(dept)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
   var m=_manDB(), it=id?(m[dept].docs.find(function(x){return x.id===id;})||{}):{};
+  _manDocFiles=(it.files||[]).map(function(f){ return {fid:f.fid, name:f.name, size:f.size||0, img:f.img?1:0}; });
+  _manDocRemoved=[];
   var ex=document.getElementById('ov-manedit'); if(ex) ex.remove();
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-manedit" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:85vh;overflow-y:auto"><div class="mh"></div>'
@@ -8151,10 +8161,124 @@ function manEditDoc(dept,id){
     +'<label class="fl">내용 (순서·방법을 자유롭게 · 줄바꿈 그대로 표시됩니다)</label>'
     +'<textarea class="fi" id="md-body" rows="12" placeholder="1. 먼저 …\n2. 다음으로 …\n※ 주의: …">'+dEsc(it.body||'')+'</textarea>'
     +'<input type="file" id="md-file" style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif" onchange="manDocFileFill(this)">'
-    +'<button class="btn ghost" style="font-size:12px;padding:8px;margin-bottom:2px" onclick="document.getElementById(\'md-file\').click()">📂 파일·캡쳐에서 내용 채우기</button>'
+    +'<button class="btn ghost" style="font-size:12px;padding:8px;margin-bottom:2px" onclick="document.getElementById(\'md-file\').click()">📂 파일·캡쳐에서 내용 채우기 (글자로 변환)</button>'
+    +'<label class="fl" style="margin-top:8px">첨부 파일 — 사용방법 캡쳐 등은 그림 그대로 매뉴얼에 표시돼요</label>'
+    +'<div id="md-files"></div>'
+    +'<input type="file" id="md-att" multiple style="display:none" accept=".png,.jpg,.jpeg,.webp,.bmp,.gif,.pdf,.hwpx,.docx,.xlsx,.txt" onchange="manDocFilePick(this)">'
+    +'<button class="btn ghost" style="font-size:12px;padding:8px;margin-bottom:2px;border-color:var(--pu);color:var(--pu)" onclick="document.getElementById(\'md-att\').click()">📎 파일 첨부 (그림은 자동 축소 · 여러 개 가능)</button>'
     +'<button class="btn" onclick="manSaveDoc(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
     +'</div></div>');
+  _manDocRenderFiles();
+}
+// ── 매뉴얼 첨부파일 (사용방법 캡쳐 등은 그림 그대로 보관·표시) ──
+var _manDocFiles=[], _manDocRemoved=[], _manFileCache={};
+function _manShrinkImage(file){ // 큰 캡쳐 자동 축소(JPEG) → 600KB 이내
+  return new Promise(function(res,rej){
+    var r=new FileReader();
+    r.onload=function(){
+      var img=new Image();
+      img.onload=function(){
+        try{
+          var maxW=1400, sc=Math.min(1, maxW/(img.width||1));
+          var w=Math.max(1,Math.round(img.width*sc)), h=Math.max(1,Math.round(img.height*sc));
+          var cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+          var cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,w,h); cx.drawImage(img,0,0,w,h);
+          var q=0.85, url=cv.toDataURL('image/jpeg',q);
+          while(url.length*0.75>560*1024 && q>0.45){ q-=0.1; url=cv.toDataURL('image/jpeg',q); }
+          if(url.length*0.75>560*1024 && w>800){
+            var w2=800, h2=Math.max(1,Math.round(h*800/w));
+            cv.width=w2; cv.height=h2; cx=cv.getContext('2d'); cx.fillStyle='#fff'; cx.fillRect(0,0,w2,h2); cx.drawImage(img,0,0,w2,h2);
+            url=cv.toDataURL('image/jpeg',0.72);
+          }
+          res({b64:url.split(',')[1]||'', type:'image/jpeg', size:Math.round(url.length*0.75)});
+        }catch(e){ rej(e); }
+      };
+      img.onerror=rej;
+      img.src=String(r.result);
+    };
+    r.onerror=rej;
+    r.readAsDataURL(file);
+  });
+}
+function manDocFilePick(inp){
+  var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
+  files.forEach(function(file){
+    var isImg=/^image\//.test(file.type)||/\.(png|jpe?g|webp|bmp|gif)$/i.test(file.name);
+    var prep;
+    if(isImg){ prep=_manShrinkImage(file); }
+    else{
+      if(file.size>600*1024){ toast('「'+file.name+'」은 600KB를 넘어 첨부할 수 없어요 (캡쳐 그림은 자동 축소돼요)','var(--rd)'); return; }
+      prep=new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res({b64:String(r.result).split(',')[1]||'', type:file.type||'', size:file.size}); }; r.onerror=rej; r.readAsDataURL(file); });
+    }
+    var fid='gf'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    toast('「'+file.name+'」 올리는 중…');
+    prep.then(function(d){
+      if(!d||!d.b64) throw new Error('empty');
+      return _FS.set('academy/manfile_'+fid, {name:file.name, type:d.type, size:d.size, data:d.b64, ts:Date.now(), by:(ME?ME.name:'')}).then(function(){ return d; });
+    }).then(function(d){
+      _manDocFiles.push({fid:fid, name:file.name, size:d.size, img:isImg?1:0, nw:1});
+      _manDocRenderFiles();
+      toast('📎 「'+file.name+'」 첨부됨 — [저장]을 눌러야 매뉴얼에 기록됩니다','var(--g)');
+    }).catch(function(){ toast('「'+file.name+'」 첨부 실패 — 인터넷을 확인하세요','var(--rd)'); });
+  });
+}
+function _manDocRenderFiles(){
+  var el=document.getElementById('md-files'); if(!el) return;
+  if(!(_manDocFiles||[]).length){ el.innerHTML='<div style="font-size:11px;color:var(--t3);padding:2px 0 4px">첨부된 파일이 없어요</div>'; return; }
+  el.innerHTML=_manDocFiles.map(function(f,i){
+    return '<div style="display:flex;align-items:center;gap:8px;background:var(--s2);border-radius:8px;padding:6px 10px;margin-bottom:4px">'
+      +'<span style="flex:1;min-width:0;font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(f.img?'🖼':'📎')+' '+dEsc(f.name)+' <span style="color:var(--t3);font-weight:400">'+(f.size?Math.round(f.size/1024)+'KB':'')+'</span></span>'
+      +'<button onclick="manDocFileRm('+i+')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button></div>';
+  }).join('');
+}
+function _manFileDocDelete(fid){
+  _auth.token().then(function(tok){ var h=tok?{Authorization:'Bearer '+tok}:{};
+    return fetch(_FB.baseUrl+'/academy/manfile_'+fid+'?key='+_FB.apiKey,{method:'DELETE',headers:h}); }).catch(function(){});
+}
+function manDocFileRm(i){
+  var f=(_manDocFiles||[])[i]; if(!f) return;
+  _manDocFiles.splice(i,1); _manDocRenderFiles();
+  if(f.nw) _manFileDocDelete(f.fid);          // 이번에 올린 건 바로 삭제
+  else _manDocRemoved.push(f.fid);            // 기존 첨부는 [저장] 때 삭제 (취소하면 유지)
+}
+function manAttView(fid,name){
+  var c=_manFileCache[fid];
+  if(c){ _manImgShow(c, name||'첨부.jpg'); return; }
+  toast('불러오는 중…');
+  _FS.get('academy/manfile_'+fid).then(function(doc){
+    var o=_FS.docToObj(doc)||{};
+    if(!o.data){ toast('파일을 찾을 수 없어요','var(--rd)'); return; }
+    var url='data:'+(o.type||'image/jpeg')+';base64,'+o.data;
+    _manFileCache[fid]=url;
+    _manImgShow(url, name||'첨부.jpg');
+  }).catch(function(){ toast('불러오기 실패','var(--rd)'); });
+}
+function manFileDl(fid,name){
+  toast('내려받는 중…');
+  _FS.get('academy/manfile_'+fid).then(function(doc){
+    var o=_FS.docToObj(doc)||{};
+    if(!o.data){ toast('파일을 찾을 수 없어요','var(--rd)'); return; }
+    var bin=atob(o.data), arr=new Uint8Array(bin.length);
+    for(var j=0;j<bin.length;j++) arr[j]=bin.charCodeAt(j);
+    var blob=new Blob([arr],{type:o.type||'application/octet-stream'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'파일'; document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },800);
+  }).catch(function(){ toast('내려받기 실패','var(--rd)'); });
+}
+function _manAttHydrate(){
+  Array.prototype.forEach.call(document.querySelectorAll('img.man-att:not([data-ld])'), function(img){
+    img.setAttribute('data-ld','1');
+    var fid=img.getAttribute('data-fid');
+    if(!fid) return;
+    if(_manFileCache[fid]){ img.src=_manFileCache[fid]; return; }
+    _FS.get('academy/manfile_'+fid).then(function(doc){
+      var o=_FS.docToObj(doc)||{};
+      if(!o.data) return;
+      var url='data:'+(o.type||'image/jpeg')+';base64,'+o.data;
+      _manFileCache[fid]=url; img.src=url;
+    }).catch(function(){});
+  });
 }
 function manDocFileFill(inp){
   var f=(inp.files||[])[0]; inp.value=''; if(!f) return;
@@ -8175,9 +8299,16 @@ function manSaveDoc(dept,id){
   if(!title){ toast('업무 제목을 입력해주세요','var(--rd)'); return; }
   if(!body.trim()){ toast('내용을 입력해주세요','var(--rd)'); return; }
   var _dl=((MAN_DEPTS.find(function(x){return x.key===dept;})||{}).label||dept);
-  if(id){ var it=m[dept].docs.find(function(x){return x.id===id;}); if(it){ var _df=_manDiff([['제목',it.title,title],['내용',it.body,body]]); it.title=title; it.body=body; it.upd=today(); manLogEdit('상세 매뉴얼·'+_dl,'수정',title,_df); } _manOpenDoc=id; }
+  var _nf=(_manDocFiles||[]).map(function(f){ return {fid:f.fid, name:f.name, size:f.size||0, img:f.img?1:0}; });
+  var _nfn=_nf.map(function(f){ return f.name; }).join(', ');
+  if(id){ var it=m[dept].docs.find(function(x){return x.id===id;});
+    if(it){ var _ofn=(it.files||[]).map(function(f){ return f.name; }).join(', ');
+      var _df=_manDiff([['제목',it.title,title],['내용',it.body,body],['첨부',_ofn,_nfn]]);
+      it.title=title; it.body=body; it.files=_nf; it.upd=today(); manLogEdit('상세 매뉴얼·'+_dl,'수정',title,_df); } _manOpenDoc=id; }
   else{ var nid='md'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-    m[dept].docs.push({id:nid, title:title, body:body, by:(ME?ME.name||'원장':''), date:today(), upd:today()}); manLogEdit('상세 매뉴얼·'+_dl,'추가',title,_manDiff([['내용','',body]])); _manOpenDoc=nid; }
+    m[dept].docs.push({id:nid, title:title, body:body, files:_nf, by:(ME?ME.name||'원장':''), date:today(), upd:today()}); manLogEdit('상세 매뉴얼·'+_dl,'추가',title,_manDiff([['내용','',body],['첨부','',_nfn]])); _manOpenDoc=nid; }
+  (_manDocRemoved||[]).forEach(function(fid){ _manFileDocDelete(fid); delete _manFileCache[fid]; });
+  _manDocRemoved=[]; _manDocFiles=[];
   logChange('업무 매뉴얼 '+(id?'수정':'추가'), title);
   saveAll(); var ov=document.getElementById('ov-manedit'); if(ov) ov.remove(); renderManuals(); toast('저장됐어요 ✓','var(--g)');
 }
@@ -8185,6 +8316,7 @@ function manDelDoc(dept,id){
   if(!(ME&&ME.role==='owner')) return;
   if(!confirm('이 매뉴얼을 삭제할까요?')) return;
   var m=_manDB(); var it=m[dept].docs.find(function(x){return x.id===id;});
+  ((it&&it.files)||[]).forEach(function(f){ _manFileDocDelete(f.fid); delete _manFileCache[f.fid]; });
   m[dept].docs=m[dept].docs.filter(function(x){return x.id!==id;});
   _markGone(id);
   logChange('업무 매뉴얼 삭제', it?it.title:id);
