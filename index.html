@@ -6105,7 +6105,7 @@ function tljMyTodos(){
 var _tljViewFor=null;
 function openTlj(){
   if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
-  var go=function(){ _tljViewFor=(ME.role==='owner')?null:ME.name; _renderTlj(); };
+  var go=function(){ _tljViewFor=(ME.role==='owner')?null:ME.name; window._tljFiles=[]; _renderTlj(); };
   if(typeof _meetings==='undefined' || _meetings===null){
     toast('회의록 불러오는 중…');
     _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; go(); }).catch(function(){ _meetings=_meetings||[]; go(); });
@@ -6181,7 +6181,11 @@ function _renderTlj(){
       +'<label class="fl">✅ 오늘 한 일 (작업시간 선택)</label><div id="tlj-done-rows"></div>'
       +'<button onclick="tljDoneAdd()" style="width:100%;margin:2px 0 10px;padding:8px;border-radius:9px;border:1px dashed var(--g);background:none;color:var(--g);font-size:12px;font-weight:700;cursor:pointer">+ 한 일 추가</button>'
       +'<label class="fl">📌 예정·진행 중</label><textarea class="fi" id="tlj-plan" rows="2" placeholder="내일/이번 주 예정 업무 (선택)"></textarea>'
-      +'<label class="fl">⚠ 특이사항 (선택)</label><textarea class="fi" id="tlj-issue" rows="2" placeholder="공유할 문제·건의 등"></textarea>';
+      +'<label class="fl">⚠ 특이사항 (선택)</label><textarea class="fi" id="tlj-issue" rows="2" placeholder="공유할 문제·건의 등"></textarea>'
+      +'<label class="fl">📎 파일 첨부 (보고 자료 · 1개당 600KB 이하)</label>'
+      +'<div id="tlj-files"></div>'
+      +'<input type="file" id="tlj-file-in" multiple style="display:none" onchange="tljFilePick(this)">'
+      +'<button onclick="document.getElementById(\'tlj-file-in\').click()" style="width:100%;margin:2px 0 10px;padding:8px;border-radius:9px;border:1px dashed var(--s3);background:none;color:var(--t2);font-size:12px;font-weight:600;cursor:pointer">+ 파일 첨부 (한글·PDF·사진 등)</button>';
     var todos=tljMyTodos();
     h+='<label class="fl">📝 회의에서 나온 내 할 일 ('+todos.length+'건) — 처리했으면 체크</label>';
     if(!todos.length) h+='<div style="font-size:11.5px;color:var(--t3);padding:2px 0 8px">남은 회의 할 일이 없어요 👍</div>';
@@ -6221,6 +6225,7 @@ function _renderTlj(){
         :(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':''))
       +(e.plan?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--t2)"><b>📌 예정</b>\n'+dEsc(e.plan)+'</div>':'')
       +(e.issue?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--am)"><b>⚠ 특이사항</b>\n'+dEsc(e.issue)+'</div>':'')
+      +((e.files&&e.files.length)?'<div style="margin-top:5px">'+e.files.map(function(f){ return '<button onclick="tljFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11px;background:var(--s2);border:1px solid var(--s3);border-radius:7px;padding:4px 9px;margin:2px 4px 0 0;cursor:pointer;color:var(--acc);font-weight:600">📎 '+dEsc(f.name)+'</button>'; }).join('')+'</div>':'')
       +((e.linked&&e.linked.length)?'<div style="font-size:11px;color:var(--g);margin-top:5px;line-height:1.5">'+e.linked.map(function(l){ return '✔ '+dEsc(l.text)+(l.hours?' <span style="color:var(--acc);font-weight:700">· '+dEsc(l.hours)+'</span>':''); }).join('<br>')+'</div>':'')
       +'</div>';
   });
@@ -6228,6 +6233,7 @@ function _renderTlj(){
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
   if(document.getElementById('tlj-done-rows')) _tljRenderDone();
+  if(document.getElementById('tlj-files')) _tljRenderFiles();
 }
 // ── 오늘 한 일 항목 (작업시간 선택) ──
 var TLJ_HOURS=['30분','1시간','1.5시간','2시간','3시간','4시간','종일'];
@@ -6261,6 +6267,52 @@ function _tljSyncDone(){
 }
 function tljDoneAdd(){ _tljSyncDone(); window._tljDone.push({text:'',hours:'',st:'done'}); _tljRenderDone(); var inps=document.querySelectorAll('.tlj-dt'); if(inps.length) inps[inps.length-1].focus(); }
 function tljDoneRm(i){ _tljSyncDone(); window._tljDone.splice(i,1); _tljRenderDone(); }
+// ── 팀장일지 파일 첨부 ──
+function _tljRenderFiles(){
+  var el=document.getElementById('tlj-files'); if(!el) return;
+  var fs=window._tljFiles||[];
+  el.innerHTML=fs.length?fs.map(function(f,i){
+    return '<div style="display:flex;align-items:center;gap:8px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:7px 10px;margin-bottom:5px">'
+      +'<span style="flex:1;min-width:0;font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📎 '+dEsc(f.name)+'</span>'
+      +'<span style="font-size:10px;color:var(--t3);flex-shrink:0">'+_mtFmtSize(f.size||0)+'</span>'
+      +'<button onclick="tljFileRm('+i+')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button></div>';
+  }).join(''):'';
+}
+function tljFilePick(inp){
+  var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
+  files.forEach(function(file){
+    if(file.size>600*1024){ toast('「'+file.name+'」은 600KB를 넘어 첨부할 수 없어요','var(--rd)'); return; }
+    var fid='tf'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    toast('「'+file.name+'」 올리는 중…');
+    new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result).split(',')[1]||''); }; r.onerror=rej; r.readAsDataURL(file); })
+    .then(function(b64){
+      return _FS.set('academy/tljfile_'+fid, {name:file.name, type:file.type||'', size:file.size, data:b64, ts:Date.now(), by:(ME?ME.name:'')});
+    }).then(function(){
+      if(!Array.isArray(window._tljFiles)) window._tljFiles=[];
+      window._tljFiles.push({fid:fid, name:file.name, size:file.size});
+      _tljRenderFiles();
+      toast('📎 「'+file.name+'」 첨부됨 — 저장을 눌러야 일지에 기록됩니다','var(--g)');
+    }).catch(function(){ toast('「'+file.name+'」 첨부 실패 — 인터넷을 확인하세요','var(--rd)'); });
+  });
+}
+function tljFileRm(i){
+  var f=(window._tljFiles||[])[i]; if(!f) return;
+  window._tljFiles.splice(i,1); _tljRenderFiles();
+  _auth.token().then(function(tok){ var h=tok?{Authorization:'Bearer '+tok}:{};
+    return fetch(_FB.baseUrl+'/academy/tljfile_'+f.fid+'?key='+_FB.apiKey,{method:'DELETE',headers:h}); }).catch(function(){});
+}
+function tljFileDl(fid,name){
+  toast('내려받는 중…');
+  _FS.get('academy/tljfile_'+fid).then(function(doc){
+    var o=_FS.docToObj(doc)||{};
+    if(!o.data){ toast('파일을 찾을 수 없어요','var(--rd)'); return; }
+    var bin=atob(o.data), arr=new Uint8Array(bin.length);
+    for(var j=0;j<bin.length;j++) arr[j]=bin.charCodeAt(j);
+    var blob=new Blob([arr],{type:o.type||'application/octet-stream'});
+    var a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name||'파일'; document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },800);
+  }).catch(function(){ toast('내려받기 실패','var(--rd)'); });
+}
 function tljSave(){
   var date=(document.getElementById('tlj-date')||{}).value||today();
   _tljSyncDone();
@@ -6290,9 +6342,10 @@ function tljSave(){
   if(!doneItems.length && !checked.length){ toast('오늘 한 일을 적거나, 처리한 할 일을 체크해주세요','var(--rd)'); return; }
   var list=_tljList(ME.name);
   var entry={id:'tj'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), date:date, done:done, doneItems:doneItems, plan:plan, issue:issue,
+    files:(window._tljFiles||[]).slice(),
     linked:checked.map(function(t){ return {text:t.text, kind:t.kind, mid:t.mid, hours:t.hours||''}; }), ts:Date.now()};
   list.push(entry);
-  window._tljDone=null;
+  window._tljDone=null; window._tljFiles=[];
   // 체크한 회의 할 일 → 회의록에 반영 (기한=지킴, 피드백=확인 · 서버 최신본 기준 병합)
   var touched=false;
   checked.forEach(function(t){
@@ -6318,6 +6371,11 @@ function tljSave(){
 function tljDel(name,id){
   if(!confirm('이 일지를 삭제할까요?')) return;
   if(!(ME && (ME.role==='owner' || ME.name===name))) return;
+  var _de=(DB.tlj[name]||[]).find(function(e){ return e.id===id; });
+  if(_de && Array.isArray(_de.files)) _de.files.forEach(function(f){
+    _auth.token().then(function(tok){ var h=tok?{Authorization:'Bearer '+tok}:{};
+      return fetch(_FB.baseUrl+'/academy/tljfile_'+f.fid+'?key='+_FB.apiKey,{method:'DELETE',headers:h}); }).catch(function(){});
+  });
   DB.tlj[name]=(DB.tlj[name]||[]).filter(function(e){ return e.id!==id; });
   _markGone(id);
   try{ logChange('팀장일지 삭제', name+' '+id); }catch(e){}
@@ -7651,6 +7709,10 @@ function _renderWkPlan(){
       +'<input class="fi" id="wk-text" placeholder="계획 내용" style="flex:1;margin:0" onkeydown="if(event.key===\'Enter\')wkAdd()"></div>'
       +'<button onclick="wkAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--g);background:none;color:var(--g);font-size:12px;font-weight:700;cursor:pointer">+ 계획 추가</button></div>';
   }
+  if(isOw){
+    h+='<input type="file" id="wk-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md" onchange="wkPlanFilePick(this)">'
+      +'<button onclick="document.getElementById(\'wk-file-in\').click()" style="width:100%;margin-bottom:12px;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12.5px;font-weight:700;cursor:pointer">📂 계획표 파일 불러오기 (한글·PDF → 관리자별 할 일 자동 분배)</button>';
+  }
   var list=_wkList(_wkFor,_wkCur);
   var dn=list.filter(function(x){ return x.done; }).length;
   if(list.length) h+='<div style="font-size:11px;font-weight:700;color:'+(dn===list.length?'var(--g)':'var(--am)')+';margin-bottom:8px;text-align:center">'+dn+'/'+list.length+' 완료</div>';
@@ -7669,6 +7731,99 @@ function _renderWkPlan(){
   h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-wkplan\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
+}
+// ── 계획표 파일 인식: 한글(hwpx)·PDF 등에서 관리자별 할 일 추출 ──
+function wkParsePlan(text){
+  var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+  var items=[], cur='';
+  String(text||'').split('\n').forEach(function(line){
+    var raw=line.trim();
+    if(!raw){ cur=''; return; } // 빈 줄 = 담당 구간 종료
+    var t=raw.replace(/^[\s■□▶◆●·•\-–—*※>]+/,'').replace(/^\(?\d{1,2}[.)]\s*/,'').replace(/\s+/g,' ').trim();
+    if(!t || t.length<2 || t.length>140) return;
+    if(/(계획표|계획안)$/.test(t) || /^\d{1,2}월\s*\d/.test(t)) return; // 제목 줄
+    var bare=t.replace(/[\s:：]+$/,'');
+    var only=admins.find(function(nm){ return bare===nm || bare===nm+' 팀장' || bare===nm+' 실장'; });
+    if(only){ cur=only; return; } // 이름만 있는 줄 = 이후 줄들의 담당자
+    var who=cur, rest=t;
+    for(var i=0;i<admins.length;i++){
+      var p=rest.indexOf(admins[i]);
+      if(p>=0 && p<=6){ who=admins[i]; rest=rest.replace(admins[i],'').replace(/^(팀장|실장)?[\s:：\-–—,.]+/,'').trim(); break; }
+    }
+    var day='';
+    var dm=rest.match(/(^|[\s(])([월화수목금토일])요일/); if(dm){ day=dm[2]; }
+    else{ var dm2=rest.match(/^([월화수목금토일])\s*[:：\-·]\s*/); if(dm2){ day=dm2[1]; rest=rest.slice(dm2[0].length).trim(); } }
+    if(rest.length<3) return;
+    items.push({name:who||'', day:day, text:rest});
+  });
+  return items.slice(0,60);
+}
+var _wkImp=null;
+function wkPlanFilePick(inp){
+  var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
+  if(!files.length) return;
+  if(!(ME&&ME.role==='owner')){ toast('원장만 불러올 수 있어요','var(--rd)'); return; }
+  toast(files.length>1?('파일 '+files.length+'개 읽는 중…'):('「'+files[0].name+'」 읽는 중…'));
+  Promise.all(files.map(function(f){ return _mtExtractText(f).then(function(t){ return (t||'').slice(0,50000); }).catch(function(){ return ''; }); }))
+  .then(function(txts){
+    var all=txts.join('\n');
+    if(!all.trim()){ toast('파일에서 텍스트를 읽지 못했어요 — 한글은 hwpx 형식으로 저장해주세요','var(--rd)'); return; }
+    var items=wkParsePlan(all);
+    if(!items.length){ toast('인식된 할 일이 없어요 — 줄마다 "이름 + 내용" 형태인지 확인하세요','var(--rd)'); return; }
+    _wkImp={items:items, fname:files.map(function(f){return f.name;}).join(', ')};
+    _renderWkImport();
+  }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
+}
+function _renderWkImport(){
+  var ex=document.getElementById('ov-wkimport'); if(ex) ex.remove();
+  var p=_wkImp; if(!p) return;
+  var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+  var h='<div class="ov open" id="ov-wkimport" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">📂 계획표 인식 결과</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+dEsc(p.fname)+' → <b>'+_wkLabel(_wkCur)+'</b> 주간 계획으로 분배됩니다. 담당·요일·내용을 확인하고 고치세요. 담당이 없는 항목은 담당을 골라야 추가됩니다.</div>';
+  p.items.forEach(function(it,i){
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 10px;margin-bottom:5px">'
+      +'<div style="display:flex;gap:5px;align-items:center;margin-bottom:5px">'
+      +'<input type="checkbox" class="wi-ck" data-i="'+i+'" '+(it.name?'checked':'')+' style="width:18px;height:18px;flex-shrink:0;accent-color:var(--acc)">'
+      +'<select class="fs wi-nm" data-i="'+i+'" style="flex:0 0 32%;margin:0;padding:6px 4px;font-size:11.5px"><option value="">담당 선택</option>'+admins.map(function(nm){ return '<option value="'+dEsc(nm)+'"'+(it.name===nm?' selected':'')+'>'+dEsc(nm)+'</option>'; }).join('')+'</select>'
+      +'<select class="fs wi-dy" data-i="'+i+'" style="flex:0 0 22%;margin:0;padding:6px 4px;font-size:11.5px"><option value="">요일</option>'+WK_DAYS.map(function(d){ return '<option value="'+d+'"'+(it.day===d?' selected':'')+'>'+d+'</option>'; }).join('')+'</select>'
+      +'<button onclick="wkImpRm('+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">✕</button></div>'
+      +'<input class="fi wi-tx" data-i="'+i+'" value="'+dEsc(it.text)+'" style="margin:0;padding:7px 9px;font-size:12px">'
+      +'</div>';
+  });
+  h+='<button class="btn" onclick="wkImportApply()">✓ 선택 항목을 주간 계획에 추가</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-wkimport\').remove()">취소</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function _wkImpSync(){
+  var p=_wkImp; if(!p) return;
+  document.querySelectorAll('.wi-nm').forEach(function(el){ var it=p.items[parseInt(el.getAttribute('data-i'))]; if(it) it.name=el.value; });
+  document.querySelectorAll('.wi-dy').forEach(function(el){ var it=p.items[parseInt(el.getAttribute('data-i'))]; if(it) it.day=el.value; });
+  document.querySelectorAll('.wi-tx').forEach(function(el){ var it=p.items[parseInt(el.getAttribute('data-i'))]; if(it) it.text=el.value.trim(); });
+}
+function wkImpRm(i){ _wkImpSync(); if(_wkImp) _wkImp.items.splice(i,1); _renderWkImport(); }
+function wkImportApply(){
+  var p=_wkImp; if(!p) return;
+  _wkImpSync();
+  var added={}, skip=0;
+  document.querySelectorAll('.wi-ck:checked').forEach(function(c){
+    var it=p.items[parseInt(c.getAttribute('data-i'))];
+    if(!it || !it.text) return;
+    if(!it.name){ skip++; return; }
+    var list=_wkList(it.name, _wkCur);
+    var k=it.text.replace(/\s+/g,'');
+    if(list.some(function(x){ return String(x.text||'').replace(/\s+/g,'')===k; })) return;
+    list.push({id:'wk'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:it.text, day:it.day||'', done:false, ts:Date.now(), src:'계획표'});
+    added[it.name]=(added[it.name]||0)+1;
+  });
+  var names=Object.keys(added);
+  if(!names.length){ toast(skip?'담당이 지정된 항목이 없어요 — 담당을 선택하세요':'추가할 항목이 없어요','var(--rd)'); return; }
+  try{ logChange('계획표 불러오기', names.map(function(n){ return n+' '+added[n]+'건'; }).join('·')); }catch(e){}
+  saveAll();
+  var ov=document.getElementById('ov-wkimport'); if(ov) ov.remove();
+  _wkImp=null; _renderWkPlan();
+  toast('✓ '+names.map(function(n){ return n+' '+added[n]+'건'; }).join(' · ')+' 추가'+(skip?' (담당 미지정 '+skip+'건 제외)':''),'var(--g)');
 }
 function wkAdd(){
   var text=((document.getElementById('wk-text')||{}).value||'').trim();
