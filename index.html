@@ -2226,7 +2226,7 @@ function goTab(name) {
 var PERM_TABS = [ {k:'home',label:'현황'}, {k:'progress',label:'진도'}, {k:'consult',label:'상담'}, {k:'calendar',label:'일정'}, {k:'tuition',label:'수강료'}, {k:'diagnosis',label:'진단'} ];
 var PERM_ROLES = [ {k:'staff',label:'행정팀'}, {k:'admin',label:'관리자'}, {k:'teacher',label:'강사'} ];
 var PERM_FEATS = [
-  {k:'f_tlj',label:'🧑‍💼 팀장일지'},
+  {k:'f_tlj',label:'🧑‍💼 관리자일지'},
   {k:'f_wkplan',label:'🗓 주간 계획'},
   {k:'f_mytodos',label:'📆 날짜별 할 일'},
   {k:'f_meetings',label:'📝 회의록'},
@@ -6135,7 +6135,7 @@ function saveAdminEval() {
   renderAdminHome();
 }
 
-// ═══ 팀장일지 (관리자 업무일지 · 회의 할 일 연동 → 관리자 점수 반영) ═══
+// ═══ 관리자일지 (관리자 업무일지 · 회의 할 일 연동 → 관리자 점수 반영) ═══
 function _tljList(name){ if(!DB.tlj) DB.tlj={}; if(!Array.isArray(DB.tlj[name])) DB.tlj[name]=[]; return DB.tlj[name]; }
 function calcAdminTljStats(name){
   var ym=getYearMonth();
@@ -6173,7 +6173,7 @@ function _renderTlj(){
   var isOw=(ME&&ME.role==='owner');
   var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
   var h='<div class="ov open" id="ov-tlj" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
-    +'<div class="mt2">🧑‍💼 팀장일지'+(isOw?' (조회·점수)':'')+'</div>';
+    +'<div class="mt2">🧑‍💼 관리자일지'+(isOw?' (조회·점수)':'')+'</div>';
   if(isOw){
     if(!admins.length) h+='<div class="empty">등록된 관리자가 없어요</div>';
     else{
@@ -6327,7 +6327,7 @@ function _tljSyncDone(){
 }
 function tljDoneAdd(){ _tljSyncDone(); window._tljDone.push({text:'',hours:'',st:'done'}); _tljRenderDone(); var inps=document.querySelectorAll('.tlj-dt'); if(inps.length) inps[inps.length-1].focus(); }
 function tljDoneRm(i){ _tljSyncDone(); window._tljDone.splice(i,1); _tljRenderDone(); }
-// ── 팀장일지 파일 첨부 ──
+// ── 관리자일지 파일 첨부 ──
 function _tljRenderFiles(){
   var el=document.getElementById('tlj-files'); if(!el) return;
   var fs=window._tljFiles||[];
@@ -6423,7 +6423,7 @@ function tljSave(){
       });
     }, function(ok){ if(!ok) toast('회의록 반영 실패 · 인터넷 확인','var(--rd)'); });
   }
-  try{ logChange('팀장일지 작성', ME.name+' '+date+(checked.length?' · 할 일 '+checked.length+'건 처리':'')); }catch(e){}
+  try{ logChange('관리자일지 작성', ME.name+' '+date+(checked.length?' · 할 일 '+checked.length+'건 처리':'')); }catch(e){}
   saveAll();
   toast('🧑‍💼 일지가 저장됐어요'+(checked.length?' · 할 일 '+checked.length+'건이 회의록에 반영됐어요':'')+' ✓','var(--g)');
   _renderTlj();
@@ -6438,7 +6438,7 @@ function tljDel(name,id){
   });
   DB.tlj[name]=(DB.tlj[name]||[]).filter(function(e){ return e.id!==id; });
   _markGone(id);
-  try{ logChange('팀장일지 삭제', name+' '+id); }catch(e){}
+  try{ logChange('관리자일지 삭제', name+' '+id); }catch(e){}
   saveAll(); _renderTlj();
 }
 // ── 이월된 일: 이전 일지의 진행 중·미완료 항목 (끝날 때까지 추적) ──
@@ -7641,7 +7641,7 @@ function wbCollect(){
   });
   Object.keys(DB.tlj||{}).forEach(function(nm){ (DB.tlj[nm]||[]).forEach(function(e){
     if((e.date||'').slice(0,7)!==ym) return;
-    (e.linked||[]).forEach(function(l){ done.push({type:'일지 처리', text:l.text, date:e.date, who:nm, hours:l.hours||'', src:'🧑‍💼 팀장일지'}); });
+    (e.linked||[]).forEach(function(l){ done.push({type:'일지 처리', text:l.text, date:e.date, who:nm, hours:l.hours||'', src:'🧑‍💼 관리자일지'}); });
   }); });
   var man=_manDB(), mdone=man.done[_manYM()]||{};
   MAN_DEPTS.forEach(function(dp){ man[dp.key].monthly.forEach(function(it){
@@ -8084,14 +8084,14 @@ function wbOwnerAlerts(){
     }); });
     if(_talks.length) alerts.push({sev:'warn', text:'주간 계획 중복 — 협의 필요 '+_talks.length+'건', info:_talks.slice(0,3).join(' · '), src:'주간 계획'});
   }catch(e){}
-  // 4-3) 팀장일지 미작성 (어제 기준 · 일요일 제외)
+  // 4-3) 관리자일지 미작성 (어제 기준 · 일요일 제외)
   try{
     var y=new Date(Date.now()-86400000);
     if(y.getDay()!==0){
       var yd=y.getFullYear()+'-'+('0'+(y.getMonth()+1)).slice(-2)+'-'+('0'+y.getDate()).slice(-2);
       var missed=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){ return a&&a.name?a.name:''; }).filter(Boolean)
         .filter(function(nm){ return !((DB.tlj&&DB.tlj[nm])||[]).some(function(e){ return e.date===yd; }); });
-      if(missed.length) alerts.push({sev:'warn', text:'팀장일지 미작성: '+missed.join('·'), info:'어제('+yd+') 일지가 없어요', src:'🧑‍💼 팀장일지'});
+      if(missed.length) alerts.push({sev:'warn', text:'관리자일지 미작성: '+missed.join('·'), info:'어제('+yd+') 일지가 없어요', src:'🧑‍💼 관리자일지'});
     }
   }catch(e){}
   alerts.sort(function(a,b){ return (a.sev==='late'?0:1)-(b.sev==='late'?0:1); });
@@ -8124,7 +8124,7 @@ function wbHomeCardHTML(){
     // 현황판 차단 시에도 일지 리마인드는 유지
     if(isAdminLevel() && canFeat('tlj')){
       var wrote0=((DB.tlj&&DB.tlj[ME.name])||[]).some(function(e){ return e.date===today(); });
-      if(!wrote0) return '<div onclick="openTlj()" style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--am)">🧑‍💼 오늘 팀장일지를 아직 안 썼어요</span><span style="font-size:11px;color:var(--am)">쓰러 가기 →</span></div>';
+      if(!wrote0) return '<div onclick="openTlj()" style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--am)">🧑‍💼 오늘 관리자일지를 아직 안 썼어요</span><span style="font-size:11px;color:var(--am)">쓰러 가기 →</span></div>';
     }
     return '';
   }
@@ -8160,7 +8160,7 @@ function wbHomeCardHTML(){
   // 오늘 일지 미작성 리마인드 (관리자·행정팀 본인)
   if(ME && ME.role!=='owner' && isAdminLevel() && canFeat('tlj')){
     var wrote=((DB.tlj&&DB.tlj[ME.name])||[]).some(function(e){ return e.date===today(); });
-    if(!wrote) h='<div onclick="openTlj()" style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--am)">🧑‍💼 오늘 팀장일지를 아직 안 썼어요</span><span style="font-size:11px;color:var(--am)">쓰러 가기 →</span></div>'+h;
+    if(!wrote) h='<div onclick="openTlj()" style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--am)">🧑‍💼 오늘 관리자일지를 아직 안 썼어요</span><span style="font-size:11px;color:var(--am)">쓰러 가기 →</span></div>'+h;
   }
   return h;
 }
@@ -8406,11 +8406,11 @@ function renderAdminHome() {
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
-     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지</button><button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업그레이드'+(function(){ try{ var n=0; Object.keys(DB.upg||{}).forEach(function(nm){ (DB.upg[nm]||[]).forEach(function(u){ if(u.status==='done'&&!u.confirmed) n++; }); }); return n?' <span style="color:var(--rd);font-weight:700">'+n+'</span>':''; }catch(e){ return ''; } })()+'</button></div>':'')
+     + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 관리자일지</button><button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업그레이드'+(function(){ try{ var n=0; Object.keys(DB.upg||{}).forEach(function(nm){ (DB.upg[nm]||[]).forEach(function(u){ if(u.status==='done'&&!u.confirmed) n++; }); }); return n?' <span style="color:var(--rd);font-weight:700">'+n+'</span>':''; }catch(e){ return ''; } })()+'</button></div>':'')
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openOwnerList()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👑 원장 명단</button><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
      + (ME.role!=='owner'?(function(){ var bs='';
-         if(canFeat('tlj')) bs+='<button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지 작성</button>';
+         if(canFeat('tlj')) bs+='<button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 관리자일지 작성</button>';
          if(canFeat('upgrades')) bs+='<button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업무 업그레이드</button>';
          if(canFeat('meetings')) bs+='<button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button>';
          return bs?'<div style="display:flex;gap:8px;margin-bottom:10px">'+bs+'</div>':''; })():'')
