@@ -7475,7 +7475,8 @@ function renderManuals(){
     });
     if(!shown) h+='<div class="empty" style="font-size:12px;padding:6px 0">이번 달('+curMo+'월) 일정은 없어요 — [연간 전체 보기]로 확인하세요</div>';
   }
-  if(canEd) h+='<button class="btn ghost" style="margin-bottom:4px;padding:9px;font-size:12.5px" onclick="manEditAnnual(\''+_manTab+'\',null)">+ 연간 일정 추가</button>';
+  if(canEd) h+='<div style="display:flex;gap:6px;margin-bottom:4px"><button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0" onclick="manEditAnnual(\''+_manTab+'\',null)">+ 연간 일정 추가</button>'
+    +'<button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0;border-color:var(--am);color:var(--am)" onclick="manPickFile(\'annual\')">📂 파일·캡쳐 올리기</button></div>';
   // ── 2. 업무별 상세 매뉴얼 ──
   h+='<div class="sl2" style="margin:16px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 업무별 상세 매뉴얼 <span style="font-size:11px;color:var(--t3)">'+dept.docs.length+'건</span></div>';
   if(!dept.docs.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 매뉴얼이 없어요.'+(canEd?' 아래 버튼으로 추가하세요.':'')+'</div>';
@@ -7499,6 +7500,72 @@ function renderManuals(){
     +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'all\')">📂 파일·캡쳐 올리기 → 자동 분류 (월간+상세)</button>'
     +'<div style="border:1.5px dashed var(--s3);border-radius:var(--rs);padding:11px;margin-top:8px;text-align:center;font-size:11.5px;color:var(--t3)">📎 파일을 이 창에 <b>끌어다 놓아도</b> 자동 인식돼요<br>한글(hwpx)·워드·PDF·텍스트·<b>캡쳐 이미지</b> (여러 개 가능)</div>';
   var body=document.getElementById('man-body'); if(body) body.innerHTML=h;
+}
+// ── 연간 일정 파일/캡쳐 인식: 표·"N월" 구간·인라인 문장 ──
+function manParseAnnual(text){
+  var WHEN2=/(첫째|둘째|셋째|넷째|마지막)\s*주|월\s*초|월\s*말|말일|초순|중순|하순|(\d{1,2})\s*일(경|까지|에)?|[월화수목금토일]요일/;
+  var raw=String(text||'').replace(/\r/g,'').split('\n').map(function(l){ return l.replace(/[ \t]+/g,' ').trim(); }).filter(Boolean)
+    .filter(function(l){ return !/^[-–—\s]*\d+\s*(페이지|page|p)?[-–—\s]*$/i.test(l); });
+  var items=[], seen={};
+  function push(mo,when,title,desc){
+    mo=parseInt(mo,10); if(!(mo>=1&&mo<=12)) return;
+    title=String(title||'').replace(/^[\s:：\-–—,.·•]+|[\s:：\-–—,.]+$/g,'').trim();
+    if(title.length<2||title.length>60) return;
+    if(/^[-–—=\s]+$/.test(title)) return;
+    var k=mo+'|'+title.replace(/\s+/g,''); if(seen[k]) return; seen[k]=1;
+    items.push({month:mo, when:String(when||'').replace(/\s+/g,' ').trim(), title:title, desc:String(desc||'').trim()});
+  }
+  // 1) 표 (칸 구분 |)
+  var rows=raw.filter(function(l){ return l.indexOf('|')>=0 && l.split('|').length>=2; })
+    .map(function(l){ return l.split('|').map(function(c){ return c.trim(); }); });
+  if(rows.length>=2){
+    var head=rows[0], moCol=-1, tCol=-1, wCol=-1, hasHead=false;
+    head.forEach(function(c,i){
+      if(moCol<0 && c.length<=6 && /월/.test(c) && !/일정|내용|업무/.test(c)){ moCol=i; hasHead=true; }
+      else if(wCol<0 && /시기|주차|날짜|일자|기간/.test(c)){ wCol=i; hasHead=true; }
+      else if(tCol<0 && /일정|행사|업무|내용|항목|제목|계획/.test(c)){ tCol=i; hasHead=true; }
+    });
+    var body=hasHead?rows.slice(1):rows;
+    if(moCol<0){ var best=-1,bn=0;
+      for(var ci=0;ci<6;ci++){ var n=body.filter(function(r){ return r[ci] && /^(1[0-2]|0?[1-9])월?$/.test(String(r[ci]).replace(/\s/g,'')); }).length; if(n>bn){ bn=n; best=ci; } }
+      if(bn>=Math.max(1,Math.ceil(body.length/2))) moCol=best; }
+    if(tCol<0){ var bl=-1,bs=0;
+      for(var cj=0;cj<6;cj++){ if(cj===moCol||cj===wCol) continue; var tot=0,n2=0; body.forEach(function(r){ if(r[cj]){ tot+=r[cj].length; n2++; } }); var avg=n2?tot/n2:0; if(avg>bs){ bs=avg; bl=cj; } }
+      tCol=bl; }
+    if(moCol>=0 && tCol>=0){
+      var lastMo=0;
+      body.forEach(function(r){
+        var mc=String(r[moCol]||'').replace(/\s/g,'');
+        var mm=mc.match(/^(1[0-2]|0?[1-9])월?$/);
+        var mo=mm?parseInt(mm[1],10):lastMo;   // 병합 셀: 빈 칸은 직전 월로
+        if(mm) lastMo=mo;
+        var when=wCol>=0?(r[wCol]||''):'';
+        var title=r[tCol]||'';
+        if(!when){ var wm2=title.match(WHEN2); if(wm2){ when=wm2[0]; title=title.replace(wm2[0],'').trim(); } }
+        var desc=[]; r.forEach(function(c,i){ if(i!==moCol&&i!==tCol&&i!==wCol&&c&&c.length>1&&!/^[-–—=\s]+$/.test(c)&&!/^월$|시기|날짜|일정|내용|비고/.test(c)) desc.push(c); });
+        push(mo, when, title, desc.join(' · '));
+      });
+      if(items.length) return items;
+    }
+  }
+  // 2) "N월" 제목 구간 + 인라인 "N월: …"
+  var cur=0;
+  raw.forEach(function(l){
+    if(l.indexOf('|')>=0) return;
+    var only=l.match(/^[\[【(]?\s*(1[0-2]|0?[1-9])\s*월\s*[\])】]?\s*(일정|행사|계획)?\s*[:：]?$/);
+    if(only){ cur=parseInt(only[1],10); return; }
+    var t=l.replace(/^[\s■□▶◆●·•\-–—*※>]+/,'').trim();
+    if(!t) return;
+    var inl=t.match(/^(1[0-2]|0?[1-9])\s*월\s*[:：]?\s+(.+)$/);
+    if(inl){ var rest=inl[2].replace(/^\d{1,2}\s*[.)]\s*/,''); var wm=rest.match(WHEN2); var when=wm?wm[0]:''; if(wm) rest=rest.replace(wm[0],'').trim(); push(inl[1], when, rest, ''); return; }
+    if(cur){
+      var tt=t.replace(/^\d{1,2}\s*[.)]\s*/,'');
+      var wm3=tt.match(WHEN2); var when3=wm3?wm3[0]:'';
+      if(wm3) tt=tt.replace(wm3[0],'').trim();
+      if(tt.length>=2 && tt.length<=60 && !/^(1[0-2]|0?[1-9])\s*월/.test(tt)) push(cur, when3, tt, '');
+    }
+  });
+  return items;
 }
 // ── 매뉴얼 파일 불러오기: 문서에서 월간 업무·상세 매뉴얼 자동 인식 ──
 function manParseText(text, fileName){
@@ -7625,6 +7692,21 @@ function _manHandleFiles(files, mode){
     return _mtExtractText(file).then(function(txt){ return {name:file.name, txt:(txt||'').slice(0,50000)}; })
       .catch(function(){ return {name:file.name, txt:''}; });
   })).then(function(results){
+    if(mode==='annual'){
+      var ann=[], failedA=[], seenA={};
+      results.forEach(function(r){
+        if(!r.txt.trim()){ failedA.push(r.name); return; }
+        manParseAnnual(r.txt).forEach(function(a){
+          var k=a.month+'|'+a.title.replace(/\s+/g,'').slice(0,40); if(seenA[k]) return; seenA[k]=1;
+          a.src=r.name; ann.push(a);
+        });
+      });
+      if(failedA.length) toast('읽지 못한 파일: '+failedA.join(', ')+' — 한글은 hwpx 형식으로 저장해주세요','var(--am)');
+      if(!ann.length){ if(!failedA.length) toast('연간 일정을 인식하지 못했어요 — "3월: 설명회"처럼 월이 적힌 표나 문장이 필요해요','var(--rd)'); return; }
+      _manImp={dept:_manTab, mode:'annual', annual:ann.slice(0,60), monthly:[], docs:[], fname:(results.length>1?('파일 '+results.length+'개'):results[0].name), multi:results.length>1};
+      _renderManImport();
+      return;
+    }
     var monthly=[], docs=[], failed=[], seenM={}, seenD={};
     results.forEach(function(r){
       if(!r.txt.trim()){ failed.push(r.name); return; }
@@ -7662,7 +7744,22 @@ function _renderManImport(){
   var h='<div class="ov open" id="ov-manimport" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
     +'<div class="mt2">📂 파일 인식 결과 — '+dEsc(p.fname)+'</div>'
     +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+(dl?dl.label:'')+' 매뉴얼에 추가됩니다. 인식이 어긋난 부분은 <b>여기서 바로 고치고</b>, 필요 없는 항목은 ✕로 빼세요. 체크된 항목만 추가됩니다.</div>';
-  if(p.mode!=='docs'){
+  if(p.mode==='annual'){
+    h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--am)"></div>📆 연간 일정으로 추가 <span style="font-size:11px;color:var(--t3)">'+p.annual.length+'건 인식</span></div>';
+    p.annual.forEach(function(a,i){
+      h+='<div style="display:flex;gap:8px;align-items:flex-start;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:8px 10px;margin-bottom:5px">'
+        +'<input type="checkbox" class="mi-a" data-i="'+i+'" checked style="width:18px;height:18px;margin-top:7px;flex-shrink:0;accent-color:var(--am)">'
+        +'<span style="flex:1;min-width:0">'
+        +'<span style="display:flex;gap:5px"><input class="fi mi-am" data-i="'+i+'" type="number" min="1" max="12" value="'+(parseInt(a.month,10)||'')+'" placeholder="월" style="flex:0 0 52px;margin:0;padding:6px 8px;font-size:11.5px">'
+        +'<input class="fi mi-aw" data-i="'+i+'" value="'+dEsc(a.when||'')+'" placeholder="시기" style="flex:0 0 28%;margin:0;padding:6px 8px;font-size:11.5px">'
+        +'<input class="fi mi-at" data-i="'+i+'" value="'+dEsc(a.title)+'" placeholder="일정명" style="flex:1;margin:0;padding:6px 8px;font-size:11.5px"></span>'
+        +(a.desc?'<input class="fi mi-adc" data-i="'+i+'" value="'+dEsc(a.desc)+'" placeholder="비고·설명" style="margin:4px 0 0;padding:5px 8px;font-size:11px;color:var(--t2)">':'')
+        +(p.multi&&a.src?'<span style="display:block;font-size:9.5px;color:var(--t3);margin-top:2px">📄 '+dEsc(a.src)+'</span>':'')+'</span>'
+        +'<button onclick="manImpRemove(\'annual\','+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0;margin-top:5px">✕</button>'
+        +'</div>';
+    });
+  }
+  if(p.mode!=='docs' && p.mode!=='annual'){
   h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--acc)"></div>📅 월간 필수 업무로 추가 <span style="font-size:11px;color:var(--t3)">'+p.monthly.length+'건 인식</span></div>';
   if(!p.monthly.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">시기(매월 N일 등)가 있는 문장을 찾지 못했어요</div>';
   p.monthly.forEach(function(it,i){
@@ -7677,7 +7774,7 @@ function _renderManImport(){
       +'</div>';
   });
   }
-  if(p.mode!=='monthly'){
+  if(p.mode!=='monthly' && p.mode!=='annual'){
   h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 상세 매뉴얼로 추가 <span style="font-size:11px;color:var(--t3)">'+p.docs.length+'건 인식</span></div>';
   if(!p.docs.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">구분할 제목을 찾지 못했어요</div>';
   p.docs.forEach(function(d,i){
@@ -7703,6 +7800,10 @@ function _manImpSyncEdits(){ // 화면의 수정 내용을 _manImp에 반영
   document.querySelectorAll('.mi-mw').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.when=el.value.trim(); });
   document.querySelectorAll('.mi-mt').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.title=el.value.trim(); });
   document.querySelectorAll('.mi-mdc').forEach(function(el){ var it=p.monthly[parseInt(el.getAttribute('data-i'))]; if(it) it.desc=el.value.trim(); });
+  document.querySelectorAll('.mi-am').forEach(function(el){ var a=p.annual&&p.annual[parseInt(el.getAttribute('data-i'))]; if(a) a.month=parseInt(el.value,10)||0; });
+  document.querySelectorAll('.mi-aw').forEach(function(el){ var a=p.annual&&p.annual[parseInt(el.getAttribute('data-i'))]; if(a) a.when=el.value.trim(); });
+  document.querySelectorAll('.mi-at').forEach(function(el){ var a=p.annual&&p.annual[parseInt(el.getAttribute('data-i'))]; if(a) a.title=el.value.trim(); });
+  document.querySelectorAll('.mi-adc').forEach(function(el){ var a=p.annual&&p.annual[parseInt(el.getAttribute('data-i'))]; if(a) a.desc=el.value.trim(); });
   document.querySelectorAll('.mi-dt').forEach(function(el){ var d=p.docs[parseInt(el.getAttribute('data-i'))]; if(d) d.title=el.value.trim(); });
   document.querySelectorAll('.mi-db').forEach(function(el){ var d=p.docs[parseInt(el.getAttribute('data-i'))]; if(d) d.body=el.value; });
 }
@@ -7713,7 +7814,16 @@ function manImportApply(){
   if(!manCanEdit() || !manCanView(p.dept)) return;
   _manImpSyncEdits();
   var m=_manDB(), dept=m[p.dept];
-  var addM=0, addD=0;
+  var addM=0, addD=0, addA=0;
+  document.querySelectorAll('.mi-a:checked').forEach(function(c){
+    var a=p.annual&&p.annual[parseInt(c.getAttribute('data-i'))]; if(!a||!a.title) return;
+    var mo=parseInt(a.month,10); if(!(mo>=1&&mo<=12)) return;
+    if(!Array.isArray(dept.annual)) dept.annual=[];
+    var k=mo+'|'+a.title.replace(/\s+/g,'');
+    if(dept.annual.some(function(x){ return ((parseInt(x.month,10)||0)+'|'+String(x.title||'').replace(/\s+/g,''))===k; })) return;
+    dept.annual.push({id:'ma'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), month:mo, when:a.when||'', title:a.title, desc:a.desc||''});
+    addA++;
+  });
   document.querySelectorAll('.mi-m:checked').forEach(function(c){
     var it=p.monthly[parseInt(c.getAttribute('data-i'))]; if(!it||!it.title) return;
     var k=it.title.replace(/\s+/g,'');
@@ -7728,14 +7838,14 @@ function manImportApply(){
     dept.docs.push({id:'md'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), title:d.title, body:d.body, by:(ME?ME.name:'원장'), date:today(), upd:today()});
     addD++;
   });
-  if(!addM && !addD){ toast('추가된 항목이 없어요 (이미 있거나 선택 안 함)','var(--am)'); return; }
-  try{ logChange('매뉴얼 파일 불러오기', p.fname+' → 월간 '+addM+'건·매뉴얼 '+addD+'건'); }catch(e){}
-  try{ manLogEdit('파일 불러오기','추가', p.fname, '월간 업무 '+addM+'건 · 상세 매뉴얼 '+addD+'건 ('+((MAN_DEPTS.find(function(x){return x.key===p.dept;})||{}).label||p.dept)+')'); }catch(e){}
+  if(!addM && !addD && !addA){ toast('추가된 항목이 없어요 (이미 있거나 선택 안 함)','var(--am)'); return; }
+  try{ logChange('매뉴얼 파일 불러오기', p.fname+' → 월간 '+addM+'건·매뉴얼 '+addD+'건·연간 '+addA+'건'); }catch(e){}
+  try{ manLogEdit('파일 불러오기','추가', p.fname, (addA?('연간 일정 '+addA+'건 · '):'')+'월간 업무 '+addM+'건 · 상세 매뉴얼 '+addD+'건 ('+((MAN_DEPTS.find(function(x){return x.key===p.dept;})||{}).label||p.dept)+')'); }catch(e){}
   saveAll();
   var ov=document.getElementById('ov-manimport'); if(ov) ov.remove();
   _manImp=null;
   renderManuals();
-  toast('✓ 월간 업무 '+addM+'건, 상세 매뉴얼 '+addD+'건이 추가됐어요','var(--g)');
+  toast(addA?('✓ 연간 일정 '+addA+'건이 추가됐어요'):('✓ 월간 업무 '+addM+'건, 상세 매뉴얼 '+addD+'건이 추가됐어요'),'var(--g)');
 }
 var _manYrAll=false;
 function manYrToggle(){ _manYrAll=!_manYrAll; renderManuals(); }
