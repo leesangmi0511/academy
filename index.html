@@ -3036,7 +3036,20 @@ function _mtExtractText(file){
       return Promise.all(ps).then(function(xs){ return xs.join('\n'); });
     });
   }
+  if(['png','jpg','jpeg','webp','bmp','gif','tif','tiff'].indexOf(ext)>=0){
+    return _ocrImage(file);
+  }
   return Promise.resolve(''); // hwp 등 추출 불가 형식 — 보관만
+}
+// ── 캡쳐(이미지) 글자 인식 (OCR · 한국어+영어) ──
+var _ocrWorker=null;
+function _ocrImage(file){
+  toast('🔍 「'+file.name+'」 캡쳐 글자 인식 중… 최초 1회는 준비에 20초쯤 걸려요');
+  return _loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js').then(function(){
+    if(!_ocrWorker) _ocrWorker=window.Tesseract.createWorker('kor+eng');
+    return _ocrWorker;
+  }).then(function(w){ return w.recognize(file); })
+  .then(function(r){ return ((r&&r.data&&r.data.text)||'').replace(/[ \t]+/g,' '); });
 }
 function mtFilePick(inp){
   var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
@@ -7308,6 +7321,17 @@ function openManuals(){
     +'<button class="btn ghost" style="margin-top:12px" onclick="document.getElementById(\'ov-manuals\').remove()">닫기</button>'
     +'</div></div>');
   renderManuals();
+  // 파일 끌어다 놓기(드래그 앤 드롭)
+  (function(){
+    var ovEl=document.getElementById('ov-manuals'); if(!ovEl || !manCanEdit()) return;
+    var md=ovEl.querySelector('.modal');
+    ['dragenter','dragover'].forEach(function(ev){ ovEl.addEventListener(ev,function(e){ e.preventDefault(); e.stopPropagation(); if(md) md.style.outline='2.5px dashed var(--acc)'; }); });
+    ['dragleave','drop'].forEach(function(ev){ ovEl.addEventListener(ev,function(e){ e.preventDefault(); e.stopPropagation(); if(md) md.style.outline=''; }); });
+    ovEl.addEventListener('drop',function(e){
+      var fs=Array.prototype.slice.call((e.dataTransfer&&e.dataTransfer.files)||[]);
+      if(fs.length) _manHandleFiles(fs,'all');
+    });
+  })();
 }
 function manTab(k){ _manTab=k; _manOpenDoc=null; renderManuals(); }
 function renderManuals(){
@@ -7371,7 +7395,8 @@ function renderManuals(){
       +(canEd?'<div style="display:flex;gap:4px;flex-shrink:0"><button onclick="manEditMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--acc);cursor:pointer">수정</button>'+(isOw?'<button onclick="manDelMonthly(\''+_manTab+'\',\''+it.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>':'')
       +'</div></div>';
   });
-  if(canEd) h+='<button class="btn ghost" style="margin-bottom:4px;padding:9px;font-size:12.5px" onclick="manEditMonthly(\''+_manTab+'\',null)">+ 월간 필수 업무 추가</button>';
+  if(canEd) h+='<div style="display:flex;gap:6px;margin-bottom:4px"><button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0" onclick="manEditMonthly(\''+_manTab+'\',null)">+ 월간 필수 업무 추가</button>'
+    +'<button class="btn ghost" style="flex:1;padding:9px;font-size:12.5px;margin:0;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'monthly\')">📂 파일·캡쳐 올리기</button></div>';
   // ── 2. 업무별 상세 매뉴얼 ──
   h+='<div class="sl2" style="margin:16px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 업무별 상세 매뉴얼 <span style="font-size:11px;color:var(--t3)">'+dept.docs.length+'건</span></div>';
   if(!dept.docs.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">등록된 매뉴얼이 없어요.'+(canEd?' 아래 버튼으로 추가하세요.':'')+'</div>';
@@ -7390,8 +7415,10 @@ function renderManuals(){
       +'</div>';
   });
   if(canEd) h+='<button class="btn ghost" style="padding:9px;font-size:12.5px" onclick="manEditDoc(\''+_manTab+'\',null)">+ 상세 매뉴얼 추가</button>'
-    +'<input type="file" id="man-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md" onchange="manFilePick(this)">'
-    +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="document.getElementById(\'man-file-in\').click()">📂 파일에서 불러오기 (여러 개 가능 · 한글·워드·PDF·텍스트)</button>';
+    +'<input type="file" id="man-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif" onchange="manFilePick(this)">'
+    +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--pu);color:var(--pu)" onclick="manPickFile(\'docs\')">📂 파일·캡쳐 올리기 → 상세 매뉴얼로</button>'
+    +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'all\')">📂 파일·캡쳐 올리기 → 자동 분류 (월간+상세)</button>'
+    +'<div style="border:1.5px dashed var(--s3);border-radius:var(--rs);padding:11px;margin-top:8px;text-align:center;font-size:11.5px;color:var(--t3)">📎 파일을 이 창에 <b>끌어다 놓아도</b> 자동 인식돼요<br>한글(hwpx)·워드·PDF·텍스트·<b>캡쳐 이미지</b> (여러 개 가능)</div>';
   var body=document.getElementById('man-body'); if(body) body.innerHTML=h;
 }
 // ── 매뉴얼 파일 불러오기: 문서에서 월간 업무·상세 매뉴얼 자동 인식 ──
@@ -7458,8 +7485,14 @@ function manParseText(text, fileName){
   return {monthly:monthly.slice(0,30), docs:docs, full:full};
 }
 var _manImp=null;
+var _manPickMode='all';
+function manPickFile(mode){ _manPickMode=mode||'all'; var i=document.getElementById('man-file-in'); if(i) i.click(); }
 function manFilePick(inp){
   var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
+  _manHandleFiles(files, _manPickMode||'all');
+  _manPickMode='all';
+}
+function _manHandleFiles(files, mode){
   if(!files.length) return;
   if(!manCanEdit()){ toast('추가 권한이 없어요','var(--rd)'); return; }
   toast(files.length>1?('파일 '+files.length+'개 읽는 중…'):('「'+files[0].name+'」 읽는 중…'));
@@ -7481,9 +7514,19 @@ function manFilePick(inp){
       });
     });
     if(failed.length) toast('읽지 못한 파일: '+failed.join(', ')+' — 한글은 hwpx 형식으로 저장해주세요','var(--am)');
+    if(mode==='monthly'){
+      if(!monthly.length && docs.length){ // 시기를 못 찾으면 줄 단위로 월간 후보 생성
+        docs.forEach(function(d){ String(d.body||'').split('\n').forEach(function(ln){
+          ln=ln.replace(/^[\s·•\-–—*>\d.)]+/,'').trim();
+          if(ln.length>=4 && ln.length<=80 && monthly.length<30) monthly.push({when:'', title:ln, src:d.src||''});
+        }); });
+      }
+      docs=[];
+    }
+    if(mode==='docs') monthly=[];
     if(!monthly.length && !docs.length){ if(!failed.length) toast('인식된 내용이 없어요','var(--rd)'); return; }
     var fname=results.length>1?('파일 '+results.length+'개'):results[0].name;
-    _manImp={dept:_manTab, monthly:monthly.slice(0,40), docs:docs.slice(0,40), fname:fname, multi:results.length>1};
+    _manImp={dept:_manTab, mode:mode||'all', monthly:monthly.slice(0,40), docs:docs.slice(0,40), fname:fname, multi:results.length>1};
     _renderManImport();
   }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
 }
@@ -7494,6 +7537,7 @@ function _renderManImport(){
   var h='<div class="ov open" id="ov-manimport" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
     +'<div class="mt2">📂 파일 인식 결과 — '+dEsc(p.fname)+'</div>'
     +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">'+(dl?dl.label:'')+' 매뉴얼에 추가됩니다. 인식이 어긋난 부분은 <b>여기서 바로 고치고</b>, 필요 없는 항목은 ✕로 빼세요. 체크된 항목만 추가됩니다.</div>';
+  if(p.mode!=='docs'){
   h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--acc)"></div>📅 월간 필수 업무로 추가 <span style="font-size:11px;color:var(--t3)">'+p.monthly.length+'건 인식</span></div>';
   if(!p.monthly.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">시기(매월 N일 등)가 있는 문장을 찾지 못했어요</div>';
   p.monthly.forEach(function(it,i){
@@ -7506,6 +7550,8 @@ function _renderManImport(){
       +'<button onclick="manImpRemove(\'monthly\','+i+')" style="font-size:13px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0;margin-top:5px">✕</button>'
       +'</div>';
   });
+  }
+  if(p.mode!=='monthly'){
   h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>📘 상세 매뉴얼로 추가 <span style="font-size:11px;color:var(--t3)">'+p.docs.length+'건 인식</span></div>';
   if(!p.docs.length) h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">구분할 제목을 찾지 못했어요</div>';
   p.docs.forEach(function(d,i){
@@ -7520,6 +7566,7 @@ function _renderManImport(){
       +'<textarea class="fi mi-db" data-i="'+i+'" rows="'+(open?10:3)+'" style="margin:6px 0 0;font-size:11.5px;line-height:1.6'+(open?'':';max-height:64px')+'">'+dEsc(d.body)+'</textarea>'
       +'</div>';
   });
+  }
   h+='<button class="btn" onclick="manImportApply()">✓ 선택한 항목 추가</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manimport\').remove()">취소</button>'
     +'</div></div>';
@@ -7686,9 +7733,22 @@ function manEditDoc(dept,id){
     +'<label class="fl">업무 제목</label><input class="fi" id="md-title" value="'+dEsc(it.title||'')+'" placeholder="예: 신규생 등록 처리 절차">'
     +'<label class="fl">내용 (순서·방법을 자유롭게 · 줄바꿈 그대로 표시됩니다)</label>'
     +'<textarea class="fi" id="md-body" rows="12" placeholder="1. 먼저 …\n2. 다음으로 …\n※ 주의: …">'+dEsc(it.body||'')+'</textarea>'
+    +'<input type="file" id="md-file" style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif" onchange="manDocFileFill(this)">'
+    +'<button class="btn ghost" style="font-size:12px;padding:8px;margin-bottom:2px" onclick="document.getElementById(\'md-file\').click()">📂 파일·캡쳐에서 내용 채우기</button>'
     +'<button class="btn" onclick="manSaveDoc(\''+dept+'\','+(id?('\''+id+'\''):'null')+')">저장</button>'
     +'<button class="btn ghost" onclick="document.getElementById(\'ov-manedit\').remove()">취소</button>'
     +'</div></div>');
+}
+function manDocFileFill(inp){
+  var f=(inp.files||[])[0]; inp.value=''; if(!f) return;
+  toast('「'+f.name+'」 읽는 중…');
+  _mtExtractText(f).then(function(t){
+    t=(t||'').trim();
+    if(!t){ toast('내용을 읽지 못했어요 — 한글(.hwp)은 hwpx로 저장해주세요','var(--rd)'); return; }
+    var ta=document.getElementById('md-body'); if(ta) ta.value=(ta.value.trim()? ta.value+'\n\n':'')+t.slice(0,20000);
+    var ti=document.getElementById('md-title'); if(ti && !ti.value.trim()) ti.value=f.name.replace(/\.[^.]+$/,'');
+    toast('내용을 채웠어요 — 확인 후 저장하세요 ✓','var(--g)');
+  }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
 }
 function manSaveDoc(dept,id){
   if(!manCanEdit()) return;
