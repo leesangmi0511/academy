@@ -7490,6 +7490,7 @@ function renderManuals(){
       +'<span style="font-size:11px;color:var(--t2);font-weight:600;flex-shrink:0">'+(open?'▲ 접기':'▼ 펼치기')+'</span></div>'
       +(open?('<div style="padding:0 12px 11px">'
         +'<div style="font-size:12.5px;color:var(--te);line-height:1.7;white-space:pre-wrap;background:var(--s2);border-radius:9px;padding:11px 13px">'+dEsc(doc.body||'')+'</div>'
+        +'<button onclick="manExportImage(\''+doc.id+'\')" style="width:100%;margin-top:8px;font-size:11.5px;background:var(--s1);border:1px solid var(--g);color:var(--g);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🖼 이 매뉴얼을 그림으로 저장</button>'
         +(canEd?'<div style="display:flex;gap:8px;margin-top:8px"><button onclick="manEditDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--acc);color:var(--acc);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">✎ 수정</button>'+(isOw?'<button onclick="manDelDoc(\''+_manTab+'\',\''+doc.id+'\')" style="flex:1;font-size:11.5px;background:var(--s1);border:1px solid var(--rd);color:var(--rd);border-radius:8px;padding:7px;cursor:pointer;font-weight:600">🗑 삭제</button>':'')+'</div>':'')
         +'</div>'):'')
       +'</div>';
@@ -7499,6 +7500,7 @@ function renderManuals(){
     +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--pu);color:var(--pu)" onclick="manPickFile(\'docs\')">📂 파일·캡쳐 올리기 → 상세 매뉴얼로</button>'
     +'<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:6px;border-color:var(--acc);color:var(--acc)" onclick="manPickFile(\'all\')">📂 파일·캡쳐 올리기 → 자동 분류 (월간+상세)</button>'
     +'<div style="border:1.5px dashed var(--s3);border-radius:var(--rs);padding:11px;margin-top:8px;text-align:center;font-size:11.5px;color:var(--t3)">📎 파일을 이 창에 <b>끌어다 놓아도</b> 자동 인식돼요<br>한글(hwpx)·워드·PDF·텍스트·<b>캡쳐 이미지</b> (여러 개 가능)</div>';
+  h+='<button class="btn ghost" style="padding:9px;font-size:12.5px;margin-top:10px;border-color:var(--g);color:var(--g)" onclick="manExportImage()">🖼 이 탭 전체를 그림파일(PNG)로 저장</button>';
   var body=document.getElementById('man-body'); if(body) body.innerHTML=h;
 }
 // ── 연간 일정 파일/캡쳐 인식: 표·"N월" 구간·인라인 문장 ──
@@ -7849,6 +7851,124 @@ function manImportApply(){
 }
 var _manYrAll=false;
 function manYrToggle(){ _manYrAll=!_manYrAll; renderManuals(); }
+// ── 매뉴얼을 그림(PNG)으로 저장해 보거나 공유 ──
+function _imgWrap(ctx, text, maxW){
+  var out=[];
+  String(text||'').split('\n').forEach(function(para){
+    if(!para){ out.push(''); return; }
+    var cur='';
+    for(var i=0;i<para.length;i++){
+      var t=cur+para[i];
+      if(ctx.measureText(t).width>maxW && cur){ out.push(cur); cur=para[i]; }
+      else cur=t;
+    }
+    out.push(cur);
+  });
+  return out;
+}
+function manExportImage(singleDocId){
+  if(!manCanView(_manTab)){ toast('이 부서 매뉴얼은 열람 권한이 없어요','var(--rd)'); return; }
+  try{
+    var m=_manDB(), dept=m[_manTab], ym=_manYM(), done=m.done[ym]||{};
+    var rawLb=((MAN_DEPTS.find(function(x){return x.key===_manTab;})||{}).label||'');
+    var lb=rawLb.replace(/^[^\uAC00-\uD7A3A-Za-z0-9()]+\s*/,'');
+    var FAM='-apple-system,"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+    var C={t:'#17213c', h:'#3454d1', b:'#2a3350', s:'#6a7390', g:'#1d9a6c', am:'#b36b00', line:'#dfe4f0'};
+    var items=[];
+    function add(t,f,c,gap,ind){ items.push({t:t,f:f,c:c,gap:gap||0,ind:ind||0}); }
+    function hr(gap){ items.push({hr:1,gap:gap||14}); }
+    var F_T='700 25px '+FAM, F_D='400 12.5px '+FAM, F_H='700 17.5px '+FAM, F_M='700 14.5px '+FAM, F_B='500 14px '+FAM, F_S='400 12.5px '+FAM;
+    var now=new Date(), fname='';
+    var singleDoc=singleDocId?(dept.docs||[]).find(function(x){return x.id===singleDocId;}):null;
+    if(singleDoc){
+      add(singleDoc.title, F_T, C.t);
+      add((singleDoc.upd||singleDoc.date||today())+' 기준 · '+lb+' 업무 매뉴얼 · 루트탑 교무실', F_D, C.s, 6);
+      hr(14);
+      String(singleDoc.body||'').split('\n').forEach(function(ln){ add(ln||' ', F_B, C.b, ln?2:6); });
+      fname='매뉴얼_'+singleDoc.title.replace(/[\\/:*?"<>|\s]+/g,'_').slice(0,30)+'_'+today()+'.png';
+    } else {
+      add('업무 매뉴얼 · '+lb, F_T, C.t);
+      add(today()+' 기준 · 루트탑 교무실', F_D, C.s, 6);
+      if(_manTab==='gyomu' && (m.basics||[]).length){
+        hr(16); add('기본 팀장 업무 (상시)', F_H, C.h, 2);
+        m.basics.forEach(function(b){
+          add('· '+(b.freq?('['+b.freq+'] '):'')+b.title, F_B, C.b, 7);
+          if(b.desc) String(b.desc).split('\n').slice(0,6).forEach(function(d){ add(d, F_S, C.s, 2, 16); });
+        });
+      }
+      var okN=(dept.monthly||[]).filter(function(it){ return done[it.id]; }).length;
+      hr(16); add(now.getFullYear()+'년 '+(now.getMonth()+1)+'월 필수 업무  ('+okN+'/'+(dept.monthly||[]).length+' 완료)', F_H, C.h, 2);
+      if(!(dept.monthly||[]).length) add('등록된 월간 업무가 없어요', F_S, C.s, 7);
+      (dept.monthly||[]).slice().sort(function(a,b){ return (a.when||'').localeCompare(b.when||''); }).forEach(function(it){
+        var dn=done[it.id];
+        add((dn?'✓ ':'□ ')+(it.when?('['+it.when+'] '):'')+it.title+(dn?('  — 완료 '+(dn.by||'')+' '+(dn.date||'')):''), F_B, dn?C.g:C.b, 7);
+        if(it.desc) String(it.desc).split('\n').slice(0,4).forEach(function(d){ add(d, F_S, C.s, 2, 18); });
+      });
+      var ann=(dept.annual||[]);
+      if(ann.length){
+        hr(16); add('연간 일정', F_H, C.h, 2);
+        var byMo={}; ann.forEach(function(a){ var mo=parseInt(a.month,10)||0; if(!byMo[mo]) byMo[mo]=[]; byMo[mo].push(a); });
+        Object.keys(byMo).map(Number).sort(function(a,b){ return a-b; }).forEach(function(mo){
+          add(mo+'월'+(mo===now.getMonth()+1?'  ← 이번 달':''), F_M, mo===now.getMonth()+1?C.am:C.t, 10);
+          byMo[mo].slice().sort(function(a,b){ return (a.when||'').localeCompare(b.when||''); }).forEach(function(a){
+            add('· '+(a.when?('['+a.when+'] '):'')+a.title+(a.desc?(' — '+a.desc):''), F_B, C.b, 4, 14);
+          });
+        });
+      }
+      if((dept.docs||[]).length){
+        hr(16); add('업무별 상세 매뉴얼', F_H, C.h, 2);
+        dept.docs.forEach(function(doc){
+          add('■ '+doc.title, F_M, C.t, 12);
+          var bls=String(doc.body||'').split('\n');
+          bls.slice(0,60).forEach(function(ln){ add(ln||' ', F_S, C.b, ln?2:5, 14); });
+          if(bls.length>60) add('… 이하 생략 (전체 내용은 앱에서 확인)', F_S, C.s, 4, 14);
+        });
+      }
+      fname='업무매뉴얼_'+lb.replace(/[\\/:*?"<>|\s()]+/g,'_')+'_'+today()+'.png';
+    }
+    add('© 루트탑수학학원 · 루트탑 교무실 앱에서 생성', F_D, C.s, 22);
+    // ── 측정 → 그리기 ──
+    var W=860, PAD=38, maxW=W-PAD*2;
+    var cv=document.createElement('canvas');
+    var ctx=cv.getContext('2d');
+    var ops=[], y=PAD+8;
+    items.forEach(function(it){
+      y+=it.gap;
+      if(it.hr){ ops.push({hr:1,y:y}); y+=2; return; }
+      ctx.font=it.f;
+      var lh=Math.round(parseFloat((it.f.match(/(\d+(?:\.\d+)?)px/)||[0,14])[1])*1.52);
+      _imgWrap(ctx, it.t, maxW-it.ind).forEach(function(ln){
+        if(y<15600) ops.push({t:ln,f:it.f,c:it.c,x:PAD+it.ind,y:y});
+        y+=lh;
+      });
+    });
+    var trunc=false;
+    if(y>15600){ y=15640; trunc=true; }
+    var H=Math.ceil(y+PAD);
+    cv.width=W*2; cv.height=H*2;
+    ctx=cv.getContext('2d'); ctx.scale(2,2); ctx.textBaseline='top';
+    ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#3454d1'; ctx.fillRect(0,0,W,6);
+    ops.forEach(function(o){
+      if(o.hr){ ctx.strokeStyle='#dfe4f0'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(PAD,o.y); ctx.lineTo(W-PAD,o.y); ctx.stroke(); return; }
+      ctx.font=o.f; ctx.fillStyle=o.c; ctx.fillText(o.t,o.x,o.y);
+    });
+    if(trunc){ ctx.font='400 12.5px '+FAM; ctx.fillStyle='#6a7390'; ctx.fillText('… 내용이 길어 일부만 담았어요 (전체는 앱에서 확인)', PAD, H-PAD); }
+    var url=cv.toDataURL('image/png');
+    _manImgShow(url, fname);
+  }catch(e){ toast('그림 생성 중 오류가 났어요','var(--rd)'); }
+}
+function _manImgShow(url, fname){
+  var ex=document.getElementById('ov-manimg'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-manimg" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1300"><div class="modal" style="max-height:90vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">🖼 그림파일 미리보기</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">[저장]을 누르면 PNG 파일로 내려받아요. 휴대폰에서는 그림을 길게 눌러 저장하거나 공유할 수도 있어요.</div>'
+    +'<img src="'+url+'" alt="매뉴얼 그림" style="width:100%;border:1px solid var(--s3);border-radius:10px;background:#fff">'
+    +'<a href="'+url+'" download="'+dEsc(fname||'매뉴얼.png')+'" style="display:block;text-align:center;background:var(--acc);color:#fff;border-radius:12px;padding:12px;font-weight:800;text-decoration:none;margin-top:10px">💾 저장 (PNG)</a>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-manimg\').remove()">닫기</button>'
+    +'</div></div>');
+}
 // ── 연간 일정 추가/수정/삭제 ──
 function manEditAnnual(dept,id){
   if(!manCanEdit()){ toast('수정 권한이 없어요','var(--rd)'); return; }
