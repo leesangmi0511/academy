@@ -6169,12 +6169,15 @@ function _renderTlj(){
       +(function(){ // 🗓 이번 주 계획 (주간 계획에서 미완료 항목 체크 → 오늘 한 일 기록 + 완료 처리)
         var wl=((DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]).filter(function(x){ return !x.done; });
         if(!wl.length) return '';
+        var _dm=wkDupMap(_wkKey());
         return '<label class="fl">🗓 이번 주 계획 ('+wl.length+'건 남음) — 오늘 완료한 것 체크</label>'
           +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">'
           +wl.map(function(t){
             return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--s2);cursor:pointer">'
               +'<input type="checkbox" class="tlj-wk" data-id="'+t.id+'" data-t="'+dEsc(t.text)+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
-              +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+(t.day?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700;margin-right:4px">'+dEsc(t.day)+'</span>':'')+dEsc(t.text)+'</span></label>';
+              +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+(t.day?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700;margin-right:4px">'+dEsc(t.day)+'</span>':'')+dEsc(t.text)
+              +(function(){ var o=(_dm[String(t.text||'').replace(/\s+/g,'')]||[]).filter(function(nm){ return nm!==ME.name; }); return o.length?'<span style="display:block;font-size:9.5px;color:var(--am);font-weight:700;margin-top:1px">⚠ 중복('+dEsc(o.join('·'))+') — 주간 계획에서 협의/확인'+(t.dupSt==='talk'?' · 협의 중':t.dupSt==='ok'?' · 확인됨':'')+'</span>':''; })()
+              +'</span></label>';
           }).join('')
           +'<div style="font-size:9.5px;color:var(--t3);padding:5px 0">＊ 체크하면 오늘 한 일에 기록되고 주간 계획도 완료 처리돼요</div></div>';
       })()
@@ -7718,15 +7721,27 @@ function _renderWkPlan(){
   if(list.length) h+='<div style="font-size:11px;font-weight:700;color:'+(dn===list.length?'var(--g)':'var(--am)')+';margin-bottom:8px;text-align:center">'+dn+'/'+list.length+' 완료</div>';
   if(!list.length) h+='<div class="empty" style="font-size:12px;padding:10px 0">이 주의 계획이 없어요'+(mine?' — 회의에서 정리한 계획을 추가하세요':'')+'</div>';
   var order=function(x){ var i=WK_DAYS.indexOf(x.day||''); return i<0?9:i; };
+  var dupMap=wkDupMap(_wkCur);
   list.slice().sort(function(a,b){ return order(a)-order(b); }).forEach(function(t){
-    h+='<div style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid '+(t.done?'var(--g)':'var(--s3)')+';border-radius:10px;padding:9px 11px;margin-bottom:5px">'
+    var dk=String(t.text||'').replace(/\s+/g,'');
+    var others=(dupMap[dk]||[]).filter(function(nm){ return nm!==_wkFor; });
+    var isDup=others.length>0;
+    h+='<div style="display:flex;gap:9px;align-items:flex-start;background:var(--s1);border:1px solid '+(t.done?'var(--g)':isDup&&t.dupSt!=='ok'?'var(--am)':'var(--s3)')+';border-radius:10px;padding:9px 11px;margin-bottom:5px">'
       +(mine?'<input type="checkbox" '+(t.done?'checked':'')+' onchange="wkToggle(\''+t.id+'\')" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g);cursor:pointer">'
         :'<span style="flex-shrink:0;font-size:13px">'+(t.done?'✅':'⬜')+'</span>')
       +'<span style="flex:1;min-width:0;font-size:12.5px;line-height:1.5;'+(t.done?'color:var(--t3);text-decoration:line-through':'')+'">'
       +(t.day?'<span style="font-size:10px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700;margin-right:5px;text-decoration:none;display:inline-block">'+dEsc(t.day)+'</span>':'')+dEsc(t.text)
+      +(isDup?'<span style="display:block;font-size:10.5px;color:var(--am);font-weight:700;text-decoration:none;margin-top:2px">⚠ 중복 — '+dEsc(others.join('·'))+'님 계획에도 있어요'
+        +(t.dupSt==='talk'?' · <span style="color:var(--am)">🤝 협의 중</span>':t.dupSt==='ok'?' · <span style="color:var(--g)">✔ 확인됨 (진행)</span>':'')+'</span>':'')
       +(t.done&&t.doneDate?'<span style="display:block;font-size:10px;color:var(--g);text-decoration:none;margin-top:1px">✓ '+dEsc(t.doneDate)+' 완료</span>':'')+'</span>'
       +((mine||isOw)?'<button onclick="wkDel(\''+dEsc(_wkFor)+'\',\''+t.id+'\')" style="font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;flex-shrink:0">삭제</button>':'')
       +'</div>';
+    if(isDup && mine && !t.done){
+      h+='<div style="display:flex;gap:6px;margin:-2px 0 7px 27px">'
+        +'<button onclick="wkDupSet(\''+t.id+'\',\'talk\')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;cursor:pointer;border:1px solid var(--am);background:'+(t.dupSt==='talk'?'var(--am)':'var(--s1)')+';color:'+(t.dupSt==='talk'?'#fff':'var(--am)')+';font-weight:700">🤝 협의 필요</button>'
+        +'<button onclick="wkDupSet(\''+t.id+'\',\'ok\')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;cursor:pointer;border:1px solid var(--g);background:'+(t.dupSt==='ok'?'var(--g)':'var(--s1)')+';color:'+(t.dupSt==='ok'?'#fff':'var(--g)')+';font-weight:700">✔ 확인 (내가 진행)</button>'
+        +'</div>';
+    }
   });
   h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-wkplan\').remove()">닫기</button>'
     +'</div></div>';
@@ -7824,6 +7839,27 @@ function wkImportApply(){
   var ov=document.getElementById('ov-wkimport'); if(ov) ov.remove();
   _wkImp=null; _renderWkPlan();
   toast('✓ '+names.map(function(n){ return n+' '+added[n]+'건'; }).join(' · ')+' 추가'+(skip?' (담당 미지정 '+skip+'건 제외)':''),'var(--g)');
+}
+// 같은 주에 같은 내용이 여러 관리자에게 있는 중복 항목 찾기
+function wkDupMap(wk){
+  var map={};
+  Object.keys(DB.wkplan||{}).forEach(function(nm){
+    (((DB.wkplan[nm]||{})[wk])||[]).forEach(function(t){
+      var k=String(t.text||'').replace(/\s+/g,''); if(!k) return;
+      if(!map[k]) map[k]=[];
+      if(map[k].indexOf(nm)<0) map[k].push(nm);
+    });
+  });
+  var out={};
+  Object.keys(map).forEach(function(k){ if(map[k].length>1) out[k]=map[k]; });
+  return out;
+}
+function wkDupSet(id, st){
+  var t=_wkList(ME.name,_wkCur).find(function(x){ return x.id===id; }); if(!t) return;
+  t.dupSt=(t.dupSt===st)?'':st; // 같은 버튼 다시 누르면 해제
+  try{ logChange('주간 계획 중복 '+(st==='talk'?'협의':'확인'), ME.name+' — '+String(t.text||'').slice(0,40)); }catch(e){}
+  saveAll(); _renderWkPlan();
+  toast(t.dupSt==='talk'?'🤝 협의 필요로 표시했어요 — 원장님과 상대 팀장에게 보여요':t.dupSt==='ok'?'✔ 확인됨 — 내가 진행하는 것으로 표시':'표시 해제됨','var(--g)');
 }
 function wkAdd(){
   var text=((document.getElementById('wk-text')||{}).value||'').trim();
@@ -7978,7 +8014,16 @@ function wbOwnerAlerts(){
     ((DB.cfg&&DB.cfg.teachers)||[]).forEach(function(a){ if(a&&a.name&&(a.pw==='7193455'||String(a.pw||'').length<4)) weak.push(a.name+'(강사)'); });
     if(weak.length) alerts.push({sev:'warn', text:'초기·약한 비밀번호 사용: '+weak.slice(0,6).join('·')+(weak.length>6?' 외 '+(weak.length-6)+'명':''), info:'[내 비밀번호 변경]으로 직접 바꾸도록 안내하세요', src:'🔑 보안 점검'});
   }catch(e){}
-  // 4-2) 팀장일지 미작성 (어제 기준 · 일요일 제외)
+  // 4-2) 주간 계획 중복 — 협의 필요 표시된 항목
+  try{
+    var _wk=_wkKey(); var _dups=wkDupMap(_wk); var _talks=[];
+    Object.keys(DB.wkplan||{}).forEach(function(nm){ (((DB.wkplan[nm]||{})[_wk])||[]).forEach(function(t){
+      var k=String(t.text||'').replace(/\s+/g,'');
+      if(_dups[k] && t.dupSt==='talk') _talks.push(nm+': '+t.text);
+    }); });
+    if(_talks.length) alerts.push({sev:'warn', text:'주간 계획 중복 — 협의 필요 '+_talks.length+'건', info:_talks.slice(0,3).join(' · '), src:'주간 계획'});
+  }catch(e){}
+  // 4-3) 팀장일지 미작성 (어제 기준 · 일요일 제외)
   try{
     var y=new Date(Date.now()-86400000);
     if(y.getDay()!==0){
