@@ -5582,6 +5582,14 @@ function renderAdminListBody() {
          + '</div>';
     });
   }
+  // 최근 비밀번호 변경 이력 (원장 확인용)
+  var plog=((DB.cfg&&DB.cfg.pwLog)||[]).slice(-10).reverse();
+  if(plog.length){
+    h += '<div style="font-size:12px;font-weight:700;margin:10px 0 4px">🔑 최근 비밀번호 변경 이력</div>'
+      + '<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:4px 12px;margin-bottom:8px">'
+      + plog.map(function(x){ return '<div style="display:flex;justify-content:space-between;font-size:11.5px;padding:6px 0;border-bottom:1px solid var(--s2)"><span style="font-weight:600">'+dEsc(x.name||'')+' <span style="color:var(--t3);font-weight:500">('+(x.role==='admin'?'관리자':x.role==='staff'?'행정팀':'강사')+')</span></span><span style="color:var(--t3)">'+dEsc(x.date||'')+'</span></div>'; }).join('')
+      + '</div>';
+  }
   document.getElementById('admin-list-body').innerHTML = h;
 }
 
@@ -7807,7 +7815,15 @@ function wbOwnerAlerts(){
       if(sev) alerts.push({sev:sev, text:(w?('['+w+'] '):'')+it.title, info:why, src:dp.label});
     }); });
   }catch(e){}
-  // 4) 팀장일지 미작성 (어제 기준 · 일요일 제외)
+  // 4) 초기·약한 비밀번호 사용 구성원 (보안 점검)
+  try{
+    var weak=[];
+    ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(a&&a.name&&(a.pw==='7193455'||String(a.pw||'').length<4)) weak.push(a.name+'(관리자)'); });
+    ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(a){ if(a&&a.name&&(a.pw==='7193455'||String(a.pw||'').length<4)) weak.push(a.name+'(행정)'); });
+    ((DB.cfg&&DB.cfg.teachers)||[]).forEach(function(a){ if(a&&a.name&&(a.pw==='7193455'||String(a.pw||'').length<4)) weak.push(a.name+'(강사)'); });
+    if(weak.length) alerts.push({sev:'warn', text:'초기·약한 비밀번호 사용: '+weak.slice(0,6).join('·')+(weak.length>6?' 외 '+(weak.length-6)+'명':''), info:'[내 비밀번호 변경]으로 직접 바꾸도록 안내하세요', src:'🔑 보안 점검'});
+  }catch(e){}
+  // 4-2) 팀장일지 미작성 (어제 기준 · 일요일 제외)
   try{
     var y=new Date(Date.now()-86400000);
     if(y.getDay()!==0){
@@ -10646,6 +10662,7 @@ function renderAccTList() {
           +'<div class="av" style="width:36px;height:36px;border-radius:9px;background:'+bg+';color:'+c+';font-size:14px;flex-shrink:0">'+t.name.slice(0,1)+'</div>'
           +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:500">'+t.name+'</div>'
           +'<div style="font-size:11px;color:var(--t2);margin-top:1px">'+(t.phone?'📱 '+t.phone.slice(0,-4).replace(/./g,'*')+t.phone.slice(-4):'전화번호 미등록')+'</div></div>'
+          +(ME&&ME.role==='owner'?'<div style="font-size:11px;color:var(--acc);margin-top:1px">🔑 현재 비밀번호: <b>'+dEsc(t.pw||'—')+'</b>'+(t.pwChanged?' <span style="color:var(--am);font-weight:700">(본인 변경 '+dEsc(t.pwChanged.date||'')+')</span>':'')+'</div>':'')
           +'<button style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer;margin-right:6px" onclick="openEditTeacher('+i+')">수정</button>'
           +'<button style="font-size:11px;color:var(--rd);background:none;border:none;cursor:pointer" onclick="doDelTeacher('+i+')">삭제</button>'
           +'</div>';
