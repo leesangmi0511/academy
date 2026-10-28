@@ -5600,6 +5600,17 @@ function openAdminList() {
   openModal('ov-admin-list');
 }
 
+function admTitle(name){
+  var a=((DB.cfg&&DB.cfg.admins)||[]).find(function(x){ return x&&x.name===name; });
+  return (a&&a.title)||'';
+}
+function admLabel(name){ var t=admTitle(name); return t?(name+' '+t):name; }
+function setAdminTitle(idx, t){
+  var a=DB.cfg.admins[idx]; if(!a) return;
+  a.title=t;
+  logChange('관리자 수정', a.name+' 직책 → '+(t||'미지정'));
+  saveAll(); renderAdminListBody(); toast(a.name+' 직책이 '+(t||'미지정')+'(으)로 변경됐어요 ✓','var(--g)');
+}
 function renderAdminListBody() {
   var admins = DB.cfg.admins || [];
   var h = '';
@@ -5611,7 +5622,8 @@ function renderAdminListBody() {
          + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'
            + '<div style="width:32px;height:32px;border-radius:50%;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700">'+a.name.slice(0,1)+'</div>'
            + '<div style="flex:1">'
-             + '<div style="font-size:14px;font-weight:600">'+a.name+'</div>'
+             + '<div style="font-size:14px;font-weight:600">'+a.name+(a.title?' <span style="font-size:10.5px;background:'+(a.title==='실장'?'var(--acc-l)':'var(--gl)')+';color:'+(a.title==='실장'?'var(--acc)':'var(--g)')+';border-radius:6px;padding:2px 7px;font-weight:700">'+dEsc(a.title)+'</span>':'')
+             + ' <select onchange="setAdminTitle('+i+',this.value)" style="font-size:10.5px;padding:2px 4px;border:1px solid var(--s3);border-radius:6px;background:var(--s1);color:var(--t2)"><option value=""'+(!a.title?' selected':'')+'>직책 선택</option><option value="실장"'+(a.title==='실장'?' selected':'')+'>실장</option><option value="팀장"'+(a.title==='팀장'?' selected':'')+'>팀장</option></select></div>'
              + '<div style="font-size:11px;color:var(--t3)">등록일: '+(a.date||'—')+' · 현재 비밀번호: <b style="color:var(--acc)">'+dEsc(a.pw||'—')+'</b>'+(a.pwChanged?' <span style="color:var(--am);font-weight:700">(본인 변경 '+dEsc(a.pwChanged.date||'')+')</span>':'')+'</div>'
            + '</div>'
            + '<button onclick="deleteAdmin('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:18px;padding:4px">✕</button>'
@@ -5642,12 +5654,13 @@ function addAdminToList() {
   if(DB.cfg.admins.find(function(a){return a.name===name;})) {
     toast('이미 등록된 이름이에요','var(--rd)'); return;
   }
-  DB.cfg.admins.push({name:name, pw:'7193455', date:today()});
+  var title = confirm('직책을 선택하세요.\n\n[확인] = 실장   [취소] = 팀장') ? '실장' : '팀장';
+  DB.cfg.admins.push({name:name, title:title, pw:'7193455', date:today()});
   try{ _fbProvisionOne('admin', name, '7193455'); }catch(e){}
   logChange('관리자 추가', name);
   saveAll();
   renderAdminListBody();
-  toast('관리자 '+name+' 추가됐어요 ✓');
+  toast(title+' '+name+' 추가됐어요 ✓');
 }
 
 function deleteAdmin(idx) {
@@ -6047,7 +6060,7 @@ function openAdminEval() {
     if(a.adminEvalTotal!==undefined && adjSum!==0) score += ' → 종합 '+Math.max(0,Math.min(100,a.adminEvalTotal+adjSum))+'점';
     h += '<button onclick="document.getElementById(\'ov-admineval-menu\').remove();openAdminEvalFor(\''+a.name+'\')" '
        + 'style="width:100%;text-align:left;background:var(--s2);border:1px solid var(--s3);border-radius:var(--rs);padding:12px 14px;margin-bottom:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">'
-       + '<span style="font-size:14px;font-weight:600">'+a.name+'</span>'
+       + '<span style="font-size:14px;font-weight:600">'+a.name+(a.title?' <span style="font-size:10.5px;color:var(--acc);font-weight:700">'+a.title+'</span>':'')+'</span>'
        + '<span style="font-size:11px;color:var(--t2)">'+score+date+'</span>'
        + '</button>';
   });
@@ -6165,7 +6178,7 @@ function _renderTlj(){
     if(!admins.length) h+='<div class="empty">등록된 관리자가 없어요</div>';
     else{
       if(!_tljViewFor) _tljViewFor=admins[0];
-      h+='<div class="rank-tab-row">'+admins.map(function(nm){ return '<div class="rank-tab'+(_tljViewFor===nm?' on':'')+'" onclick="_tljViewFor=\''+dEsc(nm)+'\';_renderTlj()">'+dEsc(nm)+'</div>'; }).join('')+'</div>';
+      h+='<div class="rank-tab-row">'+admins.map(function(nm){ return '<div class="rank-tab'+(_tljViewFor===nm?' on':'')+'" onclick="_tljViewFor=\''+dEsc(nm)+'\';_renderTlj()">'+dEsc(admLabel(nm))+'</div>'; }).join('')+'</div>';
       var st=calcAdminTljStats(_tljViewFor);
       h+='<div style="display:flex;gap:6px;margin:10px 0;font-size:11px;font-weight:700">'
         +'<span style="flex:1;text-align:center;background:var(--s2);color:var(--acc);border-radius:8px;padding:7px 0">이번 달 작성 '+st.days+'일</span>'
@@ -7694,7 +7707,7 @@ function _renderWorkBoard(){
       rates.forEach(function(r,ri){
         var col=r.rate===null?'var(--t3)':r.rate>=80?'var(--g)':r.rate>=50?'var(--am)':'var(--rd)';
         h2+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:9px 12px;margin-bottom:6px">'
-          +'<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:700">'+(r.rate!==null?(ri+1)+'위 · ':'')+dEsc(r.name)+'</span>'
+          +'<div style="display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:700">'+(r.rate!==null?(ri+1)+'위 · ':'')+dEsc(admLabel(r.name))+'</span>'
           +'<span style="font-size:13px;font-weight:800;color:'+col+'">'+(r.rate===null?'할 일 없음':r.rate+'%')+'</span></div>'
           +(r.rate!==null?('<div style="height:7px;background:var(--s2);border-radius:4px;margin-top:6px;overflow:hidden"><div style="height:7px;width:'+r.rate+'%;background:'+col+';border-radius:4px"></div></div>'):'')
           +'<div style="font-size:10.5px;color:var(--t3);margin-top:5px">완료 '+r.done+'/'+r.tot+' · 기한 '+r.dlOk+'/'+r.dlT+(r.dlLate?' (<span style="color:var(--rd);font-weight:700">어김 '+r.dlLate+'</span>)':'')+' · 피드백 '+r.fbOk+'/'+r.fbT
@@ -8389,7 +8402,7 @@ function renderAdminHome() {
   // 유저배지
   h += '<div class="ubadge">'
      + '<div style="width:28px;height:28px;border-radius:7px;background:var(--acc-l);color:var(--acc);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">관</div>'
-     + '<span style="font-size:13px;font-weight:600;flex:1">'+(ME.role==='owner'?'원장':(ME.role==='staff'?ME.name+' (행정팀)':'관리자'))+'</span>'
+     + '<span style="font-size:13px;font-weight:600;flex:1">'+(ME.role==='owner'?(ME.name&&ME.name!=='원장'?ME.name+' (원장단)':'원장'):(ME.role==='staff'?ME.name+' (행정팀)':(ME.name&&ME.name!=='관리자'?ME.name+(admTitle(ME.name)?' '+admTitle(ME.name):' (관리자)'):'관리자')))+'</span>'
      + '<button onclick="openNotifSettings()" style="font-size:11px;color:var(--acc);background:none;border:none;cursor:pointer">🔔</button>'
      + '<button onclick="document.getElementById(\'btn-reset\').style.display=\'inline\';logout()" style="font-size:11px;color:var(--t2);background:none;border:none;cursor:pointer;margin-left:6px">로그아웃</button>'
      + '</div>'
