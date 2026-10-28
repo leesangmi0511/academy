@@ -8266,6 +8266,80 @@ function pwRecentChanges(days){
   var lim=Date.now()-(days||7)*86400000;
   return ((DB.cfg&&DB.cfg.pwLog)||[]).filter(function(x){ return (x.ts||0)>=lim; });
 }
+// ═══ 원장 명단 (원장단 · 대표 원장만 관리) ═══
+function openOwnerList(){
+  if(!(ME && ME.role==='owner')){ toast('원장만 볼 수 있어요','var(--rd)'); return; }
+  _renderOwnerList();
+}
+function _renderOwnerList(){
+  var ex=document.getElementById('ov-ownerlist'); if(ex) ex.remove();
+  var owners=(DB.cfg&&DB.cfg.owners)||[];
+  var isPrimary=(ME&&ME.name==='원장');
+  var h='<div class="ov open" id="ov-ownerlist" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">👑 원장 명단</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:12px">여기에 추가된 분들은 원장과 같은 권한으로 로그인합니다(원장 로그인에서 본인 비밀번호 입력). 추가·삭제는 대표 원장만 할 수 있어요.</div>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:10px 12px;margin-bottom:8px">'
+    +'<div style="font-size:13px;font-weight:700">원장 (대표)</div>'
+    +'<div style="font-size:11px;color:var(--t3);margin-top:2px">현재 비밀번호: <b style="color:var(--rd)">'+dEsc(DB.cfg.ownerPw||'7193455')+'</b> · 🔑 비밀번호 변경에서 수정</div></div>';
+  owners.forEach(function(o,i){
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--rs);padding:10px 12px;margin-bottom:8px">'
+      +'<div style="display:flex;align-items:center;gap:8px">'
+      +'<div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:700">'+dEsc(o.name)+'</div>'
+      +'<div style="font-size:11px;color:var(--t3);margin-top:2px">등록일: '+dEsc(o.date||'—')+' · 현재 비밀번호: <b style="color:var(--rd)">'+dEsc(o.pw||'—')+'</b>'+(o.pwChanged?' <span style="color:var(--am);font-weight:700">(본인 변경 '+dEsc(o.pwChanged.date||'')+')</span>':'')+'</div></div>'
+      +(isPrimary?'<button onclick="delOwner('+i+')" style="background:none;border:none;color:var(--rd);cursor:pointer;font-size:17px;padding:4px">✕</button>':'')
+      +'</div>'
+      +(isPrimary?('<div style="display:flex;gap:8px;margin-top:7px"><input class="fi" type="password" id="own-pw-'+i+'" placeholder="새 비밀번호" style="flex:1;margin:0;font-size:12px">'
+        +'<button onclick="changeOwnerMemberPw('+i+')" style="font-size:11px;color:var(--rd);background:var(--s1);border:1px solid var(--rd);border-radius:var(--rs);padding:6px 10px;cursor:pointer;white-space:nowrap">변경</button></div>'):'')
+      +'</div>';
+  });
+  if(!owners.length) h+='<div class="empty" style="font-size:12px;padding:6px 0">추가된 원장단이 없어요</div>';
+  if(isPrimary){
+    h+='<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:10px 12px;margin-top:4px">'
+      +'<input class="fi" id="own-new-name" placeholder="이름 (예: 김이사)" style="margin-bottom:6px">'
+      +'<input class="fi" type="password" id="own-new-pw" placeholder="비밀번호 (4자리 이상 · 다른 원장과 달라야 함)" style="margin-bottom:7px">'
+      +'<button onclick="addOwner()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--rd);background:none;color:var(--rd);font-size:12px;font-weight:700;cursor:pointer">+ 원장단 추가</button></div>';
+  }
+  h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-ownerlist\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function _ownerPwTaken(pw, exceptIdx){
+  if(pw===(DB.cfg.ownerPw||'7193455')) return true;
+  return ((DB.cfg&&DB.cfg.owners)||[]).some(function(o,i){ return o&&o.pw===pw&&i!==exceptIdx; });
+}
+function addOwner(){
+  if(!(ME&&ME.name==='원장')){ toast('대표 원장만 추가할 수 있어요','var(--rd)'); return; }
+  var name=((document.getElementById('own-new-name')||{}).value||'').trim();
+  var pw=(document.getElementById('own-new-pw')||{}).value||'';
+  if(!name){ toast('이름을 입력하세요','var(--rd)'); return; }
+  if(!pw||pw.length<4){ toast('비밀번호는 4자리 이상으로 해주세요','var(--rd)'); return; }
+  if(!DB.cfg.owners) DB.cfg.owners=[];
+  if(name==='원장'||DB.cfg.owners.some(function(o){ return o&&o.name===name; })){ toast('이미 있는 이름이에요','var(--rd)'); return; }
+  if(_ownerPwTaken(pw,-1)){ toast('다른 원장과 같은 비밀번호는 쓸 수 없어요 (로그인 구분용)','var(--rd)'); return; }
+  DB.cfg.owners.push({name:name, pw:pw, date:today()});
+  try{ _fbProvisionOne('owner', name, pw); }catch(e){}
+  logChange('원장단 추가', name);
+  saveAll(); _renderOwnerList(); toast('👑 '+name+' 원장단에 추가됐어요 ✓','var(--g)');
+}
+function changeOwnerMemberPw(i){
+  if(!(ME&&ME.name==='원장')) return;
+  var o=(DB.cfg.owners||[])[i]; if(!o) return;
+  var pw=(document.getElementById('own-pw-'+i)||{}).value||'';
+  if(!pw||pw.length<4){ toast('비밀번호는 4자리 이상으로 해주세요','var(--rd)'); return; }
+  if(_ownerPwTaken(pw,i)){ toast('다른 원장과 같은 비밀번호는 쓸 수 없어요','var(--rd)'); return; }
+  try{ _fbRotate('owner', o.name, o.pw, pw); }catch(e){}
+  o.pw=pw;
+  logChange('원장단 수정', o.name+' 비밀번호 변경');
+  saveAll(); _renderOwnerList(); toast(o.name+' 비밀번호 변경됐어요 ✓','var(--g)');
+}
+function delOwner(i){
+  if(!(ME&&ME.name==='원장')){ toast('대표 원장만 삭제할 수 있어요','var(--rd)'); return; }
+  var o=(DB.cfg.owners||[])[i]; if(!o) return;
+  if(!confirm('「'+o.name+'」을(를) 원장단에서 삭제할까요?')) return;
+  DB.cfg.owners.splice(i,1);
+  logChange('원장단 삭제', o.name);
+  saveAll(); _renderOwnerList(); toast('삭제됐어요');
+}
 function openMyPw2(){
   var rec=null, role=ME&&ME.role;
   if(role==='admin') rec=(DB.cfg.admins||[]).find(function(a){ return a&&a.name===ME.name; });
@@ -8321,7 +8395,7 @@ function renderAdminHome() {
      + '</div>'
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAdminEval()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👔 관리자 평가</button><button onclick="openAdminList()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 관리자 명단</button><button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지</button><button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업그레이드'+(function(){ try{ var n=0; Object.keys(DB.upg||{}).forEach(function(nm){ (DB.upg[nm]||[]).forEach(function(u){ if(u.status==='done'&&!u.confirmed) n++; }); }); return n?' <span style="color:var(--rd);font-weight:700">'+n+'</span>':''; }catch(e){ return ''; } })()+'</button></div>':'')
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
-     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
+     + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openOwnerList()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👑 원장 명단</button><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업 (복원·파일 저장)</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
      + (ME.role!=='owner'?(function(){ var bs='';
          if(canFeat('tlj')) bs+='<button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 팀장일지 작성</button>';
          if(canFeat('upgrades')) bs+='<button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업무 업그레이드</button>';
@@ -9701,10 +9775,15 @@ function refreshTSel() {
 function _doLoginCore() {
   var err=document.getElementById('li-err');
   if(loginRole==='owner'){
-    // 원장 로그인
+    // 원장 로그인 (대표 원장 비밀번호 또는 원장단 명단의 비밀번호)
     var ownerPw=DB.cfg.ownerPw||'7193455';
-    if(document.getElementById('li-opw').value!==ownerPw){err.textContent='비밀번호가 틀렸습니다.';return false;}
-    ME={role:'owner',name:'원장'};
+    var _opw=document.getElementById('li-opw').value;
+    if(_opw===ownerPw){ ME={role:'owner',name:'원장'}; }
+    else{
+      var _om=(DB.cfg.owners||[]).find(function(o){ return o && o.pw===_opw; });
+      if(!_om){ err.textContent='비밀번호가 틀렸습니다.'; return false; }
+      ME={role:'owner',name:_om.name};
+    }
   } else if(loginRole==='staff'){
     // 행정팀 로그인
     var sid = document.getElementById('li-sid').value.trim();
@@ -10722,8 +10801,12 @@ function tryAutoLogin() {
 
   if(cred.role==='owner'){
     var ownerPw = DB.cfg.ownerPw||'7193455';
-    if(!_pwEq(cred, ownerPw)) return false;
-    ME = {role:'owner', name:'원장'};
+    if(_pwEq(cred, ownerPw)){ ME = {role:'owner', name:'원장'}; }
+    else{
+      var _om=(DB.cfg.owners||[]).find(function(o){ return o && (cred.name?o.name===cred.name:true) && _pwEq(cred, o.pw); });
+      if(!_om) return false;
+      ME = {role:'owner', name:_om.name};
+    }
   } else if(cred.role==='staff'){
     var staffList = DB.cfg.staff||[];
     var fs = staffList.find(function(s){return s.name===cred.name;});
@@ -10836,10 +10919,18 @@ function openSetupModal() {
 function saveOwnerPw() {
   var pw = document.getElementById('owner-pw-input').value.trim();
   if(!pw){toast('비밀번호를 입력하세요','var(--rd)');return;}
-  try{ _fbRotate('owner','원장', DB.cfg.ownerPw||'7193455', pw); }catch(e){}
-  DB.cfg.ownerPw = pw;
+  var _om=(ME&&ME.name!=='원장')?(DB.cfg.owners||[]).find(function(o){ return o&&o.name===ME.name; }):null;
+  if((DB.cfg.owners||[]).some(function(o){ return o&&o.pw===pw&&(!_om||o.name!==_om.name); }) || (!_om&&false) || (pw===(DB.cfg.ownerPw||'7193455')&&_om)){ toast('다른 원장과 같은 비밀번호는 쓸 수 없어요','var(--rd)'); return; }
+  if(_om){
+    try{ _fbRotate('owner', _om.name, _om.pw, pw); }catch(e){}
+    _om.pw=pw; _om.pwChanged={date:today(),ts:Date.now()}; _pwLogAdd('owner', _om.name);
+    toast(_om.name+' 원장 비밀번호가 변경됐어요 ✓');
+  } else {
+    try{ _fbRotate('owner','원장', DB.cfg.ownerPw||'7193455', pw); }catch(e){}
+    DB.cfg.ownerPw = pw;
+    toast('원장 비밀번호가 변경됐어요 ✓');
+  }
   saveAll();
-  toast('원장 비밀번호가 변경됐어요 ✓');
   document.getElementById('owner-pw-input').value='';
 }
 function openOwnerPw() {
