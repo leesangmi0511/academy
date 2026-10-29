@@ -2390,7 +2390,22 @@ function logChange(action, detail){
 var _ROLE_KR={owner:'원장',staff:'행정팀',admin:'관리자',teacher:'강사'};
 // ── 관리자 회의록: 업로드(붙여넣기) + AI 요약/편집 ──
 var _meetings=null;
-var MT_TYPES=['실장-팀장 회의록','원장(이사)-실장 회의록','원장(이사)-실장-팀장 회의록','교무회의록(전체)','교무회의록'];
+var MT_TYPES=['실장-팀장 회의록','원장(이사)-실장 회의록','원장(이사)-실장-팀장 회의록','교무회의록(전체)','교무회의록','행정팀 회의록'];
+// 행정팀 회의록: 행정팀·원장단만 열람 (관리자에게는 목록·검색·현황판 어디에도 보이지 않음)
+function mtIsStaffType(m){ return ((m&&m.mtype)||'')==='행정팀 회의록'; }
+function mtCanSee(m){
+  if(!ME) return false;
+  if(ME.role==='owner') return true;
+  if(mtIsStaffType(m)) return ME.role==='staff';
+  return true;
+}
+function mtVisible(){ return (_meetings||[]).filter(mtCanSee); }
+function mtCanWrite(m){ // 작성·편집: 원장 전체 / 행정팀은 행정팀 회의록만
+  if(!ME) return false;
+  if(ME.role==='owner') return true;
+  if(ME.role==='staff') return !m || mtIsStaffType(m);
+  return false;
+}
 var MT_LEVELS=['초등','중등','고등'];
 var _mtFilter='';
 function mtTypeLabel(m){
@@ -2407,7 +2422,7 @@ function mtDlsOf(m){
 }
 // 관리자별 회의 기한 준수 통계 → 관리자 점수 보정
 function calcAdminMeetStats(name){
-  var ms=(_meetings||[]).filter(function(m){ return Array.isArray(m.who)&&m.who.indexOf(name)>=0; });
+  var ms=(_meetings||[]).filter(function(m){ return !mtIsStaffType(m) && Array.isArray(m.who)&&m.who.indexOf(name)>=0; });
   if(!ms.length) return null;
   var total=0, checked=0, ok=0, noDl=0;
   ms.forEach(function(m){
@@ -2512,7 +2527,7 @@ function renderMtTodo(){
   var p=ym.split('-');
   // 1) 기한 있는 할 일: 모든 회의록의 dls 중 이 달 날짜
   var dated=[];
-  (_meetings||[]).forEach(function(m){
+  mtVisible().forEach(function(m){
     if(!Array.isArray(m.dls)) return;
     m.dls.forEach(function(d,idx){
       if((d.date||'').slice(0,7)===ym) dated.push({mid:m.id, idx:idx, date:d.date, text:d.text, status:d.status||'', mtitle:m.title||m.date||'', who:(m.who||[])});
@@ -2584,7 +2599,7 @@ function _renderMeetList(loading){
   var body;
   if(loading){ body='<div style="padding:20px;text-align:center;color:var(--t3);font-size:12.5px">불러오는 중…</div>'; }
   else {
-    var arr=(_meetings||[]).slice().sort(function(a,b){ return (b.date||'')<(a.date||'')?-1:1; });
+    var arr=mtVisible().slice().sort(function(a,b){ return (b.date||'')<(a.date||'')?-1:1; });
     if(_mtFilter) arr=arr.filter(function(m){ return (m.mtype||'')===_mtFilter; });
     body = arr.length ? arr.map(function(m){
       var tl=mtTypeLabel(m);
@@ -2610,11 +2625,14 @@ function _renderMeetList(loading){
           +'</div>'; }).join('')
         +'</div>';
     })()
-    +((ME&&ME.role==='owner')?'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 새 회의록 작성</button>':'<div style="font-size:11px;color:var(--t3);margin-bottom:10px;text-align:center">회의록 작성·편집은 원장만 — 열람하고 💬 의견을 남길 수 있어요</div>')
+    +((ME&&ME.role==='owner')?'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 새 회의록 작성</button>'
+      :(ME&&ME.role==='staff')?'<button class="btn" style="margin-bottom:10px" onclick="mtOpen(null)">➕ 행정팀 회의록 작성 (행정팀·원장단만 열람)</button>'
+      :'<div style="font-size:11px;color:var(--t3);margin-bottom:10px;text-align:center">회의록 작성·편집은 원장만 — 열람하고 💬 의견을 남길 수 있어요</div>')
     +((!ME||ME.role==='owner'||canFeat('mttodo'))?'<button class="btn ghost" style="margin-bottom:10px;border-color:var(--acc);color:var(--acc)" onclick="openMtTodo()">📋 월별 할 일 정리 (회의 내용 자동 취합)</button>':'')
     +'<select class="fs" onchange="mtSetFilter(this.value)" style="margin-bottom:8px">'
       +'<option value="">전체 회의록 보기</option>'
-      +MT_TYPES.map(function(t){return '<option value="'+t+'"'+(_mtFilter===t?' selected':'')+'>'+t+(t==='교무회의록'?' (초·중·고 선택)':'')+'</option>';}).join('')
+      +MT_TYPES.filter(function(t){ return t!=='행정팀 회의록' || !ME || ME.role==='owner' || ME.role==='staff'; })
+        .map(function(t){return '<option value="'+t+'"'+(_mtFilter===t?' selected':'')+'>'+t+(t==='교무회의록'?' (초·중·고 선택)':'')+'</option>';}).join('')
     +'</select>'
     +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:var(--r);margin-bottom:12px;max-height:320px;overflow:auto">'+body+'</div>'
     +(loading?'':(function(){
@@ -2649,6 +2667,7 @@ function mtViewFileDl(fid,name){
 function mtView(id){
   var m=(_meetings||[]).find(function(x){ return x.id===id; });
   if(!m){ toast('회의록을 찾을 수 없어요','var(--rd)'); return; }
+  if(!mtCanSee(m)){ toast('행정팀 회의록은 행정팀과 원장단만 볼 수 있어요','var(--rd)'); return; }
   window._mtViewId=id;
   var ex=document.getElementById('ov-mtview'); if(ex) ex.remove();
   var tl=mtTypeLabel(m);
@@ -2721,8 +2740,8 @@ function mtView(id){
     }
   })();
   h+='<div style="display:flex;gap:8px;margin-top:12px">'
-    +(ME&&ME.role==='owner'?'<button class="btn" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove();mtOpen(\''+m.id+'\')">✏️ 편집</button>'
-      +'<button class="btn ghost" style="flex:1;color:var(--rd);border-color:var(--rd)" onclick="mtDelete(\''+m.id+'\')">🗑 삭제</button>':'')
+    +(mtCanWrite(m)?'<button class="btn" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove();mtOpen(\''+m.id+'\')">✏️ 편집</button>':'')
+    +(ME&&ME.role==='owner'?'<button class="btn ghost" style="flex:1;color:var(--rd);border-color:var(--rd)" onclick="mtDelete(\''+m.id+'\')">🗑 삭제</button>':'')
     +'<button class="btn ghost" style="flex:1" onclick="window._mtViewId=null;document.getElementById(\'ov-mtview\').remove()">닫기</button></div>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
@@ -2753,26 +2772,31 @@ function mtCmtDel(mid,cid){
     function(ok){ if(ok){ toast('삭제됐어요'); mtView(mid); } else toast('저장 실패','var(--rd)'); });
 }
 function mtOpen(id){
-  if(!(ME&&ME.role==='owner')){ toast('회의록 작성·편집은 원장만 할 수 있어요 — 아래 의견으로 남겨주세요','var(--rd)'); return; }
-  var m = id ? ((_meetings||[]).find(function(x){return x.id===id;})||{}) : {};
+  var m0=id?((_meetings||[]).find(function(x){return x.id===id;})||null):null;
+  if(!mtCanWrite(m0)){ toast(ME&&ME.role==='staff'?'행정팀은 [행정팀 회의록]만 작성·편집할 수 있어요':'회의록 작성·편집은 원장만 할 수 있어요 — 아래 의견으로 남겨주세요','var(--rd)'); return; }
+  var m = m0||{};
+  var stOnly=(ME&&ME.role==='staff');
+  if(stOnly && !id) m={mtype:'행정팀 회의록'};
   var ex=document.getElementById('ov-mtedit'); if(ex) ex.remove();
   var h='<div class="ov" id="ov-mtedit" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">'+(id?'✏️ 회의록 편집':'➕ 새 회의록')+'</div>'
     +'<input type="hidden" id="mt-id" value="'+(id||'')+'">'
     +'<label class="fl">날짜</label><input class="fi" id="mt-date" type="date" value="'+(m.date||today())+'">'
     +'<label class="fl">제목</label><input class="fi" id="mt-title" type="text" value="'+dEsc(m.title||'')+'" placeholder="예: 3월 4주차 관리자 회의">'
-    +'<label class="fl">회의록 종류</label>'
-    +'<select class="fs" id="mt-type" onchange="mtTypeChg()">'
-      +'<option value="">종류 선택 안 함</option>'
-      +MT_TYPES.map(function(t){return '<option value="'+t+'"'+((m.mtype||'')===t?' selected':'')+'>'+t+(t==='교무회의록'?' (초·중·고 선택)':'')+'</option>';}).join('')
+    +'<label class="fl">회의록 종류'+(stOnly?' (행정팀은 행정팀 회의록만)':'')+'</label>'
+    +'<select class="fs" id="mt-type" onchange="mtTypeChg()"'+(stOnly?' disabled':'')+'>'
+      +(stOnly?'<option value="행정팀 회의록" selected>행정팀 회의록 (행정팀·원장단만 열람)</option>'
+        :'<option value="">종류 선택 안 함</option>'
+        +MT_TYPES.map(function(t){return '<option value="'+t+'"'+((m.mtype||'')===t?' selected':'')+'>'+t+(t==='교무회의록'?' (초·중·고 선택)':'')+(t==='행정팀 회의록'?' (행정팀·원장단만 열람)':'')+'</option>';}).join(''))
     +'</select>'
     +'<div id="mt-levels" style="display:'+((m.mtype||'')==='교무회의록'?'flex':'none')+';flex-wrap:wrap;gap:6px;margin:2px 0 12px">'
       +MT_LEVELS.map(function(lv){ var on=Array.isArray(m.levels)&&m.levels.indexOf(lv)>=0; return '<span class="mt-lvchip" data-lv="'+lv+'" data-on="'+(on?'1':'0')+'" onclick="mtLvTgl(this)" style="padding:7px 14px;border-radius:16px;font-size:12.5px;cursor:pointer;'+(on?'background:var(--pu);color:#fff;border:1px solid var(--pu);font-weight:700':'background:var(--s2);color:var(--t2);border:1px solid var(--s3)')+'">'+lv+'</span>'; }).join('')
     +'</div>'
-    +'<label class="fl">회의 주체 (참석 관리자 · 여러 명 선택)</label>'
+    +'<label class="fl">회의 주체 (참석자 · 여러 명 선택)</label>'
     +'<div id="mt-who" style="display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 12px">'
       +(function(){
-        var admList=((DB.cfg&&DB.cfg.admins)?DB.cfg.admins:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+        var admList=((DB.cfg&&DB.cfg.admins)?DB.cfg.admins:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean)
+          .concat(((DB.cfg&&DB.cfg.staff)?DB.cfg.staff:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean));
         if(!admList.length) return '<span style="font-size:11.5px;color:var(--t3)">등록된 관리자가 없어요 · 관리자 명단에서 먼저 등록하세요</span>';
         return admList.map(function(nm){ var on=Array.isArray(m.who)&&m.who.indexOf(nm)>=0; return '<span class="mt-whochip" data-nm="'+dEsc(nm)+'" data-on="'+(on?'1':'0')+'" onclick="mtLvTgl(this)" style="padding:7px 14px;border-radius:16px;font-size:12.5px;cursor:pointer;'+(on?'background:var(--pu);color:#fff;border:1px solid var(--pu);font-weight:700':'background:var(--s2);color:var(--t2);border:1px solid var(--s3)')+'">'+dEsc(nm)+'</span>'; }).join('');
       })()
@@ -2794,9 +2818,10 @@ function mtOpen(id){
       +'<input class="fi" id="mt-fb-text" type="text" placeholder="피드백이 필요한 내용 (예: 홍보안 검토 의견 주세요)" style="margin-bottom:6px">'
       +'<div style="font-size:10.5px;color:var(--t3);margin-bottom:4px">확인할 대상 (선택 안 하면 참석 관리자 전원)</div>'
       +'<div id="mt-fb-who" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px">'
-      +(function(){ var admList=((DB.cfg&&DB.cfg.admins)?DB.cfg.admins:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
+      +(function(){ var admList=((DB.cfg&&DB.cfg.admins)?DB.cfg.admins:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean)
+          .concat(((DB.cfg&&DB.cfg.staff)?DB.cfg.staff:[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean));
         return admList.length?admList.map(function(nm){ return '<span class="mt-whochip" data-nm="'+dEsc(nm)+'" data-on="0" onclick="mtLvTgl(this)" style="padding:5px 11px;border-radius:14px;font-size:11.5px;cursor:pointer;background:var(--s2);color:var(--t2);border:1px solid var(--s3)">'+dEsc(nm)+'</span>'; }).join('')
-        :'<span style="font-size:10.5px;color:var(--t3)">등록된 관리자가 없어요</span>'; })()
+        :'<span style="font-size:10.5px;color:var(--t3)">등록된 참석자가 없어요</span>'; })()
       +'</div>'
       +'<button onclick="mtFbAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--pu);background:none;color:var(--pu);font-size:12px;font-weight:700;cursor:pointer">+ 피드백 요청 추가</button>'
     +'</div>'
@@ -2834,14 +2859,17 @@ function _mtSync(mutate, cb){
   });
 }
 function mtSave(){
-  if(!(ME&&ME.role==='owner')) return;
-  var id=document.getElementById('mt-id').value||('m'+Date.now());
+  var _eid=document.getElementById('mt-id').value||'';
+  var _em=_eid?((_meetings||[]).find(function(x){return x.id===_eid;})||null):null;
+  if(!mtCanWrite(_em)) return;
+  var id=_eid||('m'+Date.now());
   var date=document.getElementById('mt-date').value||today();
   var title=(document.getElementById('mt-title').value||'').trim();
   var raw=(document.getElementById('mt-raw').value||'').trim();
   var summary=(document.getElementById('mt-summary').value||'').trim();
   if(!title && !raw){ toast('제목이나 내용을 입력하세요','var(--rd)'); return; }
   var mtype=(document.getElementById('mt-type')||{}).value||'';
+  if(ME&&ME.role==='staff') mtype='행정팀 회의록'; // 행정팀은 항상 행정팀 회의록
   var levels=Array.prototype.map.call(document.querySelectorAll('#mt-levels .mt-lvchip[data-on="1"]'),function(el){return el.getAttribute('data-lv');});
   if(mtype==='교무회의록' && !levels.length){ toast('교무회의록은 초등·중등·고등 중 하나 이상 선택하세요','var(--rd)'); return; }
   var who=Array.prototype.map.call(document.querySelectorAll('#mt-who .mt-whochip[data-on="1"]'),function(el){return el.getAttribute('data-nm');});
@@ -2948,7 +2976,7 @@ var _mtFbs=[];
 function mtFbTargets(m,f){ return (f&&f.who&&f.who.length)?f.who:((m&&Array.isArray(m.who))?m.who:[]); }
 function mtMyPendingFb(){
   var out=[]; if(!ME||!ME.name) return out;
-  (_meetings||[]).forEach(function(m){ (m.fbs||[]).forEach(function(f){
+  (_meetings||[]).forEach(function(m){ if(!mtCanSee(m)) return; (m.fbs||[]).forEach(function(f){
     var tg=mtFbTargets(m,f);
     if(tg.indexOf(ME.name)>=0 && !(f.done&&f.done[ME.name])) out.push({mid:m.id, mtitle:m.title||m.date||'(제목 없음)', fid:f.id, text:f.text});
   });});
@@ -6298,6 +6326,7 @@ function calcAdminTljStats(name){
 function tljMyTodos(){
   var out=[]; if(!ME||!ME.name) return out;
   (_meetings||[]).forEach(function(m){
+    if(!mtCanSee(m)) return;
     (m.dls||[]).forEach(function(d,idx){ if(!d.status && mtDlIsMine(m,d,ME.name)) out.push({kind:'dl', mid:m.id, idx:idx, text:d.text, date:d.date, mtitle:m.title||m.date||''}); });
   });
   mtMyPendingFb().forEach(function(p){ out.push({kind:'fb', mid:p.mid, fid:p.fid, text:p.text, mtitle:p.mtitle}); });
@@ -8558,6 +8587,7 @@ function wbCollect(){
   var ym=getYearMonth();
   var done=[], open=[];
   (_meetings||[]).forEach(function(m){
+    if(!mtCanSee(m)) return;
     var src='📝 '+(m.title||m.date||'');
     (m.dls||[]).forEach(function(d){
       if(!d.status) open.push({type:'회의 기한', text:d.text, date:d.date||'', who:(d.owner?('담당 '+d.owner):(m.who||[]).join('·')), src:src});
@@ -8727,6 +8757,7 @@ function srRun(){
   if(isOw || canFeat('meetings')){
     var g1=grp('📝 회의록');
     (_meetings||[]).forEach(function(m){
+      if(!mtCanSee(m)) return;
       var fs=[m.title||'', m.date||'', mtTypeLabel(m)||'', m.summary||'', m.raw||'']
         .concat((m.dls||[]).map(function(d){ return d.text||''; }))
         .concat((m.fbs||[]).map(function(f){ return f.text||''; }))
