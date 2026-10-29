@@ -6363,7 +6363,8 @@ function _renderTlj(){
           return '<div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">'
             +'<span style="flex:1;text-align:center;font-size:11px;font-weight:700;background:var(--s2);color:'+(cl.length?'var(--am)':'var(--g)')+';border-radius:8px;padding:8px 0">⏳ 이월 미결 '+cl.length+'건</span>'
             +'<button onclick="openHandover(\''+dEsc(_tljViewFor)+'\')" style="flex:1;font-size:11.5px;padding:8px 0;border-radius:8px;border:1px solid var(--pu);background:var(--s1);color:var(--pu);font-weight:700;cursor:pointer">📑 인수인계 요약</button></div>';
-        })();
+        })()
+        +tljTrackHTML(_tljViewFor, false);
     }
   } else {
     h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
@@ -6383,6 +6384,9 @@ function _renderTlj(){
             +'</div></div>';
         });
         return hh+'</div>';
+      })()
+      +(function(){ // 📍 완료까지 추적 (상태 흐름 · 소요일)
+        return tljTrackHTML(ME.name, true);
       })()
       +(function(){ // 🧑‍💼 기본 팀장 업무 (매뉴얼에서 관리 · 오늘 수행한 것 체크)
         var bs=_manDB().basics||[];
@@ -6620,6 +6624,73 @@ function tljDel(name,id){
   _markGone(id);
   try{ logChange('관리자일지 삭제', name+' '+id); }catch(e){}
   saveAll(); _renderTlj();
+}
+// ── 📍 완료까지 추적: 같은 일의 상태 흐름을 완료될 때까지 따라감 ──
+function tljTrack(name){
+  var nm=name||(ME?ME.name:'');
+  var entries=((DB.tlj&&DB.tlj[nm])||[]).slice().sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
+  var map={}, order=[];
+  entries.forEach(function(e){
+    (e.doneItems||[]).forEach(function(r,ri){
+      var k=String(r.text||'').replace(/\s+/g,'').slice(0,60); if(!k) return;
+      var t=map[k];
+      if(!t){ t=map[k]={text:r.text, first:e.date, hist:[]}; order.push(t); }
+      t.last=e.date;
+      t.st=(r.st==='ing'||r.st==='todo')?r.st:'done';
+      t.lastEid=e.id; t.lastIdx=ri;
+      t.doneDate=(t.st==='done')?(r.doneDate||e.date):'';
+      var hl=t.hist[t.hist.length-1];
+      if(!hl || hl.st!==t.st || hl.date!==e.date) t.hist.push({date:e.date, st:t.st});
+    });
+  });
+  var D=function(a,b2){ try{ return Math.max(0,Math.round((new Date(b2)-new Date(a))/86400000)); }catch(e){ return 0; } };
+  var open=[], done=[];
+  order.forEach(function(t){
+    if(t.st==='done'){ t.took=D(t.first,t.doneDate)+1; done.push(t); }
+    else{ t.days=D(t.first,today())+1; open.push(t); }
+  });
+  open.sort(function(a,b){ return b.days-a.days; });
+  done.sort(function(a,b){ return (b.doneDate||'').localeCompare(a.doneDate||''); });
+  return {open:open, done:done};
+}
+function tljTrkTgl(){
+  var f=null; try{ _tljSyncDone(); f=_tljKeepForm(); }catch(e){}
+  window._tljTrkDn=!window._tljTrkDn; _renderTlj();
+  try{ _tljRestoreForm(f); }catch(e){}
+}
+function tljTrackHTML(name, mine){
+  var tk=tljTrack(name);
+  if(!tk.open.length && !tk.done.length) return '';
+  var STL={ing:'진행 중', todo:'미완료', done:'완료'};
+  var h='<label class="fl">📍 완료까지 추적 '+(tk.open.length?'<span style="color:var(--am)">('+tk.open.length+'건 진행·미완료)</span>':'<span style="color:var(--g)">(모두 완료 ✓)</span>')+'</label>';
+  if(tk.open.length){
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:6px">';
+    tk.open.forEach(function(t){
+      var col=t.days>=5?'var(--rd)':t.days>=3?'var(--am)':'var(--t2)';
+      var chain=t.hist.slice(-5).map(function(x){ return (x.date||'').slice(5)+' '+(STL[x.st]||''); }).join(' → ');
+      h+='<div style="padding:8px 0;border-bottom:1px solid var(--s2)">'
+        +'<div style="font-size:12px;font-weight:600;line-height:1.5">'
+        +'<span style="font-size:9.5px;background:var(--s2);color:'+(t.st==='ing'?'var(--am)':'var(--rd)')+';border-radius:5px;padding:1px 6px;font-weight:700">'+(STL[t.st]||'')+'</span> '
+        +'<span style="font-size:9.5px;background:'+(t.days>=3?'var(--s2)':'var(--s2)')+';color:'+col+';border-radius:5px;padding:1px 6px;font-weight:700">'+t.days+'일째</span> '
+        +dEsc(t.text)+'</div>'
+        +'<div style="font-size:9.5px;color:var(--t3);margin-top:2px">'+dEsc(chain)+' → 지금</div>'
+        +(mine?'<button onclick="tljCarryDone(\''+t.lastEid+'\','+t.lastIdx+')" style="width:100%;margin-top:5px;font-size:11px;padding:6px 0;border-radius:8px;border:none;background:var(--g);color:#fff;font-weight:700;cursor:pointer">✓ 완료 처리</button>':'')
+        +'</div>';
+    });
+    h+='</div>';
+  }
+  if(tk.done.length){
+    h+='<div><button onclick="tljTrkTgl()" style="background:none;border:none;color:var(--t3);font-size:11px;cursor:pointer;padding:2px 0;margin-bottom:8px">'+(window._tljTrkDn?'▲ 완료된 일 접기':'▼ 완료된 일 보기 ('+tk.done.length+'건 · 소요일 포함)')+'</button></div>';
+    if(window._tljTrkDn){
+      h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">';
+      tk.done.slice(0,15).forEach(function(t){
+        h+='<div style="padding:6px 0;border-bottom:1px solid var(--s2);font-size:11.5px;color:var(--t2)">✅ '+dEsc(t.text)
+          +' <span style="color:var(--t3);font-size:10px">'+dEsc(t.first||'')+' 시작 → '+dEsc(t.doneDate||'')+' 완료'+(t.took>1?' · '+t.took+'일 소요':' · 당일 완료')+'</span></div>';
+      });
+      h+='</div>';
+    }
+  }
+  return h;
 }
 // ── 이월된 일: 이전 일지의 진행 중·미완료 항목 (끝날 때까지 추적) ──
 function tljCarryList(name){
@@ -9230,6 +9301,14 @@ function wbOwnerAlerts(){
   try{
     var _ps=((DB.manuals||{}).suggests||[]).filter(function(x){ return x && x.st==='wait'; });
     if(_ps.length) alerts.push({sev:'warn', text:'매뉴얼 수정 의견 '+_ps.length+'건 — 반영 여부 결정 필요', info:_ps.slice(0,3).map(function(x){ return (x.who||'')+': '+((x.fields&&x.fields.title)||''); }).join(' · '), src:'📖 업무 매뉴얼'});
+  }catch(e){}
+  // 4-5b) 일지 추적 — 3일 이상 완료되지 않은 일
+  try{
+    var _tk=[];
+    ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(!a||!a.name) return;
+      tljTrack(a.name).open.forEach(function(t){ if(t.days>=3) _tk.push(a.name+' 「'+String(t.text||'').slice(0,20)+'」 '+t.days+'일째'); });
+    });
+    if(_tk.length) alerts.push({sev:'warn', text:'일지 추적 — 3일 이상 미완료 '+_tk.length+'건', info:_tk.slice(0,3).join(' · '), src:'🧑\u200d💼 관리자일지'});
   }catch(e){}
   // 4-6) 회의록 의견 미확인
   try{
