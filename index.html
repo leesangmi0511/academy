@@ -6364,7 +6364,8 @@ function _renderTlj(){
             +'<span style="flex:1;text-align:center;font-size:11px;font-weight:700;background:var(--s2);color:'+(cl.length?'var(--am)':'var(--g)')+';border-radius:8px;padding:8px 0">⏳ 이월 미결 '+cl.length+'건</span>'
             +'<button onclick="openHandover(\''+dEsc(_tljViewFor)+'\')" style="flex:1;font-size:11.5px;padding:8px 0;border-radius:8px;border:1px solid var(--pu);background:var(--s1);color:var(--pu);font-weight:700;cursor:pointer">📑 인수인계 요약</button></div>';
         })()
-        +tljTrackHTML(_tljViewFor, false);
+        +tljTrackHTML(_tljViewFor, false)
+        +tljRecsHTML(_tljViewFor, false);
     }
   } else {
     h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
@@ -6387,6 +6388,9 @@ function _renderTlj(){
       })()
       +(function(){ // 📍 완료까지 추적 (상태 흐름 · 소요일)
         return tljTrackHTML(ME.name, true);
+      })()
+      +(function(){ // 💡 이맘때 검토할 일 (월별·연별 추천)
+        return tljRecsHTML(ME.name, true);
       })()
       +(function(){ // 🧑‍💼 기본 팀장 업무 (매뉴얼에서 관리 · 오늘 수행한 것 체크)
         var bs=_manDB().basics||[];
@@ -6691,6 +6695,96 @@ function tljTrackHTML(name, mine){
     }
   }
   return h;
+}
+// ── 💡 이맘때 검토할 일: 예전 일지에서 같은 시기(월별·연별)에 한 일을 추천 ──
+function tljRecs(name){
+  var nm=name||(ME?ME.name:'');
+  var entries=(DB.tlj&&DB.tlj[nm])||[];
+  var now=new Date(); now.setHours(0,0,0,0);
+  var curYM=today().slice(0,7);
+  var cutoff=new Date(now.getTime()-14*86400000);
+  var hideMap=(((DB.cfg&&DB.cfg.tljRecHide)||{})[nm])||{};
+  var basics={};
+  try{ (_manDB().basics||[]).forEach(function(b2){ basics[_srNorm(b2.title).slice(0,60)]=1; }); }catch(e){}
+  var openK={};
+  try{ tljTrack(nm).open.forEach(function(t){ openK[_srNorm(t.text).slice(0,60)]=1; }); }catch(e){}
+  function cyc(d){ // 연중 순환 날짜 차이(연도 무시)
+    var a=new Date(now.getFullYear(), d.getMonth(), d.getDate());
+    var diff=Math.round(Math.abs(a-now)/86400000);
+    return Math.min(diff, 365-diff);
+  }
+  var recent={}, cands={};
+  entries.forEach(function(e){
+    var ed=new Date(e.date); if(isNaN(ed.getTime())) return; ed.setHours(0,0,0,0);
+    (e.doneItems||[]).forEach(function(r){
+      var k=_srNorm(r.text).slice(0,60);
+      if(!k || k.length<4) return;
+      if(ed>=cutoff){ recent[k]=1; return; } // 최근 2주 기록은 추천 제외 기준
+      var monthsAgo=(now.getFullYear()-ed.getFullYear())*12 + (now.getMonth()-ed.getMonth());
+      var kind='';
+      if(monthsAgo>=12){ if(cyc(ed)<=10) kind='y'; }                                   // 연별: 작년(이상) 같은 시기 ±10일
+      else if(monthsAgo>=1){ if(Math.abs(ed.getDate()-now.getDate())<=4) kind='m'; }   // 월별: 지난 달들의 같은 시기 ±4일
+      if(!kind) return;
+      var c=cands[k];
+      if(!c) c=cands[k]={k:k, text:r.text, m:0, y:0, dates:[]};
+      c[kind]++;
+      if(c.dates.indexOf(e.date)<0) c.dates.push(e.date);
+    });
+  });
+  var mm=[], yy=[];
+  Object.keys(cands).forEach(function(k){
+    if(recent[k] || basics[k] || openK[k]) return;   // 최근에 했거나·상시 업무거나·이미 추적 중이면 제외
+    if(hideMap[k]===curYM) return;                    // 이번 달 숨김
+    var c=cands[k]; c.dates.sort().reverse();
+    if(c.y) yy.push(c); else mm.push(c);
+  });
+  var srt=function(a,b){ return (b.m+b.y)-(a.m+a.y) || (b.dates[0]||'').localeCompare(a.dates[0]||''); };
+  mm.sort(srt); yy.sort(srt);
+  return {m:mm.slice(0,6), y:yy.slice(0,6)};
+}
+function tljRecsHTML(name, mine){
+  var rc=tljRecs(name);
+  if(!rc.m.length && !rc.y.length) return '';
+  window._tljRecItems=[];
+  function rows(list,label,icon){
+    if(!list.length) return '';
+    var hh='<div style="font-size:11px;font-weight:800;color:var(--pu);margin:6px 0 2px">'+icon+' '+label+'</div>';
+    list.forEach(function(c){
+      var i=window._tljRecItems.length; window._tljRecItems.push(c);
+      hh+='<div style="padding:7px 0;border-bottom:1px solid var(--s2)">'
+        +'<div style="font-size:12px;line-height:1.5">'+dEsc(c.text)
+        +'<span style="display:block;font-size:9.5px;color:var(--t3);margin-top:1px">그때 일지: '+c.dates.slice(0,2).join(' · ')+(c.dates.length>2?' 외 '+(c.dates.length-2)+'회':'')+'</span></div>'
+        +(mine?'<div style="display:flex;gap:6px;margin-top:4px">'
+          +'<button onclick="tljRecTakeIdx('+i+')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-weight:700;cursor:pointer">+ 오늘 일지에 추가</button>'
+          +'<button onclick="tljRecHideIdx('+i+')" style="flex:0 0 auto;font-size:11px;padding:6px 10px;border-radius:8px;border:1px solid var(--s3);background:none;color:var(--t3);cursor:pointer">이번 달 안 보기</button></div>':'')
+        +'</div>';
+    });
+    return hh;
+  }
+  return '<label class="fl">💡 이맘때 검토할 일 — 예전 일지에서 찾았어요</label>'
+    +'<div style="background:var(--s1);border:1px dashed var(--pu);border-radius:10px;padding:6px 12px 8px;margin-bottom:10px">'
+    +rows(rc.y,'작년 이맘때 했던 일 (연별)','📅')
+    +rows(rc.m,'지난달 이맘때 했던 일 (월별)','🗓')
+    +(mine?'<div style="font-size:9.5px;color:var(--t3);padding:5px 0 2px">＊ 올해·이번 달에도 필요한 일인지 검토하고, 할 일이면 [+ 오늘 일지에 추가]를 누르세요</div>':'')
+    +'</div>';
+}
+function tljRecTakeIdx(i){
+  var c=(window._tljRecItems||[])[i]; if(!c) return;
+  _tljSyncDone(); var f=_tljKeepForm();
+  if(!Array.isArray(window._tljDone)) window._tljDone=[];
+  if(window._tljDone.length===1 && !window._tljDone[0].text) window._tljDone=[];
+  window._tljDone.push({text:c.text, hours:'', st:'ing'});
+  _renderTlj(); _tljRestoreForm(f);
+  toast('→ 오늘 일지에 추가했어요 (상태를 정해 저장하세요)','var(--g)');
+}
+function tljRecHideIdx(i){
+  var c=(window._tljRecItems||[])[i]; if(!c||!ME) return;
+  _tljSyncDone(); var f=_tljKeepForm();
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.tljRecHide) DB.cfg.tljRecHide={};
+  var nm=ME.name||''; if(!DB.cfg.tljRecHide[nm]) DB.cfg.tljRecHide[nm]={};
+  DB.cfg.tljRecHide[nm][c.k]=today().slice(0,7);
+  saveAll(); _renderTlj(); _tljRestoreForm(f);
+  toast('이번 달에는 이 추천을 보여주지 않을게요');
 }
 // ── 이월된 일: 이전 일지의 진행 중·미완료 항목 (끝날 때까지 추적) ──
 function tljCarryList(name){
