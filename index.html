@@ -8868,6 +8868,25 @@ function _wkLabel(wk){ var s=new Date(wk); var e=new Date(wk); e.setDate(s.getDa
 function _wkList(name, wk){ if(!DB.wkplan) DB.wkplan={}; if(!DB.wkplan[name]) DB.wkplan[name]={}; if(!Array.isArray(DB.wkplan[name][wk])) DB.wkplan[name][wk]=[]; return DB.wkplan[name][wk]; }
 function wkMyOpenCnt(){ if(!ME||!ME.name) return 0; var l=(DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]; return l.filter(function(x){ return !x.done; }).length; }
 var _wkFor=null, _wkCur=null;
+// ── 💾 지금 저장: 저장이 끝날 때까지 기다렸다가 결과를 알려줌 ──
+function forceSaveNow(cb){
+  saveAll();
+  var t0=Date.now();
+  var iv=setInterval(function(){
+    if(_saveFailed){ clearInterval(iv); if(cb) cb(false); return; }
+    if(!_saveDirty && !_saving){ clearInterval(iv); if(cb) cb(true); return; }
+    if(Date.now()-t0>15000){ clearInterval(iv); if(cb) cb(!_saveFailed && !_saveDirty); }
+  }, 300);
+}
+function wkSaveNow(){
+  var b=document.getElementById('wk-save-btn');
+  if(b){ b.disabled=true; b.textContent='저장 중…'; }
+  forceSaveNow(function(ok){
+    var b2=document.getElementById('wk-save-btn');
+    if(b2){ b2.disabled=false; b2.textContent='💾 저장'; }
+    toast(ok?'✓ 서버에 저장됐어요':'저장 지연 — 기기에 보관됐고 자동으로 다시 시도해요', ok?'var(--g)':'var(--am)');
+  });
+}
 // ═══ 🔍 통합 검색 (회의록·관리자일지·업무 매뉴얼·주간 계획·날짜별 할 일 · 띄어쓰기 무시) ═══
 function _srNorm(t){ return String(t||'').toLowerCase().replace(/\s+/g,''); }
 function _srSnip(text, nq){
@@ -9083,7 +9102,8 @@ function _renderWkPlan(){
         +'</div>';
     }
   });
-  h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-wkplan\').remove()">닫기</button>'
+  h+=((mine||isOw)?'<button class="btn" id="wk-save-btn" style="margin-top:12px" onclick="wkSaveNow()">💾 저장</button>':'')
+    +'<button class="btn ghost" style="margin-top:'+((mine||isOw)?'0':'10px')+'" onclick="document.getElementById(\'ov-wkplan\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
   // 파일 끌어다 놓기 (원장: 분배 · 관리자: 내 계획)
