@@ -9050,10 +9050,11 @@ function _renderWkPlan(){
       +'<button onclick="wkAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--g);background:none;color:var(--g);font-size:12px;font-weight:700;cursor:pointer">+ 계획 추가</button></div>';
   }
   h+='<input type="file" id="wk-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif" onchange="wkPlanFilePick(this)">';
-  if(isOw){
-    h+='<button onclick="document.getElementById(\'wk-file-in\').click()" style="width:100%;margin-bottom:12px;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12.5px;font-weight:700;cursor:pointer">📂 계획표 파일·캡쳐 불러오기 (→ 관리자별 할 일 자동 분배)</button>';
-  } else if(mine){
-    h+='<button onclick="document.getElementById(\'wk-file-in\').click()" style="width:100%;margin-bottom:12px;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12.5px;font-weight:700;cursor:pointer">📂 내 계획표 파일·캡쳐 올리기 (이번 주 계획으로)</button>';
+  if(isOw || mine){
+    h+='<div style="display:flex;gap:6px;margin-bottom:6px">'
+      +'<button onclick="document.getElementById(\'wk-file-in\').click()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12px;font-weight:700;cursor:pointer">📂 '+(isOw?'계획표 파일·캡쳐 (자동 분배)':'내 계획표 파일·캡쳐')+'</button>'
+      +'<button onclick="wkTextOpen()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--pu);background:var(--s1);color:var(--pu);font-size:12px;font-weight:700;cursor:pointer">📋 텍스트로 올리기</button></div>'
+      +'<div style="border:1.5px dashed var(--s3);border-radius:9px;padding:8px;margin-bottom:12px;text-align:center;font-size:10.5px;color:var(--t3)">📎 계획표 파일을 이 창에 <b>끌어다 놓아도</b> 돼요 (한글 hwpx·워드·PDF·캡쳐)</div>';
   }
   var list=_wkList(_wkFor,_wkCur);
   var dn=list.filter(function(x){ return x.done; }).length;
@@ -9085,6 +9086,19 @@ function _renderWkPlan(){
   h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-wkplan\').remove()">닫기</button>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
+  // 파일 끌어다 놓기 (원장: 분배 · 관리자: 내 계획)
+  (function(){
+    var ovEl=document.getElementById('ov-wkplan'); if(!ovEl) return;
+    if(!_wkCanImport()) return;
+    if(!(ME.role==='owner' || mine)) return;
+    var md=ovEl.querySelector('.modal');
+    ['dragenter','dragover'].forEach(function(ev){ ovEl.addEventListener(ev,function(e){ e.preventDefault(); e.stopPropagation(); if(md) md.style.outline='2.5px dashed var(--acc)'; }); });
+    ['dragleave','drop'].forEach(function(ev){ ovEl.addEventListener(ev,function(e){ e.preventDefault(); e.stopPropagation(); if(md) md.style.outline=''; }); });
+    ovEl.addEventListener('drop',function(e){
+      var fs=Array.prototype.slice.call((e.dataTransfer&&e.dataTransfer.files)||[]);
+      if(fs.length) _wkFiles(fs);
+    });
+  })();
 }
 // ── 계획표 파일 인식: 한글(hwpx)·PDF 등에서 관리자별 할 일 추출 ──
 function wkParsePlan(text){
@@ -9113,28 +9127,64 @@ function wkParsePlan(text){
   return items.slice(0,60);
 }
 var _wkImp=null;
-function wkPlanFilePick(inp){
-  var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
-  if(!files.length) return;
+function _wkCanImport(){
+  if(!ME) return false;
+  if(ME.role==='owner') return true;
+  return (ME.role==='admin'||ME.role==='staff') && canFeat('wkplan');
+}
+function _wkHandleText(all, fname){
   var isOw=(ME&&ME.role==='owner');
-  if(!ME || (!isOw && !((ME.role==='admin'||ME.role==='staff')&&canFeat('wkplan')))){ toast('권한이 없어요','var(--rd)'); return; }
+  if(!_wkCanImport()){ toast('권한이 없어요','var(--rd)'); return; }
+  if(!String(all||'').trim()){ toast('내용이 비어 있어요','var(--rd)'); return; }
+  var items=wkParsePlan(all);
+  var dropped=0;
+  if(!isOw){ // 관리자는 자기 계획으로만: 다른 사람 이름이 붙은 항목은 제외
+    var kept=[];
+    items.forEach(function(it){ if(!it.name || it.name===ME.name){ it.name=ME.name; kept.push(it); } else dropped++; });
+    items=kept;
+  }
+  if(!items.length){ toast(dropped?('내 항목이 없어요 — 다른 사람 이름 항목 '+dropped+'건만 인식됐어요'):'인식된 할 일이 없어요 — 줄마다 "이름 + 내용" 형태인지 확인하세요','var(--rd)'); return; }
+  if(dropped) toast('다른 사람 이름이 붙은 '+dropped+'건은 제외했어요 (내 계획만 추가돼요)','var(--am)');
+  _wkImp={items:items, fname:fname||'', self:isOw?0:1};
+  _renderWkImport();
+}
+function _wkFiles(files){
+  files=Array.prototype.slice.call(files||[]);
+  if(!files.length) return;
+  if(!_wkCanImport()){ toast('권한이 없어요','var(--rd)'); return; }
   toast(files.length>1?('파일 '+files.length+'개 읽는 중…'):('「'+files[0].name+'」 읽는 중…'));
   Promise.all(files.map(function(f){ return _mtExtractText(f).then(function(t){ return (t||'').slice(0,50000); }).catch(function(){ return ''; }); }))
   .then(function(txts){
     var all=txts.join('\n');
     if(!all.trim()){ toast('파일에서 텍스트를 읽지 못했어요 — 한글은 hwpx 형식으로 저장해주세요','var(--rd)'); return; }
-    var items=wkParsePlan(all);
-    var dropped=0;
-    if(!isOw){ // 관리자는 자기 계획으로만: 다른 사람 이름이 붙은 항목은 제외
-      var kept=[];
-      items.forEach(function(it){ if(!it.name || it.name===ME.name){ it.name=ME.name; kept.push(it); } else dropped++; });
-      items=kept;
-    }
-    if(!items.length){ toast(dropped?('내 항목이 없어요 — 다른 사람 이름 항목 '+dropped+'건만 인식됐어요'):'인식된 할 일이 없어요 — 줄마다 "이름 + 내용" 형태인지 확인하세요','var(--rd)'); return; }
-    if(dropped) toast('다른 사람 이름이 붙은 '+dropped+'건은 제외했어요 (내 계획만 추가돼요)','var(--am)');
-    _wkImp={items:items, fname:files.map(function(f){return f.name;}).join(', '), self:isOw?0:1};
-    _renderWkImport();
+    _wkHandleText(all, files.map(function(f){return f.name;}).join(', '));
   }).catch(function(){ toast('파일을 읽는 중 오류가 났어요','var(--rd)'); });
+}
+function wkPlanFilePick(inp){
+  var files=Array.prototype.slice.call(inp.files||[]); inp.value='';
+  _wkFiles(files);
+}
+// ── 📋 텍스트로 올리기: 회의 메모·카톡 내용을 붙여넣어 주간 계획으로 ──
+function wkTextOpen(){
+  if(!_wkCanImport()){ toast('권한이 없어요','var(--rd)'); return; }
+  var isOw=(ME&&ME.role==='owner');
+  var ex=document.getElementById('ov-wktext'); if(ex) ex.remove();
+  document.body.insertAdjacentHTML('beforeend',
+    '<div class="ov open" id="ov-wktext" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
+    +'<div class="mt2">📋 텍스트로 주간 계획 올리기</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.6">회의 메모·카톡 내용을 그대로 붙여넣으세요. 줄마다 한 가지 일로 인식하고 요일(월: / 수요일 등)도 알아봐요.'
+    +(isOw?'<br>이름이 적힌 줄(예: 박팀장 금: 교재 발주)은 그 사람에게 분배돼요.':'<br>제 이름이 없는 줄은 모두 내 계획으로 들어와요.')+'</div>'
+    +'<textarea class="fi" id="wk-text-in" rows="10" placeholder="예)\n월: 반 배치 명단 정리\n수요일 학부모 상담 3건\n금: 교재 발주 확인"></textarea>'
+    +'<button class="btn" onclick="wkTextApply()">🔍 인식해서 추가하기</button>'
+    +'<button class="btn ghost" onclick="document.getElementById(\'ov-wktext\').remove()">취소</button>'
+    +'</div></div>');
+  var ta=document.getElementById('wk-text-in'); if(ta) ta.focus();
+}
+function wkTextApply(){
+  var t=((document.getElementById('wk-text-in')||{}).value||'');
+  if(!t.trim()){ toast('내용을 붙여넣어 주세요','var(--rd)'); return; }
+  var ov=document.getElementById('ov-wktext'); if(ov) ov.remove();
+  _wkHandleText(t, '붙여넣은 텍스트');
 }
 function _renderWkImport(){
   var ex=document.getElementById('ov-wkimport'); if(ex) ex.remove();
