@@ -1464,6 +1464,7 @@ function _mergeServerDB(d){
       Object.keys(S).forEach(function(nm){ if(!L[nm]) L[nm]={}; var sw=S[nm]||{}; Object.keys(sw).forEach(function(wk){ L[nm][wk]=_mergeById(L[nm][wk], sw[wk], gone); }); });
       Object.keys(L).forEach(function(nm){ Object.keys(L[nm]||{}).forEach(function(wk){ L[nm][wk]=_mergeById(L[nm][wk], null, gone); }); });
       DB.wkplan=L; })();
+    DB.cal=_mergeById(DB.cal||[], d.cal, gone);
     (function(){ var L=DB.tchChanges||[], S=d.tchChanges||[]; var k={}; L.forEach(function(x){ k[(x.ts||'')+'|'+(x.stu||'')]=1; }); S.forEach(function(x){ var kk=(x.ts||'')+'|'+(x.stu||''); if(!k[kk] && !gone['tchg:'+kk]) L.push(x); }); DB.tchChanges=L; })();
     if(d.manuals){
       if(!DB.manuals) DB.manuals=d.manuals;
@@ -1505,7 +1506,7 @@ function _mergeServerDB(d){
 function _dbPayload(nchunks, ver){
   return {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [],
     withdrawn: DB.withdrawn||[], tlj: DB.tlj||{}, myTodos: DB.myTodos||{}, upg: DB.upg||{},
-    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{},
+    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{}, cal: DB.cal||[],
     tbChunks: nchunks, tbVer: ver, tbCount: (_tbReady ? (DB.typeBank||[]).length : (_srvTbMeta.cnt||0))};
 }
 function saveAll() {
@@ -1528,6 +1529,7 @@ function saveAll() {
     try{ localStorage.setItem('ac_tchChanges', JSON.stringify(DB.tchChanges||[])); }catch(_e){}
     try{ localStorage.setItem('ac_gone', JSON.stringify(DB.gone||[])); }catch(_e){}
     try{ localStorage.setItem('ac_wkplan', JSON.stringify(DB.wkplan||{})); }catch(_e){}
+    try{ localStorage.setItem('ac_cal', JSON.stringify(DB.cal||[])); }catch(_e){}
     var _ver = Date.now();
     if(_tbReady){
       _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
@@ -2275,6 +2277,7 @@ var PERM_ROLES = [ {k:'staff',label:'행정팀'}, {k:'admin',label:'관리자'},
 var PERM_FEATS = [
   {k:'f_tlj',label:'🧑‍💼 관리자일지'},
   {k:'f_wkplan',label:'🗓 주간 계획'},
+  {k:'f_cal',label:'📅 업무 캘린더'},
   {k:'f_mytodos',label:'📆 날짜별 할 일'},
   {k:'f_meetings',label:'📝 회의록'},
   {k:'f_mttodo',label:'📋 월별 할 일'},
@@ -8889,6 +8892,171 @@ function wkSaveNow(){
     toast(ok?'✓ 서버에 저장됐어요':'저장 지연 — 기기에 보관됐고 자동으로 다시 시도해요', ok?'var(--g)':'var(--am)');
   });
 }
+// ═══ 📅 업무 캘린더: 공통 일정 + 개인 스케줄 (회의 기한·월간/연간·할 일·주간 계획 연동) ═══
+var _calYM=null, _calSel=null, _calFilter='';
+function openWorkCal(){
+  if(ME && ME.role!=='owner' && !canFeat('cal')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
+  if(!isAdminLevel()){ toast('관리자 이상만 이용할 수 있어요','var(--rd)'); return; }
+  if(!_calYM) _calYM=today().slice(0,7);
+  _calSel=(today().slice(0,7)===_calYM)?today():null;
+  if(_meetings===null){ _FS.get('academy/meetings').then(function(doc){ var arr=[]; try{ if(doc&&doc.fields&&doc.fields.list) arr=_FS._fromFS(doc.fields.list)||[]; }catch(e){} _meetings=arr; if(document.getElementById('ov-wcal')) _renderCal(); }).catch(function(){}); }
+  _renderCal();
+}
+function calNav(n){ var p=_calYM.split('-'); var d=new Date(parseInt(p[0],10), parseInt(p[1],10)-1+n, 1); _calYM=d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2); _calSel=null; _renderCal(); }
+function calCollect(ym){
+  var map={};
+  function add(date, it){ if((date||'').slice(0,7)!==ym) return; if(!map[date]) map[date]=[]; if(map[date].length<40) map[date].push(it); }
+  var isOw=(ME&&ME.role==='owner');
+  var me=(ME&&ME.name)||'';
+  var p=ym.split('-'); var mm=parseInt(p[1],10);
+  var lastD=new Date(parseInt(p[0],10), mm, 0).getDate();
+  var dd2=function(n){ return ym+'-'+('0'+n).slice(-2); };
+  // 1) 회의록 기한 (담당자 있으면 개인, 없으면 공통)
+  (_meetings||[]).forEach(function(m){
+    if(!mtCanSee(m)) return;
+    (m.dls||[]).forEach(function(d){
+      if(!d.date) return;
+      add(d.date, {icon:'📝', text:d.text, who:(d.owner||'공통'), done:d.status==='ok', late:d.status==='late', src:'회의 기한 · '+(m.title||m.date||''), act:(function(id){ return function(){ mtView(id); }; })(m.id)});
+    });
+  });
+  // 2) 매뉴얼 월간 필수 업무·연간 일정 (시기의 날짜 · 부서 열람 권한)
+  try{
+    var man=_manDB(), mdone=man.done[ym]||{};
+    MAN_DEPTS.forEach(function(dp){
+      if(!manCanView(dp.key)) return;
+      (man[dp.key].monthly||[]).forEach(function(it){
+        var w=String(it.when||''); var day=null;
+        var mx=w.match(/(\d{1,2})\s*일/); if(mx) day=parseInt(mx[1],10);
+        else if(/말일|월\s*말/.test(w)) day=lastD;
+        else if(/월\s*초|첫\s*근무일/.test(w)) day=1;
+        if(!day||day<1||day>lastD) return;
+        add(dd2(day), {icon:'📖', text:it.title, who:'공통', done:!!mdone[it.id], src:'월간 필수 업무', act:(function(k){ return function(){ _manTab=k; openManuals(); }; })(dp.key)});
+      });
+      (man[dp.key].annual||[]).forEach(function(a){
+        if(parseInt(a.month,10)!==mm) return;
+        var w=String(a.when||''); var day=null;
+        var ax=w.match(/(\d{1,2})\s*일/); if(ax) day=parseInt(ax[1],10);
+        else if(/말일|월\s*말/.test(w)) day=lastD;
+        else if(/월\s*초/.test(w)) day=1;
+        if(!day||day<1||day>lastD) return;
+        add(dd2(day), {icon:'📅', text:a.title, who:'공통', done:false, src:'연간 일정', act:(function(k){ return function(){ _manTab=k; openManuals(); }; })(dp.key)});
+      });
+    });
+  }catch(e){}
+  // 3) 날짜별 할 일 (개인 · 본인+원장)
+  var tNames=isOw?Object.keys(DB.myTodos||{}):(me?[me]:[]);
+  tNames.forEach(function(nm){
+    ((DB.myTodos||{})[nm]||[]).forEach(function(t){
+      if(!t.date) return;
+      add(t.date, {icon:'📆', text:t.text, who:nm, done:!!t.done, src:'날짜별 할 일', act:function(){ openMyTodos(); }});
+    });
+  });
+  // 4) 주간 계획 (요일 → 날짜 · 개인)
+  var wNames=isOw?Object.keys(DB.wkplan||{}):(me?[me]:[]);
+  wNames.forEach(function(nm){
+    Object.keys((DB.wkplan||{})[nm]||{}).forEach(function(wk){
+      var ws=new Date(wk); if(isNaN(ws.getTime())) return;
+      (((DB.wkplan||{})[nm]||{})[wk]||[]).forEach(function(t){
+        var di=WK_DAYS.indexOf(t.day||''); if(di<0) return;
+        var d2=new Date(ws); d2.setDate(ws.getDate()+di);
+        var ds=d2.getFullYear()+'-'+('0'+(d2.getMonth()+1)).slice(-2)+'-'+('0'+d2.getDate()).slice(-2);
+        add(ds, {icon:'🗓', text:t.text, who:nm, done:!!t.done, src:'주간 계획', act:(function(n,w){ return function(){ srOpenWk(n,w); }; })(nm,wk)});
+      });
+    });
+  });
+  // 5) 캘린더에서 직접 추가한 일정 (공통/개인)
+  (DB.cal||[]).forEach(function(c){
+    if(!c||!c.date) return;
+    if(c.scope!=='all' && !isOw && c.scope!==me) return;
+    add(c.date, {icon:'➕', text:c.text, who:(c.scope==='all'?'공통':c.scope), done:false, src:'캘린더 일정', cal:c.id, by:c.by});
+  });
+  return map;
+}
+function _renderCal(){
+  var ex=document.getElementById('ov-wcal'); if(ex) ex.remove();
+  var isOw=(ME&&ME.role==='owner');
+  var map=calCollect(_calYM);
+  var p=_calYM.split('-'); var yy=parseInt(p[0],10), mm=parseInt(p[1],10);
+  var startDow=new Date(yy, mm-1, 1).getDay();
+  var lastD=new Date(yy, mm, 0).getDate();
+  var names=[];
+  if(isOw){ ((DB.cfg&&DB.cfg.admins)||[]).forEach(function(a){ if(a&&a.name) names.push(a.name); }); ((DB.cfg&&DB.cfg.staff)||[]).forEach(function(a){ if(a&&a.name&&names.indexOf(a.name)<0) names.push(a.name); }); }
+  var h='<div class="ov open" id="ov-wcal" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:90vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">📅 업무 캘린더</div>'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px">회의 기한·월간/연간 일정·날짜별 할 일·주간 계획이 자동으로 모입니다.'+(isOw?'':' (공통 일정 + 내 스케줄)')+'</div>'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">'
+    +'<button onclick="calNav(-1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">◀</button>'
+    +'<span style="font-size:14px;font-weight:800">'+yy+'년 '+mm+'월</span>'
+    +'<button onclick="calNav(1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">▶</button></div>';
+  if(isOw && names.length){
+    h+='<div class="rank-tab-row" style="margin-bottom:8px"><div class="rank-tab'+(_calFilter===''?' on':'')+'" onclick="_calFilter=\'\';_renderCal()">전체</div><div class="rank-tab'+(_calFilter==='공통'?' on':'')+'" onclick="_calFilter=\'공통\';_renderCal()">공통</div>'
+      +names.map(function(nm){ return '<div class="rank-tab'+(_calFilter===nm?' on':'')+'" onclick="_calFilter=\''+dEsc(nm)+'\';_renderCal()">'+dEsc(nm)+'</div>'; }).join('')+'</div>';
+  }
+  var flt=function(items){ if(!_calFilter) return items; return items.filter(function(it){ return _calFilter==='공통'?it.who==='공통':it.who===_calFilter; }); };
+  h+='<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:8px">';
+  ['일','월','화','수','목','금','토'].forEach(function(dw,i){ h+='<div style="text-align:center;font-size:10px;font-weight:800;color:'+(i===0?'var(--rd)':i===6?'var(--acc)':'var(--t3)')+';padding:2px 0">'+dw+'</div>'; });
+  for(var b=0;b<startDow;b++) h+='<div></div>';
+  for(var d=1;d<=lastD;d++){
+    var ds=_calYM+'-'+('0'+d).slice(-2);
+    var items=flt(map[ds]||[]);
+    var com=items.filter(function(x){ return x.who==='공통'; }).length;
+    var per=items.length-com;
+    var isToday=(ds===today());
+    var sel=(_calSel===ds);
+    h+='<div onclick="_calSel=\''+ds+'\';_renderCal()" style="min-height:46px;border:1.5px solid '+(sel?'var(--acc)':isToday?'var(--am)':'var(--s3)')+';border-radius:8px;padding:3px 4px;cursor:pointer;background:'+(sel?'var(--acc-l)':'var(--s1)')+'">'
+      +'<div style="font-size:10.5px;font-weight:800;color:'+(new Date(ds).getDay()===0?'var(--rd)':'var(--te)')+'">'+d+'</div>'
+      +(com?'<div style="font-size:8.5px;color:var(--pu);font-weight:700;line-height:1.3">●'+com+'</div>':'')
+      +(per?'<div style="font-size:8.5px;color:var(--g);font-weight:700;line-height:1.3">●'+per+'</div>':'')
+      +'</div>';
+  }
+  h+='</div>'
+    +'<div style="font-size:9.5px;color:var(--t3);margin-bottom:8px"><span style="color:var(--pu)">●</span> 공통 일정 · <span style="color:var(--g)">●</span> 개인 스케줄 · 날짜를 누르면 아래에 자세히 나와요</div>';
+  if(_calSel){
+    var its=flt(map[_calSel]||[]);
+    h+='<div class="sl2" style="margin:4px 0 8px"><div class="d8" style="background:var(--acc)"></div>'+_calSel+' <span style="font-size:11px;color:var(--t3)">'+its.length+'건</span></div>';
+    window._calActs=[];
+    if(!its.length) h+='<div class="empty" style="font-size:12px;padding:8px 0">이 날의 일정이 없어요 — 아래에서 직접 추가할 수 있어요</div>';
+    its.slice().sort(function(a,b2){ return (a.who==='공통'?0:1)-(b2.who==='공통'?0:1); }).forEach(function(it){
+      var ai=window._calActs.length; window._calActs.push(it.act||null);
+      h+='<div style="background:var(--s1);border:1px solid '+(it.done?'var(--g)':it.late?'var(--rd)':'var(--s3)')+';border-radius:10px;padding:8px 11px;margin-bottom:5px;display:flex;gap:8px;align-items:flex-start">'
+        +'<div onclick="var a=window._calActs['+ai+'];if(a){var o=document.getElementById(\'ov-wcal\');if(o)o.remove();a();}" style="flex:1;min-width:0;cursor:'+(it.act?'pointer':'default')+'">'
+        +'<div style="font-size:12.5px;font-weight:600;line-height:1.5;'+(it.done?'color:var(--t3);text-decoration:line-through':'')+'">'+it.icon+' '+dEsc(it.text)+'</div>'
+        +'<div style="font-size:10px;color:var(--t3);margin-top:1px"><span style="font-weight:700;color:'+(it.who==='공통'?'var(--pu)':'var(--g)')+'">'+dEsc(it.who)+'</span> · '+dEsc(it.src||'')+(it.done?' · 완료':'')+(it.late?' · 어김':'')+(it.by?' · 작성 '+dEsc(it.by):'')+'</div></div>'
+        +(it.cal&&(isOw||it.by===((ME&&ME.name)||''))?'<button onclick="calDel(\''+it.cal+'\')" style="flex-shrink:0;font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')
+        +'</div>';
+    });
+    var scopes=isOw
+      ?('<option value="all">공통 (모두에게)</option>'+names.map(function(nm){ return '<option value="'+dEsc(nm)+'">'+dEsc(nm)+'</option>'; }).join(''))
+      :'<option value="'+dEsc((ME&&ME.name)||'')+'">내 일정</option>';
+    h+='<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:4px">'
+      +'<div style="display:flex;gap:5px;margin-bottom:6px">'
+      +'<select class="fs" id="cal-scope" style="flex:0 0 36%;margin:0;padding:8px 5px;font-size:12px">'+scopes+'</select>'
+      +'<input class="fi" id="cal-text" placeholder="일정 내용" style="flex:1;margin:0" onkeydown="if(event.key===\'Enter\')calAdd()"></div>'
+      +'<button onclick="calAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--acc);background:none;color:var(--acc);font-size:12px;font-weight:700;cursor:pointer">+ 이 날짜에 일정 추가</button></div>';
+  }
+  h+='<button class="btn ghost" style="margin-top:10px" onclick="document.getElementById(\'ov-wcal\').remove()">닫기</button>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function calAdd(){
+  if(!_calSel) return;
+  var text=((document.getElementById('cal-text')||{}).value||'').trim();
+  var scope=(document.getElementById('cal-scope')||{}).value||((ME&&ME.name)||'');
+  if(!text){ toast('일정 내용을 입력하세요','var(--rd)'); return; }
+  if(scope==='all' && !(ME&&ME.role==='owner')){ toast('공통 일정은 원장만 추가할 수 있어요','var(--rd)'); return; }
+  if(!Array.isArray(DB.cal)) DB.cal=[];
+  DB.cal.push({id:'cl'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), date:_calSel, text:text, scope:scope, by:(ME&&ME.name)||'', ts:Date.now()});
+  try{ logChange('캘린더 일정 추가', _calSel+' '+(scope==='all'?'[공통] ':'['+scope+'] ')+text.slice(0,40)); }catch(e){}
+  saveAll(); _renderCal(); toast('추가됐어요 ✓','var(--g)');
+}
+function calDel(id){
+  var c=(DB.cal||[]).find(function(x){ return x.id===id; }); if(!c) return;
+  if(!(ME&&(ME.role==='owner'||ME.name===c.by))) return;
+  if(!confirm('이 일정을 삭제할까요?')) return;
+  DB.cal=(DB.cal||[]).filter(function(x){ return x.id!==id; });
+  _markGone(id);
+  saveAll(); _renderCal(); toast('삭제됐어요');
+}
 // ═══ 🔍 통합 검색 (회의록·관리자일지·업무 매뉴얼·주간 계획·날짜별 할 일 · 띄어쓰기 무시) ═══
 function _srNorm(t){ return String(t||'').toLowerCase().replace(/\s+/g,''); }
 function _srSnip(text, nq){
@@ -10001,6 +10169,7 @@ function renderAdminHome() {
          if(canFeat('manuals')) bs+='<button onclick="openManuals()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📖 업무 매뉴얼'+(st.tot?' <span style="font-weight:700;color:'+(st.ok===st.tot?'var(--g)':'var(--am)')+'">'+st.ok+'/'+st.tot+'</span>':'')+'</button>';
          if(canFeat('mytodos')) bs+='<button onclick="openMyTodos()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📆 날짜별 할 일'+(td?' <span style="font-weight:700;color:var(--am)">'+td+'</span>':'')+'</button>';
          if(canFeat('wkplan')) bs+='<button onclick="openWkPlan()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗓 주간 계획'+(wp?' <span style="font-weight:700;color:var(--am)">'+wp+'</span>':'')+'</button>';
+         if(canFeat('cal')) bs+='<button onclick="openWorkCal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📅 캘린더</button>';
          bs+='<button onclick="openSearch()" style="flex:1;font-size:12px;color:var(--te);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔍 검색</button>';
          return bs?'<div style="display:flex;gap:8px;margin-bottom:10px">'+bs+'</div>':''; })()
      + (function(){
@@ -13037,7 +13206,7 @@ _loadFirebase().then(function() {
     if(d&&d.cfg){
       DB.cfg=d.cfg;
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){}if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
-      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{};
+      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{}; DB.cal=d.cal||[];
       if(d.manuals) DB.manuals=d.manuals;
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
@@ -13054,6 +13223,7 @@ _loadFirebase().then(function() {
       try{ DB.tchChanges=JSON.parse(localStorage.getItem('ac_tchChanges')||'[]'); }catch(_e){ DB.tchChanges=[]; }
       try{ DB.gone=JSON.parse(localStorage.getItem('ac_gone')||'[]'); }catch(_e){ DB.gone=[]; }
       try{ DB.wkplan=JSON.parse(localStorage.getItem('ac_wkplan')||'{}'); }catch(_e){ DB.wkplan={}; }
+      try{ DB.cal=JSON.parse(localStorage.getItem('ac_cal')||'[]'); }catch(_e){ DB.cal=[]; }
       // 오프라인: 기기 백업(IndexedDB)이 더 크면 그걸로 복구 후 저장 허용
       _idbGet('tb', function(idb){ if(idb && idb.items && idb.items.length > (DB.typeBank||[]).length){ DB.typeBank = idb.items; } _tbReady = true; if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } });
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
@@ -13113,7 +13283,7 @@ _loadFirebase().then(function() {
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[];
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){} if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
-      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan;
+      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan; DB.cal=d2.cal||DB.cal;
       if(d2.manuals) DB.manuals=d2.manuals;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
