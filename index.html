@@ -8868,6 +8868,8 @@ function _wkLabel(wk){ var s=new Date(wk); var e=new Date(wk); e.setDate(s.getDa
 function _wkList(name, wk){ if(!DB.wkplan) DB.wkplan={}; if(!DB.wkplan[name]) DB.wkplan[name]={}; if(!Array.isArray(DB.wkplan[name][wk])) DB.wkplan[name][wk]=[]; return DB.wkplan[name][wk]; }
 function wkMyOpenCnt(){ if(!ME||!ME.name) return 0; var l=(DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]; return l.filter(function(x){ return !x.done; }).length; }
 var _wkFor=null, _wkCur=null;
+var _wkIdC=0;
+function _wkNewId(){ _wkIdC=(_wkIdC+1)%1296; return 'wk'+Date.now().toString(36)+_wkIdC.toString(36)+Math.random().toString(36).slice(2,6); }
 // ── 💾 지금 저장: 저장이 끝날 때까지 기다렸다가 결과를 알려줌 ──
 function forceSaveNow(cb){
   saveAll();
@@ -9169,7 +9171,7 @@ function wkParsePlan(text){
     if(rest.length<3) return;
     items.push({name:who||'', day:day, text:rest});
   });
-  return items.slice(0,60);
+  return items.slice(0,120);
 }
 var _wkImp=null;
 function _wkCanImport(){
@@ -9267,25 +9269,27 @@ function wkImpRm(i){ _wkImpSync(); if(_wkImp) _wkImp.items.splice(i,1); _renderW
 function wkImportApply(){
   var p=_wkImp; if(!p) return;
   _wkImpSync();
-  var added={}, skip=0;
+  var added={}, skip=0, dup=0;
   document.querySelectorAll('.wi-ck:checked').forEach(function(c){
     var it=p.items[parseInt(c.getAttribute('data-i'))];
     if(!it || !it.text) return;
     if(p.self) it.name=(ME&&ME.name)||it.name;
     if(!it.name){ skip++; return; }
     var list=_wkList(it.name, _wkCur);
-    var k=it.text.replace(/\s+/g,'');
-    if(list.some(function(x){ return String(x.text||'').replace(/\s+/g,'')===k; })) return;
-    list.push({id:'wk'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:it.text, day:it.day||'', done:false, ts:Date.now(), src:'계획표'});
+    // 같은 내용이라도 요일이 다르면 다른 계획 (예: 월·수·금 마감 체크) — 요일까지 같을 때만 중복
+    var k=(it.day||'')+'|'+it.text.replace(/\s+/g,'');
+    if(list.some(function(x){ return ((x.day||'')+'|'+String(x.text||'').replace(/\s+/g,''))===k; })){ dup++; return; }
+    list.push({id:_wkNewId(), text:it.text, day:it.day||'', done:false, ts:Date.now(), src:'계획표'});
     added[it.name]=(added[it.name]||0)+1;
   });
   var names=Object.keys(added);
-  if(!names.length){ toast(skip?'담당이 지정된 항목이 없어요 — 담당을 선택하세요':'추가할 항목이 없어요','var(--rd)'); return; }
+  if(!names.length){ toast(dup?('모두 이미 있는 계획이에요 ('+dup+'건)'):skip?'담당이 지정된 항목이 없어요 — 담당을 선택하세요':'추가할 항목이 없어요','var(--rd)'); return; }
   try{ logChange('계획표 불러오기', names.map(function(n){ return n+' '+added[n]+'건'; }).join('·')); }catch(e){}
   saveAll();
   var ov=document.getElementById('ov-wkimport'); if(ov) ov.remove();
   _wkImp=null; _renderWkPlan();
-  toast('✓ '+names.map(function(n){ return n+' '+added[n]+'건'; }).join(' · ')+' 추가'+(skip?' (담당 미지정 '+skip+'건 제외)':''),'var(--g)');
+  var extra=[]; if(dup) extra.push('이미 있어 제외 '+dup+'건'); if(skip) extra.push('담당 미지정 제외 '+skip+'건');
+  toast('✓ '+names.map(function(n){ return n+' '+added[n]+'건'; }).join(' · ')+' 추가'+(extra.length?' ('+extra.join(' · ')+')':''),'var(--g)');
 }
 // 같은 주에 같은 내용이 여러 관리자에게 있는 중복 항목 찾기
 function wkDupMap(wk){
@@ -9312,7 +9316,7 @@ function wkAdd(){
   var text=((document.getElementById('wk-text')||{}).value||'').trim();
   var day=(document.getElementById('wk-day')||{}).value||'';
   if(!text){ toast('계획 내용을 입력하세요','var(--rd)'); return; }
-  _wkList(ME.name,_wkCur).push({id:'wk'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:text, day:day, done:false, ts:Date.now()});
+  _wkList(ME.name,_wkCur).push({id:_wkNewId(), text:text, day:day, done:false, ts:Date.now()});
   try{ logChange('주간 계획 추가', ME.name+' — '+text.slice(0,40)); }catch(e){}
   saveAll(); _renderWkPlan();
   var inp=document.getElementById('wk-text'); if(inp) inp.focus();
