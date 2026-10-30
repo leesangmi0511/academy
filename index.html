@@ -9121,6 +9121,25 @@ function _renderWkPlan(){
   })();
 }
 // ── 계획표 파일 인식: 한글(hwpx)·PDF 등에서 관리자별 할 일 추출 ──
+function _wkDayFromDate(mo, d){ // 날짜(10/27, 27일, 10월 27일) → 그 주의 요일
+  try{
+    if(!(d>=1 && d<=31)) return '';
+    var ws=new Date(_wkCur||_wkKey()); if(isNaN(ws.getTime())) ws=new Date(_wkKey());
+    var cand=null;
+    if(mo){
+      if(!(mo>=1 && mo<=12)) return '';
+      var y=ws.getFullYear();
+      cand=new Date(y, mo-1, d);
+      if(cand-ws > 180*86400000) cand=new Date(y-1, mo-1, d);        // 연말·연초 보정
+      else if(ws-cand > 180*86400000) cand=new Date(y+1, mo-1, d);
+    } else {
+      for(var i=0;i<7;i++){ var t=new Date(ws); t.setDate(ws.getDate()+i); if(t.getDate()===d){ cand=t; break; } }
+      if(!cand) cand=new Date(ws.getFullYear(), ws.getMonth(), d);
+    }
+    if(!cand || isNaN(cand.getTime())) return '';
+    return ['일','월','화','수','목','금','토'][cand.getDay()];
+  }catch(e){ return ''; }
+}
 function wkParsePlan(text){
   var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){return a&&a.name?a.name:'';}).filter(Boolean);
   var items=[], cur='';
@@ -9129,7 +9148,7 @@ function wkParsePlan(text){
     if(!raw){ cur=''; return; } // 빈 줄 = 담당 구간 종료
     var t=raw.replace(/^[\s■□▶◆●·•\-–—*※>]+/,'').replace(/^\(?\d{1,2}[.)]\s*/,'').replace(/\s+/g,' ').trim();
     if(!t || t.length<2 || t.length>140) return;
-    if(/(계획표|계획안)$/.test(t) || /^\d{1,2}월\s*\d/.test(t)) return; // 제목 줄
+    if(/(계획표|계획안)$/.test(t) || /^\d{1,2}월\s*\d{1,2}\s*주/.test(t)) return; // 제목 줄 (예: 10월 4주차 계획표) — "10월 27일 …"은 날짜로 인식
     var bare=t.replace(/[\s:：]+$/,'');
     var only=admins.find(function(nm){ return bare===nm || bare===nm+' 팀장' || bare===nm+' 실장'; });
     if(only){ cur=only; return; } // 이름만 있는 줄 = 이후 줄들의 담당자
@@ -9141,6 +9160,12 @@ function wkParsePlan(text){
     var day='';
     var dm=rest.match(/(^|[\s(])([월화수목금토일])요일/); if(dm){ day=dm[2]; }
     else{ var dm2=rest.match(/^([월화수목금토일])\s*[:：\-·]\s*/); if(dm2){ day=dm2[1]; rest=rest.slice(dm2[0].length).trim(); } }
+    if(!day){ // 날짜 인식: 10/27 · 10월 27일 · 10-27 · 27일 → 그 주의 요일로
+      var dm3=rest.match(/^[\(\[]?\s*(\d{1,2})\s*[월\/\-]\s*(\d{1,2})\s*일?\s*[\)\]]?\s*[:：\-·,]?\s*/);
+      var dm4=dm3?null:rest.match(/^[\(\[]?\s*(\d{1,2})\s*일\s*[\)\]]?\s*[:：\-·,]?\s*/);
+      if(dm3){ var dd=_wkDayFromDate(parseInt(dm3[1],10), parseInt(dm3[2],10)); if(dd){ day=dd; rest=rest.slice(dm3[0].length).trim(); } }
+      else if(dm4){ var dd2=_wkDayFromDate(null, parseInt(dm4[1],10)); if(dd2){ day=dd2; rest=rest.slice(dm4[0].length).trim(); } }
+    }
     if(rest.length<3) return;
     items.push({name:who||'', day:day, text:rest});
   });
@@ -9192,7 +9217,7 @@ function wkTextOpen(){
   document.body.insertAdjacentHTML('beforeend',
     '<div class="ov open" id="ov-wktext" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal"><div class="mh"></div>'
     +'<div class="mt2">📋 텍스트로 주간 계획 올리기</div>'
-    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.6">회의 메모·카톡 내용을 그대로 붙여넣으세요. 줄마다 한 가지 일로 인식하고 요일(월: / 수요일 등)도 알아봐요.'
+    +'<div style="font-size:11px;color:var(--t2);margin-bottom:8px;line-height:1.6">회의 메모·카톡 내용을 그대로 붙여넣으세요. 줄마다 한 가지 일로 인식하고, 요일(월: / 수요일)과 날짜(10/27 · 27일 · 10월 27일)도 알아봐요.'
     +(isOw?'<br>이름이 적힌 줄(예: 박팀장 금: 교재 발주)은 그 사람에게 분배돼요.':'<br>제 이름이 없는 줄은 모두 내 계획으로 들어와요.')+'</div>'
     +'<textarea class="fi" id="wk-text-in" rows="10" placeholder="예)\n월: 반 배치 명단 정리\n수요일 학부모 상담 3건\n금: 교재 발주 확인"></textarea>'
     +'<button class="btn" onclick="wkTextApply()">🔍 인식해서 추가하기</button>'
