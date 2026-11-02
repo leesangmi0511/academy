@@ -8757,37 +8757,66 @@ function wbCollect(){
   (_meetings||[]).forEach(function(m){
     if(!mtCanSee(m)) return;
     var src='📝 '+(m.title||m.date||'');
+    var mAct=(function(id){ return function(){ mtView(id); }; })(m.id);
     (m.dls||[]).forEach(function(d){
-      if(!d.status) open.push({type:'회의 기한', text:d.text, date:d.date||'', who:(d.owner?('담당 '+d.owner):(m.who||[]).join('·')), src:src});
-      else if(d.status==='ok') done.push({type:'기한 지킴', text:d.text, date:d.date||'', who:(m.who||[]).join('·'), src:src});
+      if(!d.status) open.push({type:'회의 기한', text:d.text, date:d.date||'', who:(d.owner?('담당 '+d.owner):(m.who||[]).join('·')), src:src, act:mAct});
+      else if(d.status==='ok') done.push({type:'기한 지킴', text:d.text, date:d.date||'', who:(m.who||[]).join('·'), src:src, act:mAct});
     });
     (m.fbs||[]).forEach(function(f){
       mtFbTargets(m,f).forEach(function(nm){
         var dn=f.done&&f.done[nm];
-        if(dn) done.push({type:'피드백 확인', text:f.text, date:dn.date||'', who:nm, src:src});
-        else open.push({type:'피드백', text:f.text, date:'', who:nm, src:src});
+        if(dn) done.push({type:'피드백 확인', text:f.text, date:dn.date||'', who:nm, src:src, act:mAct});
+        else open.push({type:'피드백', text:f.text, date:'', who:nm, src:src, act:mAct});
       });
     });
   });
   Object.keys(DB.tlj||{}).forEach(function(nm){ (DB.tlj[nm]||[]).forEach(function(e){
     if((e.date||'').slice(0,7)!==ym) return;
-    (e.linked||[]).forEach(function(l){ done.push({type:'일지 처리', text:l.text, date:e.date, who:nm, hours:l.hours||'', src:'🧑‍💼 관리자일지'}); });
+    var tAct=(ME&&(ME.role==='owner'||ME.name===nm))?(function(n){ return function(){ srOpenTlj(n); }; })(nm):null;
+    (e.linked||[]).forEach(function(l){ done.push({type:'일지 처리', act:tAct, text:l.text, date:e.date, who:nm, hours:l.hours||'', src:'🧑‍💼 관리자일지'}); });
   }); });
   var man=_manDB(), mdone=man.done[_manYM()]||{};
   var _mdps=(ME&&ME.role==='owner')?MAN_DEPTS:MAN_DEPTS.filter(function(d){ return manCanView(d.key); });
-  _mdps.forEach(function(dp){ man[dp.key].monthly.forEach(function(it){
+  _mdps.forEach(function(dp){
+    var pAct=(function(k){ return function(){ _manTab=k; openManuals(); }; })(dp.key);
+    man[dp.key].monthly.forEach(function(it){
     var dn=mdone[it.id];
     var txt=(it.when?('['+it.when+'] '):'')+it.title;
-    if(dn) done.push({type:'매뉴얼 업무', text:txt, date:dn.date||'', who:dn.by||'', src:dp.label});
-    else open.push({type:'매뉴얼 업무', text:txt, date:'', who:'', src:dp.label, when:it.when||''});
+    if(dn) done.push({type:'매뉴얼 업무', text:txt, date:dn.date||'', who:dn.by||'', src:dp.label, act:pAct});
+    else open.push({type:'매뉴얼 업무', text:txt, date:'', who:'', src:dp.label, when:it.when||'', act:pAct});
   }); });
   // 중복 제거 (같은 사람·같은 내용)
   var seen={};
   done=done.filter(function(d){ var k=(d.who||'')+'|'+String(d.text||'').replace(/\s+/g,'').slice(0,60); if(seen[k]) return false; seen[k]=1; return true; });
   done.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
   open.sort(function(a,b){ return (a.date||'9999').localeCompare(b.date||'9999'); });
-  return {done:done, open:open};
+  // 현황판에서 삭제(숨김)한 항목 제외 — 원본 기록은 그대로, 현황판 표시만 빠짐
+  var hid=(DB.cfg&&DB.cfg.wbHide)||{};
+  var hidden=[];
+  var keyOf=function(d){ return (d.type+'|'+(d.who||'')+'|'+String(d.text||'').replace(/\s+/g,'')).slice(0,90); };
+  var keep=function(arr){ return arr.filter(function(d){ d.k=keyOf(d); if(hid[d.k]){ hidden.push(d); return false; } return true; }); };
+  done=keep(done); open=keep(open);
+  return {done:done, open:open, hidden:hidden};
 }
+// ── 현황판 항목: 내용 확인(원본 열기) + 삭제(숨김)/복원 ──
+function wbOpenIdx(i){ var it=(window._wbItems||[])[i]; if(it&&it.act){ var o=document.getElementById('ov-workboard'); if(o)o.remove(); try{ it.act(); }catch(e){} } }
+function wbHideIdx(i){ var it=(window._wbItems||[])[i]; if(it) wbHide(it.k); }
+function wbUnhideIdx(i){ var it=(window._wbItems||[])[i]; if(it) wbUnhide(it.k); }
+function wbHide(k){
+  if(!(ME&&ME.role==='owner')){ toast('현황판 정리는 원장만 할 수 있어요','var(--rd)'); return; }
+  if(!confirm('이 항목을 현황판에서 삭제할까요?\n원본 기록(회의록·일지·매뉴얼)은 지워지지 않고, 아래 [지운 항목 보기]에서 되돌릴 수 있어요.')) return;
+  if(!DB.cfg) DB.cfg={}; if(!DB.cfg.wbHide) DB.cfg.wbHide={};
+  DB.cfg.wbHide[k]=today();
+  try{ logChange('현황판 항목 삭제(숨김)', k.slice(0,60)); }catch(e){}
+  saveAll(); _renderWorkBoard(); toast('현황판에서 지웠어요 (원본 기록은 유지)','var(--g)');
+}
+function wbUnhide(k){
+  if(!(ME&&ME.role==='owner')) return;
+  if(DB.cfg&&DB.cfg.wbHide) delete DB.cfg.wbHide[k];
+  saveAll(); _renderWorkBoard(); toast('현황판에 다시 표시해요 ✓','var(--g)');
+}
+var _wbShowHid=false;
+function wbHidTgl(){ _wbShowHid=!_wbShowHid; _renderWorkBoard(); }
 function openWorkBoard(){
   if(ME && ME.role!=='owner' && !canFeat('workboard')){ toast('원장님이 이 기능 사용을 제한했어요','var(--rd)'); return; }
   if(!isAdminLevel()){ toast('관리자 이상만 볼 수 있어요','var(--rd)'); return; }
@@ -8818,10 +8847,16 @@ function _renderWorkBoard(){
   var wb=wbCollect();
   var st=manMonthStat();
   var now=new Date();
+  window._wbItems=[];
+  var isOwWb=(ME&&ME.role==='owner');
   function row(d,isDone){
-    return '<div style="background:var(--s1);border:1px solid '+(isDone?'var(--g)':'var(--s3)')+';border-radius:10px;padding:8px 11px;margin-bottom:6px">'
+    var i=window._wbItems.length; window._wbItems.push(d);
+    return '<div style="background:var(--s1);border:1px solid '+(isDone?'var(--g)':'var(--s3)')+';border-radius:10px;padding:8px 11px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start">'
+      +'<div '+(d.act?('onclick="wbOpenIdx('+i+')" style="flex:1;min-width:0;cursor:pointer"'):'style="flex:1;min-width:0"')+'>'
       +'<div style="font-size:12.5px;font-weight:600;line-height:1.5;'+(isDone?'color:var(--t2)':'')+'">'+(isDone?'✅ ':'⬜ ')+dEsc(d.text)+(d.hours?' <span style="color:var(--acc);font-weight:700;font-size:11px">· '+dEsc(d.hours)+'</span>':'')+'</div>'
-      +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+dEsc(d.type)+(d.who?' · 👤 '+dEsc(d.who):'')+(d.date?' · '+dEsc(d.date):'')+' · '+dEsc(d.src)+'</div></div>';
+      +'<div style="font-size:10.5px;color:var(--t3);margin-top:2px">'+dEsc(d.type)+(d.who?' · 👤 '+dEsc(d.who):'')+(d.date?' · '+dEsc(d.date):'')+' · '+dEsc(d.src)+(d.act?' · <span style="color:var(--acc);font-weight:700">내용 확인 ›</span>':'')+'</div></div>'
+      +(isOwWb?'<button onclick="wbHideIdx('+i+')" style="flex-shrink:0;font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer;padding:2px 4px">삭제</button>':'')
+      +'</div>';
   }
   var h='<div class="ov open" id="ov-workboard" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
     +'<div class="mt2">📋 업무 현황판</div>'
@@ -8853,6 +8888,16 @@ function _renderWorkBoard(){
   h+='<div class="sl2" style="margin:14px 0 8px"><div class="d8" style="background:var(--g)"></div>✅ 완료한 일 <span style="font-size:11px;color:var(--t3)">'+now.getFullYear()+'년 '+(now.getMonth()+1)+'월 · '+wb.done.length+'건</span></div>';
   if(!wb.done.length) h+='<div class="empty" style="font-size:12px;padding:6px 0 10px">이번 달 완료 기록이 없어요</div>';
   wb.done.slice(0,60).forEach(function(d){ h+=row(d,true); });
+  if(isOwWb && (wb.hidden||[]).length){
+    h+='<div><button onclick="wbHidTgl()" style="background:none;border:none;color:var(--t3);font-size:11px;cursor:pointer;padding:6px 0 2px">'+(_wbShowHid?'▲ 지운 항목 접기':'▼ 현황판에서 지운 항목 보기 ('+wb.hidden.length+'건)')+'</button></div>';
+    if(_wbShowHid) wb.hidden.forEach(function(d){
+      var i=window._wbItems.length; window._wbItems.push(d);
+      h+='<div style="background:var(--s2);border:1px dashed var(--s3);border-radius:10px;padding:7px 11px;margin-bottom:5px;display:flex;gap:8px;align-items:center;opacity:.85">'
+        +'<div style="flex:1;min-width:0"><div style="font-size:12px;line-height:1.5;color:var(--t2)">'+dEsc(d.text)+'</div>'
+        +'<div style="font-size:10px;color:var(--t3)">'+dEsc(d.type)+(d.who?' · '+dEsc(d.who):'')+' · '+dEsc(d.src)+'</div></div>'
+        +'<button onclick="wbUnhideIdx('+i+')" style="flex-shrink:0;font-size:11px;background:var(--s1);border:1px solid var(--g);color:var(--g);border-radius:7px;padding:4px 10px;cursor:pointer;font-weight:700">복원</button></div>';
+    });
+  }
   h+='<div style="display:flex;gap:8px;margin-top:10px">'
     +'<button class="btn ghost" style="flex:1" onclick="document.getElementById(\'ov-workboard\').remove();openManuals()">📖 매뉴얼 열기</button>'
     +'<button class="btn ghost" style="flex:1" onclick="document.getElementById(\'ov-workboard\').remove();openMeetings()">📝 회의록 열기</button></div>'
