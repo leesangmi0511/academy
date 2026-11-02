@@ -9769,12 +9769,29 @@ function mtdDel(name,id){
   saveAll(); _renderMyTodos();
 }
 // ═══ 원장 알림: 꼭 해야 하는 일이 미완료일 때 ═══
+// 현황판에서 삭제(숨김)한 항목은 홈의 '꼭 해야 할 일' 알림에서도 함께 빠짐
+function _wbIsHidden(types, text){
+  try{
+    var hid=(DB.cfg&&DB.cfg.wbHide)||{};
+    var t=String(text||'').replace(/\s+/g,'');
+    if(!t) return false;
+    return Object.keys(hid).some(function(k){
+      var pi=k.indexOf('|'); if(pi<0) return false;
+      var ty=k.slice(0,pi);
+      if(types.indexOf(ty)<0) return false;
+      var pj=k.indexOf('|', pi+1); if(pj<0) return false;
+      var tx=k.slice(pj+1);
+      return t===tx || (tx.length>=80 && t.slice(0,tx.length)===tx); // 긴 내용은 키가 잘렸을 수 있어 앞부분 일치로 비교
+    });
+  }catch(e){ return false; }
+}
 function wbOwnerAlerts(){
   var alerts=[]; var td=today(); var day=new Date().getDate();
   // 1) 기한 지난 회의 할 일
   (_meetings||[]).forEach(function(m){
     (m.dls||[]).forEach(function(d){
       if(d.status || !d.date) return;
+      if(_wbIsHidden(['회의 기한'], d.text)) return; // 현황판에서 삭제한 항목
       var resp=d.owner?('담당 '+d.owner):((m.who||[]).join('·')||'담당 미정');
       if(d.date<td){
         var days=Math.round((new Date(td)-new Date(d.date))/86400000);
@@ -9790,6 +9807,7 @@ function wbOwnerAlerts(){
       var tg=mtFbTargets(m,f);
       var wait=tg.filter(function(nm){ return !(f.done&&f.done[nm]); });
       if(wait.length && f.ts && (Date.now()-f.ts)>3*86400000){
+        if(_wbIsHidden(['피드백','피드백 확인'], f.text)) return; // 현황판에서 삭제한 항목
         alerts.push({sev:'warn', text:f.text, info:'피드백 미확인 '+Math.floor((Date.now()-f.ts)/86400000)+'일 · 👤 '+wait.join('·'), src:'📝 '+(m.title||m.date||'')});
       }
     });
@@ -9806,7 +9824,10 @@ function wbOwnerAlerts(){
       else if(/말일|월\s*말/.test(w) && day>=26){ sev='warn'; why='말일 임박'; }
       else if(/첫\s*근무일|월\s*초/.test(w) && day>=5){ sev='late'; why='시기('+w+') 지남'; }
       else if(day>=21){ sev='warn'; why='월말 임박'; }
-      if(sev) alerts.push({sev:sev, text:(w?('['+w+'] '):'')+it.title, info:why, src:dp.label});
+      if(sev){
+        var _mtxt=(w?('['+w+'] '):'')+it.title;
+        if(!_wbIsHidden(['매뉴얼 업무'], _mtxt)) alerts.push({sev:sev, text:_mtxt, info:why, src:dp.label});
+      }
     }); });
   }catch(e){}
   // 4) 초기·약한 비밀번호 사용 구성원 (보안 점검)
