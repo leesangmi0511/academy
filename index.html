@@ -1465,6 +1465,12 @@ function _mergeServerDB(d){
       Object.keys(L).forEach(function(nm){ Object.keys(L[nm]||{}).forEach(function(wk){ L[nm][wk]=_mergeById(L[nm][wk], null, gone); }); });
       DB.wkplan=L; })();
     DB.cal=_mergeById(DB.cal||[], d.cal, gone);
+    (function(){ if(!Array.isArray(DB.notices)) DB.notices=[];
+      var nL=DB.notices, nS=(d.notices||[]); var nmap={}; nL.forEach(function(x){ if(x&&x.id) nmap[x.id]=x; });
+      nS.forEach(function(x){ if(!x||!x.id) return; var l=nmap[x.id];
+        if(!l){ if(!gone[x.id]){ nL.push(x); nmap[x.id]=x; } }
+        else{ var r=x.reads||{}; if(!l.reads) l.reads={}; Object.keys(r).forEach(function(nm){ if(!l.reads[nm]) l.reads[nm]=r[nm]; }); } });
+      nL.sort(function(a,b){ return (b.ts||0)-(a.ts||0); }); DB.notices=nL.slice(0,50); })();
     (function(){ var L=DB.tchChanges||[], S=d.tchChanges||[]; var k={}; L.forEach(function(x){ k[(x.ts||'')+'|'+(x.stu||'')]=1; }); S.forEach(function(x){ var kk=(x.ts||'')+'|'+(x.stu||''); if(!k[kk] && !gone['tchg:'+kk]) L.push(x); }); DB.tchChanges=L; })();
     if(d.manuals){
       if(!DB.manuals) DB.manuals=d.manuals;
@@ -1506,7 +1512,7 @@ function _mergeServerDB(d){
 function _dbPayload(nchunks, ver){
   return {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [],
     withdrawn: DB.withdrawn||[], tlj: DB.tlj||{}, myTodos: DB.myTodos||{}, upg: DB.upg||{},
-    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{}, cal: DB.cal||[],
+    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{}, cal: DB.cal||[], notices: DB.notices||[],
     tbChunks: nchunks, tbVer: ver, tbCount: (_tbReady ? (DB.typeBank||[]).length : (_srvTbMeta.cnt||0))};
 }
 function saveAll() {
@@ -1530,6 +1536,7 @@ function saveAll() {
     try{ localStorage.setItem('ac_gone', JSON.stringify(DB.gone||[])); }catch(_e){}
     try{ localStorage.setItem('ac_wkplan', JSON.stringify(DB.wkplan||{})); }catch(_e){}
     try{ localStorage.setItem('ac_cal', JSON.stringify(DB.cal||[])); }catch(_e){}
+    try{ localStorage.setItem('ac_notices', JSON.stringify(DB.notices||[])); }catch(_e){}
     var _ver = Date.now();
     if(_tbReady){
       _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
@@ -6368,10 +6375,12 @@ function _renderTlj(){
             +'<button onclick="openHandover(\''+dEsc(_tljViewFor)+'\')" style="flex:1;font-size:11.5px;padding:8px 0;border-radius:8px;border:1px solid var(--pu);background:var(--s1);color:var(--pu);font-weight:700;cursor:pointer">📑 인수인계 요약</button></div>';
         })()
         +tljTrackHTML(_tljViewFor, false)
-        +tljRecsHTML(_tljViewFor, false);
+        +tljRecsHTML(_tljViewFor, false)
+        +ntSectionHTML();
     }
   } else {
     h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
+      +ntSectionHTML()
       +'<label class="fl">날짜</label><input class="fi" type="date" id="tlj-date" value="'+today()+'">'
       +(function(){ // ⏳ 이월된 일 (이전 일지의 진행 중·미완료 — 끝날 때까지 따라다님)
         var cl=tljCarryList();
@@ -6631,6 +6640,93 @@ function tljDel(name,id){
   _markGone(id);
   try{ logChange('관리자일지 삭제', name+' '+id); }catch(e){}
   saveAll(); _renderTlj();
+}
+// ── 📢 원장 전달내용: 일지 방에서 관리자들과 공유 (확인 기록 포함) ──
+function ntUnreadCnt(){
+  if(!ME||ME.role==='owner'||!ME.name) return 0;
+  return (DB.notices||[]).filter(function(n){ return n && !(n.reads&&n.reads[ME.name]); }).length;
+}
+function ntAdd(){
+  if(!(ME&&ME.role==='owner')){ toast('전달내용은 원장만 쓸 수 있어요','var(--rd)'); return; }
+  var el=document.getElementById('nt-text'); var text=((el||{}).value||'').trim();
+  if(!text){ toast('전달할 내용을 입력하세요','var(--rd)'); return; }
+  if(!Array.isArray(DB.notices)) DB.notices=[];
+  DB.notices.unshift({id:'nt'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), date:today(), ts:Date.now(), text:text, by:(ME.name||'원장'), reads:{}});
+  DB.notices=DB.notices.slice(0,50);
+  if(el) el.value='';
+  try{ logChange('원장 전달내용', text.slice(0,40)); }catch(e){}
+  saveAll(); _renderTlj(); toast('📢 전달내용이 공유됐어요 — 관리자 일지 방에 보여요','var(--g)');
+}
+function ntDel(id){
+  if(!(ME&&ME.role==='owner')) return;
+  if(!confirm('이 전달내용을 삭제할까요?')) return;
+  DB.notices=(DB.notices||[]).filter(function(x){ return x.id!==id; });
+  _markGone(id);
+  saveAll(); _renderTlj(); toast('삭제됐어요');
+}
+function ntRead(id){
+  if(!ME||!ME.name||ME.role==='owner') return;
+  var n=(DB.notices||[]).find(function(x){ return x.id===id; }); if(!n) return;
+  if(!n.reads) n.reads={};
+  if(n.reads[ME.name]) return;
+  n.reads[ME.name]=today();
+  try{ logChange('전달내용 확인', String(n.text||'').slice(0,40)); }catch(e){}
+  var f=null; try{ _tljSyncDone(); f=_tljKeepForm(); }catch(e){}
+  saveAll(); _renderTlj();
+  try{ _tljRestoreForm(f); }catch(e){}
+  toast('✓ 확인했습니다 — 원장님께 표시돼요','var(--g)');
+}
+var _ntShowOld=false;
+function ntOldTgl(){
+  var f=null; try{ _tljSyncDone(); f=_tljKeepForm(); }catch(e){}
+  _ntShowOld=!_ntShowOld; _renderTlj();
+  try{ _tljRestoreForm(f); }catch(e){}
+}
+function ntSectionHTML(){
+  var isOw=(ME&&ME.role==='owner');
+  var list=(DB.notices||[]);
+  var admins=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){ return a&&a.name?a.name:''; }).filter(Boolean);
+  var h='';
+  if(isOw){
+    h+='<label class="fl">📢 원장 전달내용 — 관리자 일지 방에 공유돼요</label>'
+      +'<div style="background:var(--s1);border:1px dashed var(--pu);border-radius:10px;padding:9px 11px;margin-bottom:8px">'
+      +'<textarea class="fi" id="nt-text" rows="2" placeholder="예: 이번 주 금요일 교무회의 30분 당겨서 시작합니다" style="margin-bottom:6px"></textarea>'
+      +'<button onclick="ntAdd()" style="width:100%;padding:8px;border-radius:9px;border:none;background:var(--pu);color:#fff;font-size:12px;font-weight:700;cursor:pointer">📢 전달하기</button></div>';
+    if(list.length){
+      list.slice(0,8).forEach(function(n){
+        var okN=admins.filter(function(nm){ return n.reads&&n.reads[nm]; });
+        var waitN=admins.filter(function(nm){ return !(n.reads&&n.reads[nm]); });
+        h+='<div style="background:var(--s1);border:1px solid '+(waitN.length?'var(--am)':'var(--g)')+';border-radius:10px;padding:9px 11px;margin-bottom:6px">'
+          +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">'
+          +'<div style="flex:1;min-width:0;font-size:12.5px;line-height:1.6;white-space:pre-wrap">'+dEsc(n.text)+'</div>'
+          +'<button onclick="ntDel(\''+n.id+'\')" style="flex-shrink:0;font-size:11px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button></div>'
+          +'<div style="font-size:10px;color:var(--t3);margin-top:4px">'+dEsc(n.date||'')
+          +(okN.length?' · <span style="color:var(--g);font-weight:700">✅ '+dEsc(okN.join('·'))+'</span>':'')
+          +(waitN.length?' · <span style="color:var(--am);font-weight:700">⬜ 미확인 '+dEsc(waitN.join('·'))+'</span>':' · 전원 확인 ✓')
+          +'</div></div>';
+      });
+    } else h+='<div class="empty" style="font-size:12px;padding:4px 0 8px">아직 전달내용이 없어요</div>';
+    return h;
+  }
+  if(!list.length) return '';
+  var unread=list.filter(function(n){ return !(n.reads&&n.reads[ME.name]); });
+  var read=list.filter(function(n){ return n.reads&&n.reads[ME.name]; });
+  h+='<label class="fl">📢 원장 전달내용'+(unread.length?' <span style="color:var(--am)">(미확인 '+unread.length+'건)</span>':' <span style="color:var(--g)">(모두 확인 ✓)</span>')+'</label>';
+  unread.forEach(function(n){
+    h+='<div style="background:var(--s1);border:1.5px solid var(--pu);border-radius:10px;padding:9px 11px;margin-bottom:6px">'
+      +'<div style="font-size:12.5px;line-height:1.6;white-space:pre-wrap;font-weight:600">'+dEsc(n.text)+'</div>'
+      +'<div style="font-size:10px;color:var(--t3);margin-top:3px">'+dEsc(n.date||'')+' · '+dEsc(n.by||'원장')+'</div>'
+      +'<button onclick="ntRead(\''+n.id+'\')" style="width:100%;margin-top:6px;padding:8px;border-radius:9px;border:none;background:var(--pu);color:#fff;font-size:12px;font-weight:700;cursor:pointer">👆 확인했습니다</button></div>';
+  });
+  if(read.length){
+    h+='<div><button onclick="ntOldTgl()" style="background:none;border:none;color:var(--t3);font-size:11px;cursor:pointer;padding:2px 0;margin-bottom:8px">'+(_ntShowOld?'▲ 확인한 내용 접기':'▼ 확인한 내용 보기 ('+read.length+'건)')+'</button></div>';
+    if(_ntShowOld) read.slice(0,10).forEach(function(n){
+      h+='<div style="background:var(--s2);border:1px solid var(--s3);border-radius:10px;padding:8px 11px;margin-bottom:5px;opacity:.85">'
+        +'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;color:var(--t2)">'+dEsc(n.text)+'</div>'
+        +'<div style="font-size:9.5px;color:var(--t3);margin-top:2px">'+dEsc(n.date||'')+' · ✓ '+dEsc((n.reads&&n.reads[ME.name])||'')+' 확인</div></div>';
+    });
+  }
+  return h;
 }
 // ── 📍 완료까지 추적: 같은 일의 상태 흐름을 완료될 때까지 따라감 ──
 function tljTrack(name){
@@ -9750,6 +9846,17 @@ function wbOwnerAlerts(){
     var _ps=((DB.manuals||{}).suggests||[]).filter(function(x){ return x && x.st==='wait'; });
     if(_ps.length) alerts.push({sev:'warn', text:'매뉴얼 수정 의견 '+_ps.length+'건 — 반영 여부 결정 필요', info:_ps.slice(0,3).map(function(x){ return (x.who||'')+': '+((x.fields&&x.fields.title)||''); }).join(' · '), src:'📖 업무 매뉴얼'});
   }catch(e){}
+  // 4-5a) 원장 전달내용 — 2일 지나도 미확인
+  try{
+    var _nw=[];
+    var _adm2=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){ return a&&a.name?a.name:''; }).filter(Boolean);
+    (DB.notices||[]).forEach(function(n){
+      if(!n||!n.ts || (Date.now()-n.ts)<2*86400000) return;
+      var w=_adm2.filter(function(nm){ return !(n.reads&&n.reads[nm]); });
+      if(w.length) _nw.push(String(n.text||'').slice(0,18)+' — '+w.join('·'));
+    });
+    if(_nw.length) alerts.push({sev:'warn', text:'전달내용 미확인 '+_nw.length+'건 (2일 경과)', info:_nw.slice(0,3).join(' / '), src:'📢 원장 전달내용'});
+  }catch(e){}
   // 4-5b) 일지 추적 — 3일 이상 완료되지 않은 일
   try{
     var _tk=[];
@@ -10245,7 +10352,7 @@ function renderAdminHome() {
      + (isOwnerLevel()?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openHRModal()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👥 인사 관리 (입사일·급여명세서·연차)</button></div>'+hrDueCardHTML():'')
      + (ME.role==='owner'?'<div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openOwnerList()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">👑 원장 명단</button><button onclick="openStaffList()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗂️ 행정팀 명단</button><button onclick="openPermModal()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔐 권한 관리</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAccessLog()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🌐 접속 기록</button><button onclick="openChangeLog()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📜 변경 이력</button><button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button><button onclick="openOwnerPw()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🔑 비밀번호 변경</button></div><div style="display:flex;gap:8px;margin-bottom:10px"><button onclick="openAutoBackup()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗄 자동 백업</button><button onclick="openJournalBackup()" style="flex:1;font-size:12px;color:var(--acc);background:var(--s1);border:1.5px solid var(--acc);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🗃 일지·현황판 백업</button><button onclick="openEvalReset()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">♻️ 평가 리셋</button><button onclick="openPledgeLog()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📑 약정 확인 기록</button><button onclick="openLogoDl()" style="flex:1;font-size:12px;color:var(--t2);background:var(--s1);border:1.5px solid var(--s3);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🖼 로고 받기</button><button onclick="openSecureLock()" style="flex:1;font-size:12px;color:var(--rd);background:var(--s1);border:1.5px solid var(--rd);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🛡 서버 보안 잠금</button></div>':'')
      + (ME.role!=='owner'?(function(){ var bs='';
-         if(canFeat('tlj')) bs+='<button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 관리자일지 작성</button>';
+         if(canFeat('tlj')) bs+='<button onclick="openTlj()" style="flex:1;font-size:12px;color:var(--g);background:var(--s1);border:1.5px solid var(--g);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">🧑‍💼 관리자일지 작성'+(function(){ var n=ntUnreadCnt(); return n?' <span style="color:var(--pu);font-weight:700">📢'+n+'</span>':''; })()+'</button>';
          if(canFeat('upgrades')) bs+='<button onclick="openUpgrades()" style="flex:1;font-size:12px;color:var(--am);background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">💡 업무 업그레이드</button>';
          if(canFeat('meetings')) bs+='<button onclick="openMeetings()" style="flex:1;font-size:12px;color:var(--pu);background:var(--s1);border:1.5px solid var(--pu);border-radius:var(--rs);padding:8px;cursor:pointer;font-weight:600">📝 회의록</button>';
          return bs?'<div style="display:flex;gap:8px;margin-bottom:10px">'+bs+'</div>':''; })():'')
@@ -13293,7 +13400,7 @@ _loadFirebase().then(function() {
     if(d&&d.cfg){
       DB.cfg=d.cfg;
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){}if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
-      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{}; DB.cal=d.cal||[];
+      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{}; DB.cal=d.cal||[]; DB.notices=d.notices||[];
       if(d.manuals) DB.manuals=d.manuals;
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
@@ -13311,6 +13418,7 @@ _loadFirebase().then(function() {
       try{ DB.gone=JSON.parse(localStorage.getItem('ac_gone')||'[]'); }catch(_e){ DB.gone=[]; }
       try{ DB.wkplan=JSON.parse(localStorage.getItem('ac_wkplan')||'{}'); }catch(_e){ DB.wkplan={}; }
       try{ DB.cal=JSON.parse(localStorage.getItem('ac_cal')||'[]'); }catch(_e){ DB.cal=[]; }
+      try{ DB.notices=JSON.parse(localStorage.getItem('ac_notices')||'[]'); }catch(_e){ DB.notices=[]; }
       // 오프라인: 기기 백업(IndexedDB)이 더 크면 그걸로 복구 후 저장 허용
       _idbGet('tb', function(idb){ if(idb && idb.items && idb.items.length > (DB.typeBank||[]).length){ DB.typeBank = idb.items; } _tbReady = true; if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } });
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
@@ -13370,7 +13478,7 @@ _loadFirebase().then(function() {
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[];
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){} if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
-      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan; DB.cal=d2.cal||DB.cal;
+      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan; DB.cal=d2.cal||DB.cal; DB.notices=d2.notices||DB.notices;
       if(d2.manuals) DB.manuals=d2.manuals;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
