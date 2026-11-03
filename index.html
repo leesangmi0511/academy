@@ -1458,6 +1458,13 @@ function _mergeServerDB(d){
     var g=_goneSet(); (d.gone||[]).forEach(function(id){ if(g.indexOf(id)<0) g.push(id); });
     var gone={}; g.forEach(function(id){ gone[id]=1; });
     DB.tlj=_mergeNameMap(DB.tlj, d.tlj, gone);
+    (function(){ // 원장 확인 표시는 한 번 붙으면 병합에서 유지
+      var S=d.tlj||{};
+      Object.keys(S).forEach(function(nm){
+        var loc=DB.tlj[nm]||[]; var map={}; loc.forEach(function(e){ if(e&&e.id) map[e.id]=e; });
+        (S[nm]||[]).forEach(function(se){ if(se&&se.id&&se.ownOk){ var le=map[se.id]; if(le&&!le.ownOk&&!le.ownOkRm) le.ownOk=se.ownOk; } });
+      });
+    })();
     DB.myTodos=_mergeNameMap(DB.myTodos, d.myTodos, gone);
     DB.upg=_mergeNameMap(DB.upg, d.upg, gone);
     (function(){ var L=DB.wkplan||{}, S=d.wkplan||{};
@@ -6467,13 +6474,21 @@ function _renderTlj(){
   // 일지 목록
   var target=isOw?_tljViewFor:ME.name;
   var list=target?_tljList(target).slice().sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); }):[];
-  h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>지난 일지 <span style="font-size:11px;color:var(--t3)">'+list.length+'건</span></div>';
+  var _unOk=list.filter(function(e){ return !e.ownOk; }).length;
+  h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--pu)"></div>지난 일지 <span style="font-size:11px;color:var(--t3)">'+list.length+'건</span>'
+    +(isOw&&_unOk?'<button onclick="tljOwnOkAll(\''+dEsc(target)+'\')" style="margin-left:auto;font-size:10.5px;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:4px 10px;cursor:pointer;font-weight:700">👑 전체 확인 ('+_unOk+'건)</button>':'')
+    +(!isOw&&list.length?'<span style="margin-left:auto;font-size:10px;color:var(--t3)">👑 원장 확인 '+(list.length-_unOk)+'/'+list.length+'</span>':'')+'</div>';
   if(!list.length) h+='<div class="empty" style="font-size:12px;padding:6px 0">작성된 일지가 없어요</div>';
   list.slice(0,40).forEach(function(e){
     h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:10px 12px;margin-bottom:7px">'
       +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><span style="font-size:12px;font-weight:800;color:var(--acc)">'+dEsc(e.date||'')
-      +(function(){ var n=((e.doneItems||[]).filter(function(r){ return r.wk; })).length; return n?' <span style="font-size:10px;background:var(--gl);color:var(--g);border-radius:6px;padding:1.5px 7px;font-weight:700">🗓 주간 계획 '+n+'건</span>':''; })()+'</span>'
-      +((isOw||e.date===today())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</div>'
+      +(function(){ var n=((e.doneItems||[]).filter(function(r){ return r.wk; })).length; return n?' <span style="font-size:10px;background:var(--gl);color:var(--g);border-radius:6px;padding:1.5px 7px;font-weight:700">🗓 주간 계획 '+n+'건</span>':''; })()
+      +(e.ownOk?' <span style="font-size:10px;background:var(--pu);color:#fff;border-radius:6px;padding:1.5px 7px;font-weight:700">👑 원장 확인'+(e.ownOk.date?' '+dEsc(e.ownOk.date):'')+'</span>':'')+'</span>'
+      +'<span style="display:flex;gap:6px;align-items:center;flex-shrink:0">'
+      +(isOw?(e.ownOk
+          ?'<button onclick="tljOwnOk(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:1px solid var(--s3);color:var(--t3);border-radius:7px;padding:3px 8px;cursor:pointer">확인 해제</button>'
+          :'<button onclick="tljOwnOk(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:3px 10px;cursor:pointer;font-weight:700">👑 확인</button>'):'')
+      +((isOw||e.date===today())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</span></div>'
       +((e.doneItems&&e.doneItems.length)?('<div style="font-size:12px;line-height:1.6"><b>✅ 한 일</b>'
         +e.doneItems.map(function(r){
           var st=r.st||'done';
@@ -6640,6 +6655,23 @@ function tljDel(name,id){
   _markGone(id);
   try{ logChange('관리자일지 삭제', name+' '+id); }catch(e){}
   saveAll(); _renderTlj();
+}
+// ── 👑 원장 일지 확인: 원장이 확인하면 관리자 일지에 확인 표시가 남음 ──
+function tljOwnOk(name, eid){
+  if(!(ME&&ME.role==='owner')){ toast('원장만 확인 표시를 할 수 있어요','var(--rd)'); return; }
+  var e=((DB.tlj&&DB.tlj[name])||[]).find(function(x){ return x.id===eid; }); if(!e) return;
+  if(e.ownOk){ delete e.ownOk; e.ownOkRm=1; toast('확인 표시를 해제했어요'); }
+  else{ e.ownOk={date:today(), by:(ME.name||'원장')}; delete e.ownOkRm; toast('👑 확인했어요 — '+name+'님에게 표시돼요','var(--g)'); }
+  try{ logChange('일지 '+(e.ownOk?'확인':'확인 해제')+'(원장)', name+' — '+(e.date||'')); }catch(err){}
+  saveAll(); _renderTlj();
+}
+function tljOwnOkAll(name){
+  if(!(ME&&ME.role==='owner')) return;
+  var n=0;
+  ((DB.tlj&&DB.tlj[name])||[]).forEach(function(e){ if(!e.ownOk){ e.ownOk={date:today(), by:(ME.name||'원장')}; delete e.ownOkRm; n++; } });
+  if(!n) return;
+  try{ logChange('일지 전체 확인(원장)', name+' — '+n+'건'); }catch(err){}
+  saveAll(); _renderTlj(); toast('👑 '+n+'건 확인했어요 — '+name+'님에게 표시돼요','var(--g)');
 }
 // ── 📢 원장 전달내용: 일지 방에서 관리자들과 공유 (확인 기록 포함) ──
 function ntUnreadCnt(){
