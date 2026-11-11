@@ -7045,11 +7045,13 @@ function stickerSecHTML(name, own){
       h+='<div style="width:calc(50% - 4px);box-sizing:border-box;background:'+(STK_COLORS[sk.c||0]||STK_COLORS[0])+';color:#3a3a3a;border-radius:2px 2px 14px 2px;padding:9px 10px 6px;box-shadow:0 2px 6px rgba(0,0,0,.2);transform:rotate('+(i%2?'0.9':'-0.9')+'deg)">'
         +'<div style="font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;font-weight:600">'+dEsc(sk.text||'')+'</div>'
         +'<div style="font-size:9px;color:rgba(0,0,0,.45);margin-top:3px">'+(sk.by==='\uC6D0\uC7A5'?'\uD83D\uDC51 \uC6D0\uC7A5 \u00B7 ':'')+new Date(sk.ts||Date.now()).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric'})+'</div>'
-        +'<div style="display:flex;gap:4px;margin-top:5px">'
-        +(own?'<button onclick="stToJournal(\''+sk.id+'\')" style="flex:1.2;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#1b5e20;font-weight:700;cursor:pointer">\u2192 \uC77C\uC9C0</button>':'')
-        +'<button onclick="stCalAsk(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:1.2;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#0d47a1;font-weight:700;cursor:pointer">\uD83D\uDCC5 \uB0A0\uC9DC</button>'
-        +'<button onclick="stEditStart(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:.7;font-size:9.5px;padding:4px 0;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#555;font-weight:700;cursor:pointer">\u270F</button>'
-        +'<button onclick="stDel(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:.7;font-size:9.5px;padding:4px 0;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#b71c1c;font-weight:700;cursor:pointer">\u2715</button>'
+        +'<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:5px">'
+        +'<button onclick="stDone(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:1 1 30%;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#1b5e20;font-weight:700;cursor:pointer">\u2714 \uD588\uC5B4\uC694</button>'
+        +(own?'<button onclick="stToJournal(\''+sk.id+'\')" style="flex:1 1 30%;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#1b5e20;font-weight:700;cursor:pointer">\u2192 \uC77C\uC9C0</button>':'')
+        +'<button onclick="stToWkplan(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:1 1 30%;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#4a148c;font-weight:700;cursor:pointer">\uD83D\uDDD3 \uC8FC\uAC04</button>'
+        +'<button onclick="stCalAsk(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:1 1 30%;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#0d47a1;font-weight:700;cursor:pointer">\uD83D\uDCC5 \uB0A0\uC9DC</button>'
+        +'<button onclick="stEditStart(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:1 1 13%;font-size:9.5px;padding:4px 0;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#555;font-weight:700;cursor:pointer">\u270F</button>'
+        +'<button onclick="stDel(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:1 1 13%;font-size:9.5px;padding:4px 0;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#b71c1c;font-weight:700;cursor:pointer">\u2715</button>'
         +'</div></div>';
     });
     h+='</div>';
@@ -7068,7 +7070,7 @@ function stickerSecHTML(name, own){
     +STK_COLORS.map(function(c,i){ return '<span onclick="window._stColor='+i+';_stRerender(\''+dEsc(name)+'\')" style="width:19px;height:19px;border-radius:50%;background:'+c+';display:inline-block;cursor:pointer;border:2.5px solid '+(((window._stColor||0)===i)?'var(--acc)':'rgba(0,0,0,.12)')+'"></span>'; }).join('')
     +(window._stEdit?'<button onclick="window._stEdit=null;var _i=document.getElementById(\'st-in\');if(_i)_i.value=\'\';_stRerender(\''+dEsc(name)+'\')" style="margin-left:auto;font-size:10.5px;padding:6px 10px;border:1px solid var(--s3);border-radius:8px;background:none;color:var(--t2);cursor:pointer">\uCDE8\uC18C</button>':'')
     +'<button onclick="stAdd(\''+dEsc(name)+'\')" style="'+(window._stEdit?'':'margin-left:auto;')+'font-size:11px;padding:6px 14px;border:none;border-radius:8px;background:'+(window._stEdit?'var(--am)':'var(--acc)')+';color:#fff;font-weight:700;cursor:pointer">'+(window._stEdit?'\u270F \uC218\uC815 \uC800\uC7A5':'\uD83D\uDDD2 \uBD99\uC774\uAE30')+'</button></div>'
-    +'<div style="font-size:9px;color:var(--t3);margin-top:5px;line-height:1.5">\uFF0A \uB0A0\uC9DC\uAC00 \uC815\uD574\uC9C0\uBA74 [\uD83D\uDCC5 \uB0A0\uC9DC]\uB85C \uC5C5\uBB34 \uCE98\uB9B0\uB354\uC5D0'+(own?', \uC624\uB298 \uD558\uAE30\uB85C \uD588\uC73C\uBA74 [\u2192 \uC624\uB298 \uC77C\uC9C0]\uB85C':'')+' \uC62E\uACA8\uC694 \u00B7 \uCC98\uB9AC\uD55C \uC2A4\uD2F0\uCEE4\uB294 \uAE30\uB85D\uC73C\uB85C \uB0A8\uC544\uC694'+(own?' \u00B7 \uC6D0\uC7A5\uB2D8\uB3C4 \uD568\uAED8 \uBD10\uC694':'')+'</div>'
+    +'<div style="font-size:9px;color:var(--t3);margin-top:5px;line-height:1.5">\uFF0A \uD588\uC73C\uBA74 [\u2714 \uD588\uC5B4\uC694], \uC774\uBC88 \uC8FC\uC5D0 \uD558\uB824\uBA74 [\uD83D\uDDD3 \uC8FC\uAC04], \uB0A0\uC9DC\uAC00 \uC815\uD574\uC9C0\uBA74 [\uD83D\uDCC5 \uB0A0\uC9DC]'+(own?', \uC624\uB298 \uD558\uBA74 [\u2192 \uC77C\uC9C0]':'')+' \u00B7 \uCC98\uB9AC\uD55C \uC2A4\uD2F0\uCEE4\uB294 \uAE30\uB85D\uC73C\uB85C \uB0A8\uC544\uC694'+(own?' \u00B7 \uC6D0\uC7A5\uB2D8\uB3C4 \uD568\uAED8 \uBD10\uC694':'')+'</div>'
     +'</div>';
   return h;
 }
@@ -7133,6 +7135,23 @@ function stToJournal(id){
   saveAll(); _renderTlj(); _tljRestoreForm(f);
   var si=document.getElementById('st-in'); if(si) si.value='';
   toast('\u2192 \uC624\uB298 \uD55C \uC77C\uB85C \uAC00\uC838\uC654\uC5B4\uC694 \u00B7 \uC2A4\uD2F0\uCEE4\uB294 \uCC98\uB9AC\uB428\uC73C\uB85C \uC62E\uACBC\uC5B4\uC694','var(--g)');
+}
+function stDone(name,id){
+  if(!_stCan(name)) return;
+  var sk=_stList(name).find(function(x){ return x.id===id; }); if(!sk||sk.done) return;
+  sk.done=1; sk.doneTo='완료 체크'+((ME&&ME.role==='owner')?' (원장)':''); sk.doneDate=today();
+  saveAll(); _stRerender(name); toast('✔ 했어요로 표시했어요 — 기록으로 남아요','var(--g)');
+}
+function stToWkplan(name,id){
+  if(!_stCan(name)) return;
+  var sk=_stList(name).find(function(x){ return x.id===id; }); if(!sk||sk.done) return;
+  var wk=_wkKey(); var l=_wkList(name, wk);
+  if(l.length>=120){ toast('이번 주 계획이 가득 찼어요','var(--rd)'); return; }
+  var item={id:_wkNewId(), text:sk.text||'', day:'', done:false, ts:Date.now()};
+  if(ME&&ME.role==='owner') item.by='원장';
+  l.push(item);
+  sk.done=1; sk.doneTo='주간계획 (이번 주)'; sk.doneDate=today();
+  saveAll(); _stRerender(name); toast('🗓 이번 주 계획에 넣었어요','var(--g)');
 }
 function stCalAsk(name,id){
   if(!_stCan(name)) return;
@@ -12079,8 +12098,93 @@ function _doLoginCore() {
   recordAccess();
   goTab('home');
   _resetIdle();
-  setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} try{ checkNewEvents(); }catch(e){} try{ pledgeCheckDue(); }catch(e){} }, 800);
+  setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} try{ checkNewEvents(); }catch(e){} try{ pledgeCheckDue(); }catch(e){} try{ chkGateMaybe(); }catch(e){} }, 800);
   return true;
+}
+// ═══ ✅ 출근 체크 게이트 (일지·주간계획·스티커 확인 / 주간계획 기한: 전 주 토 23:59) ═══
+function _chkWkRequired(){
+  var req=[_wkKey()];
+  if(new Date().getDay()===0) req.push(_wkKey(new Date(Date.now()+86400000))); // 일요일: 다음 주 계획도 기한(어제 토 23:59) 지남
+  return req;
+}
+function _chkMissingWk(){
+  if(!(ME && ME.role==='admin' && canFeat('wkplan'))) return [];
+  return _chkWkRequired().filter(function(wk){ return !((((DB.wkplan||{})[ME.name]||{})[wk])||[]).length; });
+}
+function _chkSoftItems(){
+  var it=[];
+  if(!ME) return it;
+  if((ME.role==='admin'||ME.role==='staff') && canFeat('tlj')){
+    var y=new Date(Date.now()-86400000);
+    if(y.getDay()!==0){ // 일요일 일지는 묻지 않음
+      var yd=y.getFullYear()+'-'+('0'+(y.getMonth()+1)).slice(-2)+'-'+('0'+y.getDate()).slice(-2);
+      if(!(((DB.tlj||{})[ME.name])||[]).some(function(e){ return e.date===yd; }))
+        it.push({k:'tlj', text:'🧑\u200D💼 어제('+yd.slice(5).replace('-','/')+') 일지가 없어요', btn:'일지 쓰기', go:'openTlj()'});
+    }
+    var opn=(((DB.stickers||{})[ME.name])||[]).filter(function(x){ return !x.done; });
+    if(opn.length){
+      var oldest=Math.min.apply(null, opn.map(function(x){ return x.ts||Date.now(); }));
+      var days=Math.floor((Date.now()-oldest)/86400000);
+      it.push({k:'stk', text:'🗒 안 한 스티커 '+opn.length+'장'+(days>=3?' — 가장 오래된 것 '+days+'일째':''), btn:'스티커 보기', go:'openTlj()'});
+    }
+  }
+  if(ME.role==='admin' && canFeat('wkplan') && new Date().getDay()===6){
+    var nwk=_wkKey(new Date(Date.now()+2*86400000));
+    if(!((((DB.wkplan||{})[ME.name]||{})[nwk])||[]).length)
+      it.push({k:'wk2', text:'🗓 다음 주 계획이 아직 없어요 — 오늘 밤 11:59까지!', btn:'주간계획 쓰기', go:'openWkPlan()'});
+  }
+  return it;
+}
+function _chkSig(hard,soft){ return hard.join(',')+'|'+soft.map(function(x){ return x.k; }).join(','); }
+function chkGateMaybe(){
+  if(!ME || !(ME.role==='admin'||ME.role==='staff')) return;
+  var hard=_chkMissingWk(), soft=_chkSoftItems();
+  var acked=false; try{ acked=localStorage.getItem('ac_chk_'+ME.name)===today(); }catch(e){}
+  if(!hard.length && (!soft.length || acked)) return;
+  _chkRender(hard, soft);
+  if(!window._chkIv) window._chkIv=setInterval(_chkTick, 1500);
+}
+function _chkTick(){
+  var g=document.getElementById('ov-chkgate');
+  if(!ME){ if(g) g.remove(); clearInterval(window._chkIv); window._chkIv=null; return; }
+  var hard=_chkMissingWk(), soft=_chkSoftItems();
+  var acked=false; try{ acked=localStorage.getItem('ac_chk_'+ME.name)===today(); }catch(e){}
+  if(!hard.length && (!soft.length || acked)){
+    if(g){ g.remove(); toast('✅ 체크 완료 — 좋은 하루 되세요!','var(--g)'); }
+    clearInterval(window._chkIv); window._chkIv=null; return;
+  }
+  if(!g) return;
+  var sig=_chkSig(hard,soft);
+  if(g.getAttribute('data-sig')!==sig) _chkRender(hard, soft);
+}
+function _chkRender(hard, soft){
+  var ex=document.getElementById('ov-chkgate'); if(ex) ex.remove();
+  var h='<div class="ov open" id="ov-chkgate" data-sig="'+dEsc(_chkSig(hard,soft))+'" style="display:flex;z-index:420;background:rgba(0,0,0,.78)"><div class="modal" style="max-height:88vh;overflow-y:auto"><div class="mh"></div>'
+    +'<div class="mt2">✅ 출근 체크 — '+dEsc(ME.name)+'님</div>'
+    +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">앱을 쓰기 전에 아래 항목을 확인해 주세요.</div>';
+  if(hard.length){
+    h+='<div style="background:var(--s1);border:1.5px solid var(--rd);border-radius:12px;padding:11px 13px;margin-bottom:10px">'
+      +'<div style="font-size:12.5px;font-weight:800;color:var(--rd)">🗓 주간계획 미입력 — '+hard.map(_wkLabel).join(' · ')+'</div>'
+      +'<div style="font-size:11px;color:var(--t2);line-height:1.6;margin-top:4px">주간계획은 <b>전 주 토요일 밤 11:59까지</b> 넣어야 해요. 지금 넣어야 앱을 쓸 수 있어요.</div>'
+      +'<button class="btn" style="margin-top:8px" onclick="openWkPlan()">🗓 지금 주간계획 쓰기</button></div>';
+  }
+  soft.forEach(function(sx){
+    h+='<div style="background:var(--s1);border:1px solid var(--am);border-radius:12px;padding:10px 13px;margin-bottom:8px;display:flex;align-items:center;gap:8px">'
+      +'<span style="flex:1;min-width:0;font-size:12px;font-weight:600;line-height:1.5">'+sx.text+'</span>'
+      +'<button onclick="'+sx.go+'" style="flex-shrink:0;font-size:11px;padding:7px 11px;border:1px solid var(--acc);border-radius:8px;background:none;color:var(--acc);font-weight:700;cursor:pointer">'+sx.btn+'</button></div>';
+  });
+  if(!hard.length) h+='<button class="btn" onclick="chkAck()">✔ 확인했어요 — 넘어가기</button>'
+    +'<div style="font-size:10px;color:var(--t3);text-align:center;margin-top:5px">바로 하지 않아도 확인하면 넘어갈 수 있어요 · 오늘은 다시 묻지 않아요</div>';
+  else h+='<div style="font-size:10.5px;color:var(--t3);text-align:center;margin-top:2px">주간계획을 넣으면 자동으로 닫혀요'+(soft.length?' · 나머지는 확인으로 넘어갈 수 있어요':'')+'</div>';
+  h+='<div style="text-align:center;margin-top:10px"><span onclick="var _g=document.getElementById(\'ov-chkgate\');if(_g)_g.remove();logout()" style="font-size:10.5px;color:var(--t3);text-decoration:underline;cursor:pointer">다른 계정으로 로그인</span></div>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function chkAck(){
+  if(_chkMissingWk().length){ toast('주간계획을 먼저 넣어야 해요','var(--rd)'); return; }
+  try{ localStorage.setItem('ac_chk_'+ME.name, today()); }catch(e){}
+  var g=document.getElementById('ov-chkgate'); if(g) g.remove();
+  toast('✅ 확인 완료 — 오늘도 화이팅!','var(--g)');
 }
 // ═══ 약정 주기 확인 (주 1회 · 관리자/행정팀/강사) ═══
 var PLEDGE_VER='v6';
@@ -13068,7 +13172,7 @@ function tryAutoLogin() {
   recordAccess();
   goTab('home');
   _resetIdle();
-  setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} try{ checkNewEvents(); }catch(e){} try{ pledgeCheckDue(); }catch(e){} }, 800);
+  setTimeout(function(){ try{ checkEvalReminder(); }catch(e){} try{ checkNewEvents(); }catch(e){} try{ pledgeCheckDue(); }catch(e){} try{ chkGateMaybe(); }catch(e){} }, 800);
   return true;
 }
 // 미사용 시 자동 로그아웃 (공용 기기 보호)
