@@ -1473,6 +1473,7 @@ function _mergeServerDB(d){
       DB.wkplan=L; })();
     DB.cal=_mergeById(DB.cal||[], d.cal, gone);
     DB.stickers=_mergeNameMap(DB.stickers, d.stickers, gone);
+    DB.wkmiss=_mergeById(DB.wkmiss||[], d.wkmiss, gone);
     (function(){ if(!Array.isArray(DB.notices)) DB.notices=[];
       var nL=DB.notices, nS=(d.notices||[]); var nmap={}; nL.forEach(function(x){ if(x&&x.id) nmap[x.id]=x; });
       nS.forEach(function(x){ if(!x||!x.id) return; var l=nmap[x.id];
@@ -1520,7 +1521,7 @@ function _mergeServerDB(d){
 function _dbPayload(nchunks, ver){
   return {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [],
     withdrawn: DB.withdrawn||[], tlj: DB.tlj||{}, myTodos: DB.myTodos||{}, upg: DB.upg||{},
-    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{}, cal: DB.cal||[], notices: DB.notices||[], stickers: DB.stickers||{},
+    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{}, cal: DB.cal||[], notices: DB.notices||[], stickers: DB.stickers||{}, wkmiss: DB.wkmiss||[],
     tbChunks: nchunks, tbVer: ver, tbCount: (_tbReady ? (DB.typeBank||[]).length : (_srvTbMeta.cnt||0))};
 }
 function saveAll() {
@@ -1546,6 +1547,7 @@ function saveAll() {
     try{ localStorage.setItem('ac_cal', JSON.stringify(DB.cal||[])); }catch(_e){}
     try{ localStorage.setItem('ac_notices', JSON.stringify(DB.notices||[])); }catch(_e){}
     try{ localStorage.setItem('ac_stickers', JSON.stringify(DB.stickers||{})); }catch(_e){}
+    try{ localStorage.setItem('ac_wkmiss', JSON.stringify(DB.wkmiss||[])); }catch(_e){}
     var _ver = Date.now();
     if(_tbReady){
       _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
@@ -7145,13 +7147,14 @@ function stDone(name,id){
 function stToWkplan(name,id){
   if(!_stCan(name)) return;
   var sk=_stList(name).find(function(x){ return x.id===id; }); if(!sk||sk.done) return;
-  var wk=_wkKey(); var l=_wkList(name, wk);
+  var wk=(ME&&ME.role==='owner')?_wkKey():_wkNextWritable(); // 관리자는 기한 안 지난 주(보통 다음 주)로 — 소급 금지
+  var l=_wkList(name, wk);
   if(l.length>=120){ toast('이번 주 계획이 가득 찼어요','var(--rd)'); return; }
   var item={id:_wkNewId(), text:sk.text||'', day:'', done:false, ts:Date.now()};
   if(ME&&ME.role==='owner') item.by='원장';
   l.push(item);
-  sk.done=1; sk.doneTo='주간계획 (이번 주)'; sk.doneDate=today();
-  saveAll(); _stRerender(name); toast('🗓 이번 주 계획에 넣었어요','var(--g)');
+  sk.done=1; sk.doneTo='주간계획 '+_wkLabel(wk); sk.doneDate=today();
+  saveAll(); _stRerender(name); toast('🗓 '+_wkLabel(wk)+' 계획에 넣었어요','var(--g)');
 }
 function stCalAsk(name,id){
   if(!_stCan(name)) return;
@@ -9269,6 +9272,16 @@ function _wkKey(d){ d=d?new Date(d):new Date(); var day=(d.getDay()+6)%7; var m=
 function _wkLabel(wk){ var s=new Date(wk); var e=new Date(wk); e.setDate(s.getDate()+6); var cur=_wkKey(); var tag=wk===cur?' (이번 주)':wk===_wkKey(new Date(Date.now()+7*86400000))?' (다음 주)':wk===_wkKey(new Date(Date.now()-7*86400000))?' (지난주)':''; return (s.getMonth()+1)+'/'+s.getDate()+' ~ '+(e.getMonth()+1)+'/'+e.getDate()+tag; }
 function _wkList(name, wk){ if(!DB.wkplan) DB.wkplan={}; if(!DB.wkplan[name]) DB.wkplan[name]={}; if(!Array.isArray(DB.wkplan[name][wk])) DB.wkplan[name][wk]=[]; return DB.wkplan[name][wk]; }
 function wkMyOpenCnt(){ if(!ME||!ME.name) return 0; var l=(DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]; return l.filter(function(x){ return !x.done; }).length; }
+// 주간계획 입력 기한: 그 주가 시작되기 전 토요일 밤 11:59:59 — 지나면 소급 작성 금지(관리자)
+function _wkDeadline(wk){ var m=new Date(wk+'T00:00:00'); return m.getTime()-2*86400000+(86400-1)*1000; }
+function _wkCanWrite(name, wk){
+  if(!ME) return false;
+  if(ME.role==='owner') return true;
+  if(ME.name!==name) return false;
+  return Date.now()<=_wkDeadline(wk);
+}
+function _wkMissRec(name, wk){ return (Array.isArray(DB.wkmiss)?DB.wkmiss:[]).find(function(m){ return m&&m.name===name&&m.wk===wk; }); }
+function _wkNextWritable(){ var t=Date.now(); for(var i=1;i<=4;i++){ var wk=_wkKey(new Date(t+i*7*86400000)); if(Date.now()<=_wkDeadline(wk)) return wk; } return _wkKey(new Date(t+7*86400000)); }
 var _wkFor=null, _wkCur=null;
 var _wkIdC=0;
 function _wkNewId(){ _wkIdC=(_wkIdC+1)%1296; return 'wk'+Date.now().toString(36)+_wkIdC.toString(36)+Math.random().toString(36).slice(2,6); }
@@ -9642,7 +9655,13 @@ function _renderWkPlan(){
     +'<button onclick="wkNav(-1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">◀</button>'
     +'<span style="font-size:14px;font-weight:800">'+_wkLabel(_wkCur)+'</span>'
     +'<button onclick="wkNav(1)" style="font-size:15px;background:var(--s1);border:1px solid var(--s3);border-radius:9px;padding:5px 13px;cursor:pointer;color:var(--te)">▶</button></div>';
-  if(mine || isOw){
+  var _ms=_wkMissRec(_wkFor,_wkCur);
+  if(_ms) h+='<div style="font-size:10.5px;font-weight:700;color:var(--rd);background:var(--s1);border:1px solid var(--rd);border-radius:8px;padding:6px 10px;margin-bottom:8px;text-align:center">⚠ 기한 내 미제출 — '+dEsc(_ms.date||'')+' 본인 확인</div>';
+  var _wkLocked=(!isOw && !_wkCanWrite(_wkFor,_wkCur));
+  if(_wkLocked && mine){
+    h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:12px;font-size:11px;color:var(--t3);line-height:1.6">⏱ 이 주 계획의 입력 기한(<b>전 주 토요일 밤 11:59</b>)이 지나 더 쓸 수 없어요.<br>다음 주 계획을 ▶ 로 넘겨서 미리 넣어두세요. (완료 체크·수정은 그대로 가능)</div>';
+  }
+  if((mine || isOw) && !_wkLocked){
     h+='<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:9px 11px;margin-bottom:12px">'
       +((isOw&&!mine)?'<div style="font-size:10.5px;color:var(--pu);font-weight:700;margin-bottom:5px">👑 원장 수정 모드 — '+dEsc(_wkFor)+'님의 계획에 추가·수정·완료 처리가 가능해요</div>':'')
       +'<div style="display:flex;gap:5px;margin-bottom:6px">'
@@ -9651,7 +9670,7 @@ function _renderWkPlan(){
       +'<button onclick="wkAdd()" style="width:100%;padding:8px;border-radius:9px;border:1px solid var(--g);background:none;color:var(--g);font-size:12px;font-weight:700;cursor:pointer">'+((isOw&&!mine)?'+ '+dEsc(_wkFor)+'님 계획으로 추가':'+ 계획 추가')+'</button></div>';
   }
   h+='<input type="file" id="wk-file-in" multiple style="display:none" accept=".hwpx,.docx,.pdf,.txt,.md,.png,.jpg,.jpeg,.webp,.bmp,.gif" onchange="wkPlanFilePick(this)">';
-  if(isOw || mine){
+  if((isOw || mine) && !_wkLocked){
     h+='<div style="display:flex;gap:6px;margin-bottom:6px">'
       +'<button onclick="document.getElementById(\'wk-file-in\').click()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-size:12px;font-weight:700;cursor:pointer">📂 '+(isOw?'계획표 파일·캡쳐 (자동 분배)':'내 계획표 파일·캡쳐')+'</button>'
       +'<button onclick="wkTextOpen()" style="flex:1;padding:9px;border-radius:9px;border:1px solid var(--pu);background:var(--s1);color:var(--pu);font-size:12px;font-weight:700;cursor:pointer">📋 텍스트로 올리기</button></div>'
@@ -9851,12 +9870,13 @@ function wkImpRm(i){ _wkImpSync(); if(_wkImp) _wkImp.items.splice(i,1); _renderW
 function wkImportApply(){
   var p=_wkImp; if(!p) return;
   _wkImpSync();
-  var added={}, skip=0, dup=0;
+  var added={}, skip=0, dup=0, late=0;
   document.querySelectorAll('.wi-ck:checked').forEach(function(c){
     var it=p.items[parseInt(c.getAttribute('data-i'))];
     if(!it || !it.text) return;
     if(p.self) it.name=(ME&&ME.name)||it.name;
     if(!it.name){ skip++; return; }
+    if(!_wkCanWrite(it.name, _wkCur)){ late++; return; }
     var list=_wkList(it.name, _wkCur);
     // 같은 내용이라도 요일이 다르면 다른 계획 (예: 월·수·금 마감 체크) — 요일까지 같을 때만 중복
     var k=(it.day||'')+'|'+it.text.replace(/\s+/g,'');
@@ -9865,12 +9885,12 @@ function wkImportApply(){
     added[it.name]=(added[it.name]||0)+1;
   });
   var names=Object.keys(added);
-  if(!names.length){ toast(dup?('모두 이미 있는 계획이에요 ('+dup+'건)'):skip?'담당이 지정된 항목이 없어요 — 담당을 선택하세요':'추가할 항목이 없어요','var(--rd)'); return; }
+  if(!names.length){ toast(late?('⏱ 기한이 지나 이 주에는 올릴 수 없어요 ('+late+'건) — ▶ 다음 주에 올리세요'):dup?('모두 이미 있는 계획이에요 ('+dup+'건)'):skip?'담당이 지정된 항목이 없어요 — 담당을 선택하세요':'추가할 항목이 없어요','var(--rd)'); return; }
   try{ logChange('계획표 불러오기', names.map(function(n){ return n+' '+added[n]+'건'; }).join('·')); }catch(e){}
   saveAll();
   var ov=document.getElementById('ov-wkimport'); if(ov) ov.remove();
   _wkImp=null; _renderWkPlan();
-  var extra=[]; if(dup) extra.push('이미 있어 제외 '+dup+'건'); if(skip) extra.push('담당 미지정 제외 '+skip+'건');
+  var extra=[]; if(dup) extra.push('이미 있어 제외 '+dup+'건'); if(skip) extra.push('담당 미지정 제외 '+skip+'건'); if(late) extra.push('기한 지나 제외 '+late+'건');
   toast('✓ '+names.map(function(n){ return n+' '+added[n]+'건'; }).join(' · ')+' 추가'+(extra.length?' ('+extra.join(' · ')+')':''),'var(--g)');
 }
 // 같은 주에 같은 내용이 여러 관리자에게 있는 중복 항목 찾기
@@ -9900,6 +9920,7 @@ function wkAdd(){
   if(!text){ toast('계획 내용을 입력하세요','var(--rd)'); return; }
   var target=(ME&&ME.role==='owner'&&_wkFor)?_wkFor:ME.name;
   if(!(ME&&(ME.role==='owner'||ME.name===target))) return;
+  if(!_wkCanWrite(target,_wkCur)){ toast('⏱ 입력 기한(전 주 토 밤 11:59)이 지나 이 주 계획은 쓸 수 없어요','var(--rd)'); return; }
   var it={id:_wkNewId(), text:text, day:day, done:false, ts:Date.now()};
   if(ME.role==='owner'&&target!==ME.name) it.by='원장';
   _wkList(target,_wkCur).push(it);
@@ -10126,6 +10147,14 @@ function wbOwnerAlerts(){
         .filter(function(nm){ return !((DB.tlj&&DB.tlj[nm])||[]).some(function(e){ return e.date===yd; }); });
       if(missed.length) alerts.push({sev:'warn', text:'관리자일지 미작성: '+missed.join('·'), info:'어제('+yd+') 일지가 없어요', src:'🧑‍💼 관리자일지'});
     }
+  }catch(e){}
+  // 4-3b) 주간계획 기한 미제출 (이번 주)
+  try{
+    var _cwk=_wkKey();
+    var _wmiss=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){ return a&&a.name?a.name:''; }).filter(Boolean)
+      .filter(function(nm){ return _wkMissRec(nm,_cwk) || !((((DB.wkplan||{})[nm]||{})[_cwk])||[]).length; });
+    if(_wmiss.length && !_wbIsHidden(['주간계획 미제출'], _wmiss.join('·')))
+      alerts.push({sev:'warn', text:'주간계획 기한 미제출: '+_wmiss.join('·'), info:'기한(전 주 토 23:59)까지 이번 주 계획이 없어요 — 소급 작성은 막혀 있어요', src:'🗓 주간 계획'});
   }catch(e){}
   // 4-4) 매뉴얼 수정 보고 미확인
   try{
@@ -12109,7 +12138,21 @@ function _chkWkRequired(){
 }
 function _chkMissingWk(){
   if(!(ME && ME.role==='admin' && canFeat('wkplan'))) return [];
-  return _chkWkRequired().filter(function(wk){ return !((((DB.wkplan||{})[ME.name]||{})[wk])||[]).length; });
+  return _chkWkRequired().filter(function(wk){
+    return !((((DB.wkplan||{})[ME.name]||{})[wk])||[]).length && !_wkMissRec(ME.name, wk);
+  });
+}
+function chkWkMissAck(){
+  var miss=_chkMissingWk(); if(!miss.length) return;
+  if(!Array.isArray(DB.wkmiss)) DB.wkmiss=[];
+  miss.forEach(function(wk){
+    if(_wkMissRec(ME.name, wk)) return;
+    DB.wkmiss.push({id:'wm'+ME.name+'_'+wk, name:ME.name, wk:wk, date:today(), ts:Date.now()});
+  });
+  try{ logChange('주간계획 미제출 확인', ME.name+' — '+miss.join(', ')); }catch(e){}
+  saveAll();
+  toast('⚠ 주간계획 미제출로 기록됐어요 — 다음 주 계획은 토요일 밤까지 꼭 넣어주세요','var(--am)');
+  _chkTick();
 }
 function _chkSoftItems(){
   var it=[];
@@ -12164,9 +12207,9 @@ function _chkRender(hard, soft){
     +'<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">앱을 쓰기 전에 아래 항목을 확인해 주세요.</div>';
   if(hard.length){
     h+='<div style="background:var(--s1);border:1.5px solid var(--rd);border-radius:12px;padding:11px 13px;margin-bottom:10px">'
-      +'<div style="font-size:12.5px;font-weight:800;color:var(--rd)">🗓 주간계획 미입력 — '+hard.map(_wkLabel).join(' · ')+'</div>'
-      +'<div style="font-size:11px;color:var(--t2);line-height:1.6;margin-top:4px">주간계획은 <b>전 주 토요일 밤 11:59까지</b> 넣어야 해요. 지금 넣어야 앱을 쓸 수 있어요.</div>'
-      +'<button class="btn" style="margin-top:8px" onclick="openWkPlan()">🗓 지금 주간계획 쓰기</button></div>';
+      +'<div style="font-size:12.5px;font-weight:800;color:var(--rd)">🗓 주간계획 기한 미제출 — '+hard.map(_wkLabel).join(' · ')+'</div>'
+      +'<div style="font-size:11px;color:var(--t2);line-height:1.6;margin-top:4px">주간계획은 <b>전 주 토요일 밤 11:59까지</b>예요. 기한이 지나 소급해서 쓸 수 없고, 아래를 누르면 <b>미제출로 기록</b>되고 앱을 쓸 수 있어요. 원장님께도 표시돼요.</div>'
+      +'<button class="btn" style="margin-top:8px;background:var(--rd)" onclick="chkWkMissAck()">⚠ 미제출 확인하고 넘어가기</button></div>';
   }
   soft.forEach(function(sx){
     h+='<div style="background:var(--s1);border:1px solid var(--am);border-radius:12px;padding:10px 13px;margin-bottom:8px;display:flex;align-items:center;gap:8px">'
@@ -12175,13 +12218,13 @@ function _chkRender(hard, soft){
   });
   if(!hard.length) h+='<button class="btn" onclick="chkAck()">✔ 확인했어요 — 넘어가기</button>'
     +'<div style="font-size:10px;color:var(--t3);text-align:center;margin-top:5px">바로 하지 않아도 확인하면 넘어갈 수 있어요 · 오늘은 다시 묻지 않아요</div>';
-  else h+='<div style="font-size:10.5px;color:var(--t3);text-align:center;margin-top:2px">주간계획을 넣으면 자동으로 닫혀요'+(soft.length?' · 나머지는 확인으로 넘어갈 수 있어요':'')+'</div>';
+  else h+='<div style="font-size:10.5px;color:var(--t3);text-align:center;margin-top:2px">미제출 확인을 누르면'+(soft.length?' 나머지 항목이 남고, 확인으로':'')+' 넘어갈 수 있어요</div>';
   h+='<div style="text-align:center;margin-top:10px"><span onclick="var _g=document.getElementById(\'ov-chkgate\');if(_g)_g.remove();logout()" style="font-size:10.5px;color:var(--t3);text-decoration:underline;cursor:pointer">다른 계정으로 로그인</span></div>'
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
 }
 function chkAck(){
-  if(_chkMissingWk().length){ toast('주간계획을 먼저 넣어야 해요','var(--rd)'); return; }
+  if(_chkMissingWk().length){ toast('주간계획 미제출 확인을 먼저 눌러주세요','var(--rd)'); return; }
   try{ localStorage.setItem('ac_chk_'+ME.name, today()); }catch(e){}
   var g=document.getElementById('ov-chkgate'); if(g) g.remove();
   toast('✅ 확인 완료 — 오늘도 화이팅!','var(--g)');
@@ -13776,7 +13819,7 @@ _loadFirebase().then(function() {
     if(d&&d.cfg){
       DB.cfg=d.cfg;
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){}if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
-      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{}; DB.cal=d.cal||[]; DB.notices=d.notices||[]; DB.stickers=d.stickers||{};
+      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{}; DB.cal=d.cal||[]; DB.notices=d.notices||[]; DB.stickers=d.stickers||{}; DB.wkmiss=d.wkmiss||[];
       if(d.manuals) DB.manuals=d.manuals;
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
@@ -13796,6 +13839,7 @@ _loadFirebase().then(function() {
       try{ DB.cal=JSON.parse(localStorage.getItem('ac_cal')||'[]'); }catch(_e){ DB.cal=[]; }
       try{ DB.notices=JSON.parse(localStorage.getItem('ac_notices')||'[]'); }catch(_e){ DB.notices=[]; }
       try{ DB.stickers=JSON.parse(localStorage.getItem('ac_stickers')||'{}'); }catch(_e){ DB.stickers={}; }
+      try{ DB.wkmiss=JSON.parse(localStorage.getItem('ac_wkmiss')||'[]'); }catch(_e){ DB.wkmiss=[]; }
       // 오프라인: 기기 백업(IndexedDB)이 더 크면 그걸로 복구 후 저장 허용
       _idbGet('tb', function(idb){ if(idb && idb.items && idb.items.length > (DB.typeBank||[]).length){ DB.typeBank = idb.items; } _tbReady = true; if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } });
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
@@ -13855,7 +13899,7 @@ _loadFirebase().then(function() {
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[];
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){} if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
-      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan; DB.cal=d2.cal||DB.cal; DB.notices=d2.notices||DB.notices; DB.stickers=d2.stickers||DB.stickers;
+      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan; DB.cal=d2.cal||DB.cal; DB.notices=d2.notices||DB.notices; DB.stickers=d2.stickers||DB.stickers; DB.wkmiss=d2.wkmiss||DB.wkmiss;
       if(d2.manuals) DB.manuals=d2.manuals;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
