@@ -1472,6 +1472,7 @@ function _mergeServerDB(d){
       Object.keys(L).forEach(function(nm){ Object.keys(L[nm]||{}).forEach(function(wk){ L[nm][wk]=_mergeById(L[nm][wk], null, gone); }); });
       DB.wkplan=L; })();
     DB.cal=_mergeById(DB.cal||[], d.cal, gone);
+    DB.stickers=_mergeNameMap(DB.stickers, d.stickers, gone);
     (function(){ if(!Array.isArray(DB.notices)) DB.notices=[];
       var nL=DB.notices, nS=(d.notices||[]); var nmap={}; nL.forEach(function(x){ if(x&&x.id) nmap[x.id]=x; });
       nS.forEach(function(x){ if(!x||!x.id) return; var l=nmap[x.id];
@@ -1519,7 +1520,7 @@ function _mergeServerDB(d){
 function _dbPayload(nchunks, ver){
   return {cfg: DB.cfg, subj: DB.subj, stu: DB.stu, evalHistory: DB.evalHistory||{}, typeBank: [],
     withdrawn: DB.withdrawn||[], tlj: DB.tlj||{}, myTodos: DB.myTodos||{}, upg: DB.upg||{},
-    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{}, cal: DB.cal||[], notices: DB.notices||[],
+    manuals: DB.manuals||{}, tchChanges: DB.tchChanges||[], gone: DB.gone||[], wkplan: DB.wkplan||{}, cal: DB.cal||[], notices: DB.notices||[], stickers: DB.stickers||{},
     tbChunks: nchunks, tbVer: ver, tbCount: (_tbReady ? (DB.typeBank||[]).length : (_srvTbMeta.cnt||0))};
 }
 function saveAll() {
@@ -1544,6 +1545,7 @@ function saveAll() {
     try{ localStorage.setItem('ac_wkplan', JSON.stringify(DB.wkplan||{})); }catch(_e){}
     try{ localStorage.setItem('ac_cal', JSON.stringify(DB.cal||[])); }catch(_e){}
     try{ localStorage.setItem('ac_notices', JSON.stringify(DB.notices||[])); }catch(_e){}
+    try{ localStorage.setItem('ac_stickers', JSON.stringify(DB.stickers||{})); }catch(_e){}
     var _ver = Date.now();
     if(_tbReady){
       _idbSet('tb', {items:(DB.typeBank||[]).slice(), ver:_ver}); // 용량 제한 없는 기기 백업(서버 저장 전에 먼저 — 서버 중단 시 복구용)
@@ -6382,13 +6384,15 @@ function _renderTlj(){
         })()
         +tljTrackHTML(_tljViewFor, false)
         +tljRecsHTML(_tljViewFor, false)
-        +ntSectionHTML();
+        +ntSectionHTML()
+        +stickerSecHTML(_tljViewFor, false);
     }
   } else {
     h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
       +ntSectionHTML()
       +'<label class="fl">날짜</label><input class="fi" type="date" id="tlj-date" value="'+today()+'" onchange="tljDateChg(this.value)">'
       +'<div id="tlj-editbadge"></div>'
+      +stickerSecHTML(ME.name, true)
       +(function(){ // ⏳ 이월된 일 (이전 일지의 진행 중·미완료 — 끝날 때까지 따라다님)
         var cl=tljCarryList();
         if(!cl.length) return '';
@@ -7023,6 +7027,137 @@ function tljCarryTake(eid,idx){
   window._tljDone.push({text:r.text, hours:'', st:'ing'});
   saveAll(); _renderTlj(); _tljRestoreForm(f);
   toast('→ 오늘 일지로 가져왔어요 (상태를 정해서 저장하세요)','var(--g)');
+}
+// ── 🗒 스티커 메모 (날짜 미정 할 일·아이디어 — 본인+원장) ──
+var STK_COLORS=['#ffe885','#ffd1dc','#cfe8ff','#d6f5d0'];
+function _stList(name){ if(!DB.stickers||typeof DB.stickers!=='object') DB.stickers={}; if(!Array.isArray(DB.stickers[name])) DB.stickers[name]=[]; return DB.stickers[name]; }
+function _stCan(name){ return !!(ME && (ME.role==='owner' || (ME.name===name && canFeat('tlj')))); }
+function stickerSecHTML(name, own){
+  var l=_stList(name);
+  var open=l.filter(function(x){ return !x.done; });
+  var done=l.filter(function(x){ return x.done; });
+  var h='<label class="fl">\uD83D\uDDD2 \uC2A4\uD2F0\uCEE4 \uBA54\uBAA8 ('+open.length+'\uC7A5) \u2014 \uC5B8\uC81C \uD560\uC9C0 \uC548 \uC815\uD55C \uD560 \uC77C\u00B7\uC0DD\uAC01\uB09C \uAC83</label>'
+    +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:10px 12px 8px;margin-bottom:10px">';
+  if(!open.length) h+='<div style="font-size:11px;color:var(--t3);padding:2px 0 6px">\uBD99\uC5EC\uB454 \uC2A4\uD2F0\uCEE4\uAC00 \uC5C6\uC5B4\uC694 \u2014 \uC0DD\uAC01\uB09C \uC77C\uC744 \uBA54\uBAA8\uB85C \uBD99\uC5EC\uB450\uBA74 \uC78A\uC9C0 \uC54A\uC544\uC694</div>';
+  else{
+    h+='<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px">';
+    open.forEach(function(sk,i){
+      h+='<div style="width:calc(50% - 4px);box-sizing:border-box;background:'+(STK_COLORS[sk.c||0]||STK_COLORS[0])+';color:#3a3a3a;border-radius:2px 2px 14px 2px;padding:9px 10px 6px;box-shadow:0 2px 6px rgba(0,0,0,.2);transform:rotate('+(i%2?'0.9':'-0.9')+'deg)">'
+        +'<div style="font-size:11.5px;line-height:1.5;white-space:pre-wrap;word-break:break-word;font-weight:600">'+dEsc(sk.text||'')+'</div>'
+        +'<div style="font-size:9px;color:rgba(0,0,0,.45);margin-top:3px">'+(sk.by==='\uC6D0\uC7A5'?'\uD83D\uDC51 \uC6D0\uC7A5 \u00B7 ':'')+new Date(sk.ts||Date.now()).toLocaleDateString('ko-KR',{month:'numeric',day:'numeric'})+'</div>'
+        +'<div style="display:flex;gap:4px;margin-top:5px">'
+        +(own?'<button onclick="stToJournal(\''+sk.id+'\')" style="flex:1.2;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#1b5e20;font-weight:700;cursor:pointer">\u2192 \uC77C\uC9C0</button>':'')
+        +'<button onclick="stCalAsk(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:1.2;white-space:nowrap;font-size:9.5px;padding:4px 2px;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#0d47a1;font-weight:700;cursor:pointer">\uD83D\uDCC5 \uB0A0\uC9DC</button>'
+        +'<button onclick="stEditStart(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:.7;font-size:9.5px;padding:4px 0;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#555;font-weight:700;cursor:pointer">\u270F</button>'
+        +'<button onclick="stDel(\''+dEsc(name)+'\',\''+sk.id+'\')" style="flex:.7;font-size:9.5px;padding:4px 0;border:none;border-radius:6px;background:rgba(255,255,255,.68);color:#b71c1c;font-weight:700;cursor:pointer">\u2715</button>'
+        +'</div></div>';
+    });
+    h+='</div>';
+  }
+  if(done.length){
+    h+='<div onclick="window._stShowDone=!window._stShowDone;_stRerender(\''+dEsc(name)+'\')" style="font-size:10.5px;color:var(--t3);cursor:pointer;padding:2px 0 6px;font-weight:700">'+(window._stShowDone?'\u25BE \uCC98\uB9AC\uD55C \uC2A4\uD2F0\uCEE4 '+done.length+'\uC7A5 \uC811\uAE30':'\u25B8 \uCC98\uB9AC\uD55C \uC2A4\uD2F0\uCEE4 '+done.length+'\uC7A5 \uBCF4\uAE30')+'</div>';
+    if(window._stShowDone) done.slice(0,40).forEach(function(sk){
+      h+='<div style="font-size:11px;color:var(--t3);padding:4px 0;border-bottom:1px dashed var(--s2);display:flex;gap:6px;align-items:center">'
+        +'<span style="flex:1;min-width:0;text-decoration:line-through">'+dEsc(sk.text||'')+'</span>'
+        +'<span style="font-size:9.5px;flex-shrink:0">\u2192 '+dEsc(sk.doneTo||'\uCC98\uB9AC')+'</span>'
+        +'<button onclick="stDel(\''+dEsc(name)+'\',\''+sk.id+'\')" style="border:none;background:none;color:var(--rd);cursor:pointer;font-size:11px;flex-shrink:0">\u2715</button></div>';
+    });
+  }
+  h+='<input class="fi" id="st-in" placeholder="'+(own?'\uC0DD\uAC01\uB09C \uC77C \uBA54\uBAA8 (\uC5D4\uD130\uB85C \uBD99\uC774\uAE30)':'\uC2A4\uD2F0\uCEE4 \uBA54\uBAA8 \uCD94\uAC00 (\uD83D\uDC51 \uC6D0\uC7A5)')+'" style="margin:4px 0 0;font-size:12px" onkeydown="if(event.key===\'Enter\')stAdd(\''+dEsc(name)+'\')">'
+    +'<div style="display:flex;gap:7px;align-items:center;margin-top:7px">'
+    +STK_COLORS.map(function(c,i){ return '<span onclick="window._stColor='+i+';_stRerender(\''+dEsc(name)+'\')" style="width:19px;height:19px;border-radius:50%;background:'+c+';display:inline-block;cursor:pointer;border:2.5px solid '+(((window._stColor||0)===i)?'var(--acc)':'rgba(0,0,0,.12)')+'"></span>'; }).join('')
+    +(window._stEdit?'<button onclick="window._stEdit=null;var _i=document.getElementById(\'st-in\');if(_i)_i.value=\'\';_stRerender(\''+dEsc(name)+'\')" style="margin-left:auto;font-size:10.5px;padding:6px 10px;border:1px solid var(--s3);border-radius:8px;background:none;color:var(--t2);cursor:pointer">\uCDE8\uC18C</button>':'')
+    +'<button onclick="stAdd(\''+dEsc(name)+'\')" style="'+(window._stEdit?'':'margin-left:auto;')+'font-size:11px;padding:6px 14px;border:none;border-radius:8px;background:'+(window._stEdit?'var(--am)':'var(--acc)')+';color:#fff;font-weight:700;cursor:pointer">'+(window._stEdit?'\u270F \uC218\uC815 \uC800\uC7A5':'\uD83D\uDDD2 \uBD99\uC774\uAE30')+'</button></div>'
+    +'<div style="font-size:9px;color:var(--t3);margin-top:5px;line-height:1.5">\uFF0A \uB0A0\uC9DC\uAC00 \uC815\uD574\uC9C0\uBA74 [\uD83D\uDCC5 \uB0A0\uC9DC]\uB85C \uC5C5\uBB34 \uCE98\uB9B0\uB354\uC5D0'+(own?', \uC624\uB298 \uD558\uAE30\uB85C \uD588\uC73C\uBA74 [\u2192 \uC624\uB298 \uC77C\uC9C0]\uB85C':'')+' \uC62E\uACA8\uC694 \u00B7 \uCC98\uB9AC\uD55C \uC2A4\uD2F0\uCEE4\uB294 \uAE30\uB85D\uC73C\uB85C \uB0A8\uC544\uC694'+(own?' \u00B7 \uC6D0\uC7A5\uB2D8\uB3C4 \uD568\uAED8 \uBD10\uC694':'')+'</div>'
+    +'</div>';
+  return h;
+}
+function _stRerender(name){
+  if(!document.getElementById('ov-tlj')) return;
+  var si=(document.getElementById('st-in')||{}).value||'';
+  if(ME&&ME.role==='owner'){ _renderTlj(); }
+  else{
+    var f=null; try{ _tljSyncDone(); f=_tljKeepForm(); }catch(e){}
+    _renderTlj();
+    try{ _tljRestoreForm(f); }catch(e){}
+  }
+  var e2=document.getElementById('st-in');
+  if(e2){ if(si) e2.value=si; else if(window._stEdit){ var sk=_stList(name).find(function(x){ return x.id===window._stEdit; }); if(sk) e2.value=sk.text||''; } }
+}
+function stAdd(name){
+  if(!_stCan(name)){ toast('\uBCF8\uC778\uACFC \uC6D0\uC7A5\uB9CC \uBD99\uC77C \uC218 \uC788\uC5B4\uC694','var(--rd)'); return; }
+  var inp=document.getElementById('st-in'); var t=((inp&&inp.value)||'').trim();
+  if(!t){ toast('\uBA54\uBAA8 \uB0B4\uC6A9\uC744 \uC801\uC5B4\uC8FC\uC138\uC694','var(--rd)'); return; }
+  if(t.length>300){ toast('\uC2A4\uD2F0\uCEE4\uB294 300\uC790 \uC774\uD558\uB85C \uC801\uC5B4\uC8FC\uC138\uC694','var(--rd)'); return; }
+  var l=_stList(name);
+  if(window._stEdit){
+    var sk=l.find(function(x){ return x.id===window._stEdit; });
+    if(sk){ sk.text=t; sk.ts=Date.now(); }
+    window._stEdit=null;
+    if(inp) inp.value='';
+    saveAll(); _stRerender(name); toast('\u270F \uC2A4\uD2F0\uCEE4\uB97C \uC218\uC815\uD588\uC5B4\uC694','var(--g)'); return;
+  }
+  if(l.filter(function(x){ return !x.done; }).length>=100){ toast('\uC2A4\uD2F0\uCEE4\uAC00 \uB108\uBB34 \uB9CE\uC544\uC694 \u2014 \uCC98\uB9AC\uD558\uAC70\uB098 \uC815\uB9AC \uD6C4 \uBD99\uC5EC\uC8FC\uC138\uC694','var(--rd)'); return; }
+  l.unshift({id:'sk'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:t, c:window._stColor||0, ts:Date.now(), by:(ME.role==='owner')?'\uC6D0\uC7A5':''});
+  if(inp) inp.value='';
+  saveAll(); _stRerender(name); toast('\uD83D\uDDD2 \uC2A4\uD2F0\uCEE4\uB97C \uBD99\uC600\uC5B4\uC694 \u2014 \uC78A\uC9C0 \uC54A\uAC8C \uBCF4\uAD00\uD560\uAC8C\uC694','var(--g)');
+}
+function stEditStart(name,id){
+  if(!_stCan(name)) return;
+  window._stEdit=id;
+  var e=document.getElementById('st-in'); if(e) e.value='';
+  _stRerender(name);
+  var e2=document.getElementById('st-in'); if(e2){ try{ e2.focus(); }catch(_){} }
+}
+function stDel(name,id){
+  if(!_stCan(name)) return;
+  var l=_stList(name); var i=-1;
+  l.forEach(function(x,j){ if(x.id===id) i=j; });
+  if(i<0) return;
+  if(!confirm('\uC774 \uC2A4\uD2F0\uCEE4\uB97C \uC0AD\uC81C\uD560\uAE4C\uC694?')) return;
+  _markGone(id); l.splice(i,1);
+  if(window._stEdit===id) window._stEdit=null;
+  saveAll(); _stRerender(name); toast('\uC2A4\uD2F0\uCEE4\uB97C \uC0AD\uC81C\uD588\uC5B4\uC694','var(--rd)');
+}
+function stToJournal(id){
+  if(!ME||ME.role==='owner'||!canFeat('tlj')) return;
+  var sk=_stList(ME.name).find(function(x){ return x.id===id; }); if(!sk||sk.done) return;
+  if(!document.getElementById('tlj-done-rows')) return;
+  _tljSyncDone(); var f=_tljKeepForm();
+  if(!Array.isArray(window._tljDone)) window._tljDone=[];
+  if(window._tljDone.length===1 && !(window._tljDone[0].text||'').trim() && !(window._tljDone[0].detail||'').trim()) window._tljDone=[];
+  var tx=sk.text||'';
+  if(tx.length>22) window._tljDone.push({text:_tljAutoTitle(tx), detail:tx, hours:'', st:'ing'});
+  else window._tljDone.push({text:tx, detail:'', hours:'', st:'ing'});
+  sk.done=1; sk.doneTo='\uC77C\uC9C0 '+today(); sk.doneDate=today();
+  saveAll(); _renderTlj(); _tljRestoreForm(f);
+  var si=document.getElementById('st-in'); if(si) si.value='';
+  toast('\u2192 \uC624\uB298 \uD55C \uC77C\uB85C \uAC00\uC838\uC654\uC5B4\uC694 \u00B7 \uC2A4\uD2F0\uCEE4\uB294 \uCC98\uB9AC\uB428\uC73C\uB85C \uC62E\uACBC\uC5B4\uC694','var(--g)');
+}
+function stCalAsk(name,id){
+  if(!_stCan(name)) return;
+  var sk=_stList(name).find(function(x){ return x.id===id; }); if(!sk||sk.done) return;
+  var ex=document.getElementById('ov-stcal'); if(ex) ex.remove();
+  var h='<div class="ov open" id="ov-stcal" onclick="if(event.target===this)this.remove()" style="display:flex;z-index:1200"><div class="modal" style="max-width:330px"><div class="mh"></div>'
+    +'<div class="mt2">\uD83D\uDCC5 \uB0A0\uC9DC \uC815\uD558\uAE30</div>'
+    +'<div style="font-size:12px;line-height:1.6;background:'+(STK_COLORS[sk.c||0]||STK_COLORS[0])+';color:#3a3a3a;border-radius:2px 2px 12px 2px;padding:9px 11px;margin-bottom:10px;font-weight:600;white-space:pre-wrap">'+dEsc(sk.text||'')+'</div>'
+    +'<label class="fl">\uD560 \uB0A0\uC9DC</label><input class="fi" type="date" id="st-cal-d" value="'+today()+'">'
+    +'<button class="btn" onclick="stCalSave(\''+dEsc(name)+'\',\''+id+'\')">\uC5C5\uBB34 \uCE98\uB9B0\uB354\uC5D0 \uB123\uAE30</button>'
+    +'<div style="font-size:10px;color:var(--t3);margin-top:6px;text-align:center">'+dEsc(name)+'\uB2D8\uC758 \uAC1C\uC778 \uC77C\uC815\uC73C\uB85C \uB4E4\uC5B4\uAC00\uC694 \u00B7 \uC2A4\uD2F0\uCEE4\uB294 \uCC98\uB9AC\uB428\uC73C\uB85C \uC62E\uACA8\uC838\uC694</div>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend', h);
+}
+function stCalSave(name,id){
+  if(!_stCan(name)) return;
+  var d=((document.getElementById('st-cal-d')||{}).value||'').trim();
+  if(!d){ toast('\uB0A0\uC9DC\uB97C \uC120\uD0DD\uD558\uC138\uC694','var(--rd)'); return; }
+  var sk=_stList(name).find(function(x){ return x.id===id; }); if(!sk) return;
+  if(!Array.isArray(DB.cal)) DB.cal=[];
+  DB.cal.push({id:'cl'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), date:d, text:sk.text||'', scope:name, by:(ME&&ME.role==='owner')?'\uC6D0\uC7A5':name, ts:Date.now()});
+  sk.done=1; sk.doneTo='\uCE98\uB9B0\uB354 '+d; sk.doneDate=today();
+  var o=document.getElementById('ov-stcal'); if(o) o.remove();
+  saveAll(); _stRerender(name);
+  toast('\uD83D\uDCC5 '+d+' \uC5C5\uBB34 \uCE98\uB9B0\uB354\uC5D0 \uB123\uC5C8\uC5B4\uC694','var(--g)');
 }
 // ── 인수인계 요약 (원장 전용) ──
 function openHandover(name){
@@ -9432,6 +9567,18 @@ function srRun(){
         var f=_srMatchField([t.date||'', t.text||''], terms); if(f===null) return;
         row(g5, nm+' — '+(t.date||''), (t.done?'완료':'미완료'), f);
         _srActs.push(function(){ openMyTodos(); });
+      });
+    });
+  }
+  // 6) 스티커 메모
+  var stnames=isOw?Object.keys(DB.stickers||{}):((canFeat('tlj')&&ME.name&&(DB.stickers||{})[ME.name])?[ME.name]:[]);
+  if(stnames.length){
+    var g6=grp('\uD83D\uDDD2 \uC2A4\uD2F0\uCEE4 \uBA54\uBAA8');
+    stnames.forEach(function(nm){
+      ((DB.stickers||{})[nm]||[]).forEach(function(sk){
+        var f=_srMatchField([sk.text||''], terms); if(f===null) return;
+        row(g6, nm+' \u2014 \uC2A4\uD2F0\uCEE4', sk.done?('\uCC98\uB9AC\uB428 \u2192 '+(sk.doneTo||'')):'\uB300\uAE30 \uC911', f);
+        _srActs.push((function(n){ return function(){ srOpenTlj(n); }; })(nm));
       });
     });
   }
@@ -13525,7 +13672,7 @@ _loadFirebase().then(function() {
     if(d&&d.cfg){
       DB.cfg=d.cfg;
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){}if(!DB.cfg.admins)DB.cfg.admins=[];if(!DB.cfg.staff)DB.cfg.staff=[];DB.subj=d.subj||[];DB.stu=d.stu||[];DB.evalHistory=d.evalHistory||{};DB.typeBank=d.typeBank||[];DB.withdrawn=d.withdrawn||[];
-      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{}; DB.cal=d.cal||[]; DB.notices=d.notices||[];
+      DB.tlj=d.tlj||{}; DB.myTodos=d.myTodos||{}; DB.upg=d.upg||{}; DB.tchChanges=d.tchChanges||[]; DB.gone=d.gone||[]; DB.wkplan=d.wkplan||{}; DB.cal=d.cal||[]; DB.notices=d.notices||[]; DB.stickers=d.stickers||{};
       if(d.manuals) DB.manuals=d.manuals;
       setFbSt('● Firebase 연결됨 — 30초마다 동기화','var(--g)');
     } else {
@@ -13544,6 +13691,7 @@ _loadFirebase().then(function() {
       try{ DB.wkplan=JSON.parse(localStorage.getItem('ac_wkplan')||'{}'); }catch(_e){ DB.wkplan={}; }
       try{ DB.cal=JSON.parse(localStorage.getItem('ac_cal')||'[]'); }catch(_e){ DB.cal=[]; }
       try{ DB.notices=JSON.parse(localStorage.getItem('ac_notices')||'[]'); }catch(_e){ DB.notices=[]; }
+      try{ DB.stickers=JSON.parse(localStorage.getItem('ac_stickers')||'{}'); }catch(_e){ DB.stickers={}; }
       // 오프라인: 기기 백업(IndexedDB)이 더 크면 그걸로 복구 후 저장 허용
       _idbGet('tb', function(idb){ if(idb && idb.items && idb.items.length > (DB.typeBank||[]).length){ DB.typeBank = idb.items; } _tbReady = true; if(curTab==='diagnosis'){ try{renderDiagnosis();}catch(_e){} } });
       setFbSt('● 오프라인 — 로컬 데이터 사용 중','var(--am)');
@@ -13603,7 +13751,7 @@ _loadFirebase().then(function() {
       if (_saveDirty || _saveFailed || Date.now() - _lastLocalSave < 15000) return;
       DB.cfg=d2.cfg||DB.cfg; if(!DB.cfg.admins)DB.cfg.admins=[];
       try{ if(DB.cfg.secureMode) localStorage.setItem('ac_secure','1'); }catch(_e){} if(!DB.cfg.staff)DB.cfg.staff=[]; DB.subj=d2.subj||DB.subj; DB.stu=d2.stu||DB.stu; DB.evalHistory=d2.evalHistory||DB.evalHistory; DB.withdrawn=d2.withdrawn||DB.withdrawn;
-      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan; DB.cal=d2.cal||DB.cal; DB.notices=d2.notices||DB.notices;
+      DB.tlj=d2.tlj||DB.tlj; DB.myTodos=d2.myTodos||DB.myTodos; DB.upg=d2.upg||DB.upg; DB.tchChanges=d2.tchChanges||DB.tchChanges; DB.gone=d2.gone||DB.gone; DB.wkplan=d2.wkplan||DB.wkplan; DB.cal=d2.cal||DB.cal; DB.notices=d2.notices||DB.notices; DB.stickers=d2.stickers||DB.stickers;
       if(d2.manuals) DB.manuals=d2.manuals;
       var _pnch=(d2 && d2.tbChunks) ? d2.tbChunks : 0;
       var _pver=(d2 && d2.tbVer) ? d2.tbVer : 0;
