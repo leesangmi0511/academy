@@ -2495,11 +2495,13 @@ function mtDlSet(mid, idx, st){
   if(!Array.isArray(m.dls)) m.dls=mtDlsOf(m);
   if(!m.dls[idx]) return;
   var newSt=(m.dls[idx].status===st)?'':st;
+  var actBy=newSt?((ME&&ME.name)||''):'', actDate=newSt?today():'';
   m.dls[idx].status=newSt;
+  if(newSt){ m.dls[idx].actBy=actBy; m.dls[idx].actDate=actDate; } else { delete m.dls[idx].actBy; delete m.dls[idx].actDate; }
   _mtSync(function(list){
     var mm=list.find(function(x){return x.id===mid;}); if(!mm) return;
     if(!Array.isArray(mm.dls)) mm.dls=mtDlsOf(mm);
-    if(mm.dls[idx]) mm.dls[idx].status=newSt;
+    if(mm.dls[idx]){ mm.dls[idx].status=newSt; if(newSt){ mm.dls[idx].actBy=actBy; mm.dls[idx].actDate=actDate; } else { delete mm.dls[idx].actBy; delete mm.dls[idx].actDate; } }
   }, function(ok){ if(!ok) toast('저장 실패 · 인터넷 확인','var(--rd)'); });
   var row=document.getElementById('mtdl-'+idx); if(row){ row.outerHTML=mtDlRow(m, idx); }
   if(document.getElementById('ov-mttodo')) renderMtTodo();
@@ -2628,7 +2630,7 @@ function _renderMeetList(loading){
       if(Array.isArray(m.who)&&m.who.length){ whoTxt = m.who.length<=3 ? m.who.join('·') : (m.who.slice(0,2).join('·')+' 외 '+(m.who.length-2)+'명'); }
       return '<div onclick="mtView(\''+m.id+'\')" style="padding:10px 10px;border-bottom:1px solid var(--s2);cursor:pointer">'
         +'<div style="font-size:12.5px;font-weight:700;color:var(--te);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+dEsc(m.title||'(제목 없음)')+'</div>'
-        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+((m.fbs&&m.fbs.length)?' · 💬 '+m.fbs.length:'')+((m.cmts&&m.cmts.length)?' · 🗨 의견 '+m.cmts.length:'')+' · '+dEsc(m.by||'')+'</div></div>';
+        +'<div style="font-size:10.5px;color:var(--t3)">'+dEsc(m.date||'')+(tl?' · <span style="color:var(--pu);font-weight:700">'+dEsc(tl)+'</span>':'')+(whoTxt?' · 👥 '+dEsc(whoTxt):'')+(m.summary?' · 요약 있음':'')+((m.files&&m.files.length)?' · 📎 '+m.files.length:'')+((m.fbs&&m.fbs.length)?' · 💬 '+m.fbs.length:'')+((m.cmts&&m.cmts.length)?' · 🗨 의견 '+m.cmts.length:'')+(function(){ var u=(m.dls||[]).filter(function(d){ return d.status==='unres'; }).length; return u?' · <b style="color:var(--rd)">⚠ 미해결 '+u+'</b>':''; })()+' · '+dEsc(m.by||'')+'</div></div>';
     }).join('') : '<div style="padding:18px;text-align:center;color:var(--t3);font-size:12.5px">'+(_mtFilter?'이 종류의 회의록이 없어요':'저장된 회의록이 없어요')+'</div>';
   }
   var h='<div class="ov" id="ov-meetings" onclick="if(event.target===this)this.remove()" style="display:flex"><div class="modal"><div class="mh"></div>'
@@ -2737,6 +2739,33 @@ function mtView(id){
         +'<button onclick="mtViewFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11.5px;background:none;border:1px solid var(--acc);color:var(--acc);border-radius:7px;padding:4px 10px;cursor:pointer;font-weight:600;flex-shrink:0">받기</button></div>';
     });
   }
+  // ── 📋 할 일 조치 현황 (지난 회의 내용 처리 확인 — 조치 확인 / 미해결) ──
+  (function(){
+    var dls=Array.isArray(m.dls)?m.dls:[];
+    if(!dls.length) return;
+    var okN=dls.filter(function(d){ return d.status==='ok'; }).length;
+    var unN=dls.filter(function(d){ return d.status==='unres'; }).length;
+    h+='<div class="sl2" style="margin:12px 0 8px"><div class="d8" style="background:var(--g)"></div>📋 할 일 조치 현황 <span style="font-size:11px;color:var(--t3)">조치 '+okN+'/'+dls.length+'</span>'
+      +(unN?' <span style="font-size:11px;color:var(--rd);font-weight:700">⚠ 미해결 '+unN+'건</span>':'')+'</div>';
+    dls.forEach(function(d,idx){
+      var st=d.status||'';
+      var bd=st==='ok'?'var(--g)':(st==='unres'||st==='late')?'var(--rd)':'var(--s3)';
+      var who=(d.actDate?dEsc(d.actDate):'')+(d.actBy?' '+dEsc(d.actBy):'');
+      var tag=st==='ok'?'<b style="color:var(--g)">✔ 조치 확인'+(who?' · '+who:'')+'</b>'
+        :st==='unres'?'<b style="color:var(--rd)">⚠ 미해결'+(who?' · '+who:'')+'</b>'
+        :st==='late'?'<b style="color:var(--rd)">✗ 어김</b>'
+        :'<b style="color:var(--am)">대기</b>';
+      h+='<div style="background:var(--s1);border:1px solid '+bd+';border-radius:10px;padding:9px 11px;margin-bottom:6px">'
+        +'<div style="font-size:12px;font-weight:600;line-height:1.5;'+(st==='ok'?'color:var(--t3)':'')+'">'+dEsc(d.text||'')+'</div>'
+        +'<div style="font-size:10px;color:var(--t3);margin-top:2px">'+(d.date?'기한 '+dEsc(d.date):'기한 없음')+(d.owner?' · 담당 '+dEsc(d.owner):'')+' · '+tag+'</div>'
+        +(isAdminLevel()?'<div style="display:flex;gap:6px;margin-top:6px">'
+          +'<button onclick="mtDlSet(\''+m.id+'\','+idx+',\'ok\')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;cursor:pointer;font-weight:700;border:1px solid var(--g);background:'+(st==='ok'?'var(--g)':'var(--s1)')+';color:'+(st==='ok'?'#fff':'var(--g)')+'">✔ 조치 확인</button>'
+          +'<button onclick="mtDlSet(\''+m.id+'\','+idx+',\'unres\')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;cursor:pointer;font-weight:700;border:1px solid var(--rd);background:'+(st==='unres'?'var(--rd)':'var(--s1)')+';color:'+(st==='unres'?'#fff':'var(--rd)')+'">⚠ 미해결</button>'
+          +'</div>':'')
+        +'</div>';
+    });
+    h+='<div style="font-size:9.5px;color:var(--t3);margin:0 0 4px;line-height:1.5">＊ 같은 버튼을 다시 누르면 대기로 돌아가요 · 미해결·대기 항목은 담당자 할 일과 원장 알림에 계속 남아요</div>';
+  })();
   // ── 💬 의견 (관리자: 열람 + 의견 · 원장: 확인) ──
   (function(){
     var cmts=Array.isArray(m.cmts)?m.cmts:[];
@@ -6347,7 +6376,7 @@ function tljMyTodos(){
   var out=[]; if(!ME||!ME.name) return out;
   (_meetings||[]).forEach(function(m){
     if(!mtCanSee(m)) return;
-    (m.dls||[]).forEach(function(d,idx){ if(!d.status && mtDlIsMine(m,d,ME.name)) out.push({kind:'dl', mid:m.id, idx:idx, text:d.text, date:d.date, mtitle:m.title||m.date||''}); });
+    (m.dls||[]).forEach(function(d,idx){ if((!d.status||d.status==='unres') && mtDlIsMine(m,d,ME.name)) out.push({kind:'dl', mid:m.id, idx:idx, text:(d.status==='unres'?'⚠ ':'')+d.text, date:d.date, mtitle:m.title||m.date||''}); });
   });
   mtMyPendingFb().forEach(function(p){ out.push({kind:'fb', mid:p.mid, fid:p.fid, text:p.text, mtitle:p.mtitle}); });
   return out;
