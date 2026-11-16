@@ -6416,7 +6416,8 @@ function _renderTlj(){
         +tljTrackHTML(_tljViewFor, false)
         +tljRecsHTML(_tljViewFor, false)
         +ntSectionHTML()
-        +stickerSecHTML(_tljViewFor, false);
+        +stickerSecHTML(_tljViewFor, false)
+        +ownerDoneHTML(_tljViewFor);
     }
   } else {
     h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
@@ -7228,6 +7229,86 @@ function stCalSave(name,id){
   var o=document.getElementById('ov-stcal'); if(o) o.remove();
   saveAll(); _stRerender(name);
   toast('\uD83D\uDCC5 '+d+' \uC5C5\uBB34 \uCE98\uB9B0\uB354\uC5D0 \uB123\uC5C8\uC5B4\uC694','var(--g)');
+}
+// ── 👑 처리한 일 확인 (원장: 관리자가 최근 처리한 일 모아 확인) ──
+function ownerDoneList(name){
+  var out=[];
+  var cut=(function(){ var x=new Date(Date.now()-14*86400000); return x.getFullYear()+'-'+('0'+(x.getMonth()+1)).slice(-2)+'-'+('0'+x.getDate()).slice(-2); })();
+  ((DB.tlj||{})[name]||[]).forEach(function(e){
+    if(e.draft) return;
+    (e.doneItems||[]).forEach(function(r){
+      if((r.st||'done')!=='done') return;
+      var d=r.doneDate||e.date||'';
+      if(!d || d<cut) return;
+      out.push({src:'일지', ic:'🧑\u200D💼', text:r.text||'', d:d, extra:r.hours||''});
+    });
+  });
+  (_meetings||[]).forEach(function(m){
+    if(!mtCanSee(m)) return;
+    (m.dls||[]).forEach(function(dl){
+      if(dl.status==='ok' && dl.actBy===name && (dl.actDate||'')>=cut) out.push({src:'회의 조치', ic:'📝', text:dl.text||'', d:dl.actDate||'', extra:m.title||''});
+    });
+  });
+  [0,7].forEach(function(off){
+    var wk=_wkKey(new Date(Date.now()-off*86400000));
+    (((DB.wkplan||{})[name]||{})[wk]||[]).forEach(function(t){
+      if(t.done && !t.byOwner && (t.doneDate||'')>=cut) out.push({src:'주간계획', ic:'🗓', text:t.text||'', d:t.doneDate||'', extra:t.viaTlj?'일지 연동':''});
+    });
+  });
+  (((DB.stickers||{})[name])||[]).forEach(function(sk){
+    if(sk.done && (sk.doneDate||'')>=cut) out.push({src:'스티커', ic:'🗒', text:sk.text||'', d:sk.doneDate||'', extra:sk.doneTo||''});
+  });
+  out.sort(function(a,b){ return (b.d||'').localeCompare(a.d||''); });
+  out=out.slice(0,60);
+  out.forEach(function(it){ it.k=(name+'|'+it.src+'|'+_srNorm(it.text).slice(0,40)+'|'+it.d).slice(0,140); });
+  return out;
+}
+function ownerDoneHTML(name){
+  if(!(ME&&ME.role==='owner')) return '';
+  var list=ownerDoneList(name);
+  var okm=(DB.cfg&&DB.cfg.doneOk)||{};
+  var pend=list.filter(function(it){ return !okm[it.k]; });
+  var h='<label class="fl" onclick="window._odShow=(window._odShow===false?true:false);_renderTlj()" style="cursor:pointer">👑 처리한 일 확인 <span style="font-size:10px;color:var(--t3)">(최근 2주)</span> '
+    +(list.length?(pend.length?'<span style="color:var(--am)">미확인 '+pend.length+'/'+list.length+'건</span>':'<span style="color:var(--g)">'+list.length+'건 모두 확인 ✓</span>'):'')
+    +' <span style="font-size:10px;color:var(--t3)">'+(window._odShow===false?'▸ 펼치기':'▾ 접기')+'</span></label>';
+  if(window._odShow===false) return h;
+  if(!list.length) return h+'<div style="background:var(--s1);border:1px dashed var(--s3);border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:11.5px;color:var(--t3)">최근 2주간 처리한 일이 없어요</div>';
+  h+='<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:6px">';
+  var shown=(window._odAll?list:list.slice(0,15));
+  shown.forEach(function(it){
+    var ok=okm[it.k];
+    h+='<div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--s2)">'
+      +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5;'+(ok?'color:var(--t3)':'font-weight:600')+'">'+dEsc(it.text)
+      +'<span style="display:block;font-size:9.5px;color:var(--t3);font-weight:400">'+it.ic+' '+dEsc(it.src)+' · '+dEsc(it.d)+(it.extra?' · '+dEsc(it.extra):'')+'</span></span>'
+      +(ok?'<span style="font-size:10px;background:var(--pu);color:#fff;border-radius:6px;padding:2px 8px;font-weight:700;flex-shrink:0">👑 '+dEsc((ok.date||''))+'</span>'
+        :'<button onclick="odOk(\''+dEsc(it.k)+'\')" style="flex-shrink:0;font-size:10.5px;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:5px 11px;cursor:pointer;font-weight:700">👑 확인</button>')
+      +'</div>';
+  });
+  h+='</div>';
+  if(list.length>15&&!window._odAll) h+='<button onclick="window._odAll=1;_renderTlj()" style="width:100%;margin-bottom:6px;padding:7px;border-radius:9px;border:1px dashed var(--s3);background:none;color:var(--t2);font-size:11px;cursor:pointer">더 보기 (+'+(list.length-15)+'건)</button>';
+  if(pend.length) h+='<button onclick="odOkAll(\''+dEsc(name)+'\')" style="width:100%;margin-bottom:10px;padding:9px;border-radius:9px;border:none;background:var(--pu);color:#fff;font-size:12px;font-weight:700;cursor:pointer">👑 처리한 일 전체 확인 ('+pend.length+'건)</button>';
+  else h+='<div style="margin-bottom:6px"></div>';
+  return h;
+}
+function _odTrim(){
+  try{
+    var m=DB.cfg.doneOk||{}; var ks=Object.keys(m);
+    if(ks.length>800){ ks.sort(function(a,b){ return ((m[a]||{}).date||'').localeCompare((m[b]||{}).date||''); }); ks.slice(0, ks.length-800).forEach(function(k){ delete m[k]; }); }
+  }catch(e){}
+}
+function odOk(k){
+  if(!(ME&&ME.role==='owner')) return;
+  if(!DB.cfg.doneOk||typeof DB.cfg.doneOk!=='object') DB.cfg.doneOk={};
+  DB.cfg.doneOk[k]={date:today()};
+  _odTrim(); try{ logChange('처리한 일 확인',''); }catch(e){}
+  saveAll(); _renderTlj(); toast('👑 확인했어요','var(--g)');
+}
+function odOkAll(name){
+  if(!(ME&&ME.role==='owner')) return;
+  if(!DB.cfg.doneOk||typeof DB.cfg.doneOk!=='object') DB.cfg.doneOk={};
+  var n=0; ownerDoneList(name).forEach(function(it){ if(!DB.cfg.doneOk[it.k]){ DB.cfg.doneOk[it.k]={date:today()}; n++; } });
+  _odTrim(); try{ logChange('처리한 일 전체 확인', name+' '+n+'건'); }catch(e){}
+  saveAll(); _renderTlj(); toast('👑 '+n+'건 모두 확인했어요','var(--g)');
 }
 // ── 인수인계 요약 (원장 전용) ──
 function openHandover(name){
