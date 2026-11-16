@@ -6427,15 +6427,18 @@ function _renderTlj(){
       +(function(){ // ⏳ 이월된 일 (이전 일지의 진행 중·미완료 — 끝날 때까지 따라다님)
         var cl=tljCarryList();
         if(!cl.length) return '';
-        var hh='<label class="fl">⏳ 이월된 일 ('+cl.length+'건) — 이전 일지에서 아직 안 끝난 일</label>'
+        var nd=cl.filter(function(c){ return !c.due; }).length;
+        var hh='<label class="fl">⏳ 이월된 일 ('+cl.length+'건'+(nd?' · <span style="color:var(--am)">기한 미설정 '+nd+'</span>':'')+') — 끝낼 때까지 따라다녀요</label>'
           +'<div style="background:var(--s1);border:1px solid var(--am);border-radius:10px;padding:4px 12px;margin-bottom:10px">';
         cl.forEach(function(c){
+          var od=c.due&&c.due<today();
           hh+='<div style="padding:8px 0;border-bottom:1px solid var(--s2)">'
             +'<div style="font-size:12px;line-height:1.5"><span style="font-size:9.5px;background:var(--s2);color:'+(c.st==='ing'?'var(--am)':'var(--rd)')+';border-radius:5px;padding:1px 6px;font-weight:700">'+(c.st==='ing'?'진행 중':'미완료')+'</span> '+dEsc(c.text)
-            +'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+dEsc(c.date)+' 일지에서 이월</span></div>'
-            +'<div style="display:flex;gap:6px;margin-top:5px">'
-            +'<button onclick="tljCarryDone(\''+c.eid+'\','+c.idx+')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;border:none;background:var(--g);color:#fff;font-weight:700;cursor:pointer">✓ 완료 처리</button>'
-            +'<button onclick="tljCarryTake(\''+c.eid+'\','+c.idx+')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-weight:700;cursor:pointer">→ 오늘 일지로 가져오기</button>'
+            +'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+dEsc(c.date)+' 일지에서 이월 · '+(c.due?('<b style="color:'+(od?'var(--rd)':'var(--acc)')+'">⏰ 기한 '+dEsc(c.due)+(od?' — 지났어요!':'')+'</b>'):'<b style="color:var(--am)">⚠ 기한 미설정 — 날짜를 정해두세요</b>')+'</span></div>'
+            +'<div style="display:flex;gap:6px;margin-top:5px;align-items:center">'
+            +'<input type="date" class="fi" value="'+dEsc(c.due||'')+'" onchange="tljCarryDue(\''+c.eid+'\','+c.idx+',this.value)" title="처리 기한 설정" style="flex:0 0 37%;margin:0;padding:6px 6px;font-size:10.5px;border-color:'+(c.due?'var(--s3)':'var(--am)')+'">'
+            +'<button onclick="tljCarryDone(\''+c.eid+'\','+c.idx+')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;border:none;background:var(--g);color:#fff;font-weight:700;cursor:pointer">✓ 완료</button>'
+            +'<button onclick="tljCarryTake(\''+c.eid+'\','+c.idx+')" style="flex:1.2;font-size:11px;padding:6px 0;border-radius:8px;border:1px solid var(--acc);background:var(--s1);color:var(--acc);font-weight:700;cursor:pointer">→ 오늘 일지로</button>'
             +'</div></div>';
         });
         return hh+'</div>';
@@ -6528,12 +6531,14 @@ function _renderTlj(){
           :'<button onclick="tljOwnOk(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:3px 10px;cursor:pointer;font-weight:700">👑 확인</button>'):'')
       +((isOw||e.date===today())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</span></div>'
       +((e.doneItems&&e.doneItems.length)?('<div style="font-size:12px;line-height:1.6"><b>✅ 한 일</b>'
-        +e.doneItems.map(function(r){
+        +e.doneItems.map(function(r,ri){
           var st=r.st||'done';
           var tag=st==='done'?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700">완료</span>'
             :st==='ing'?'<span style="font-size:9.5px;background:var(--s2);color:var(--am);border-radius:5px;padding:1px 6px;font-weight:700">진행 중</span>'
             :'<span style="font-size:9.5px;background:var(--s2);color:var(--rd);border-radius:5px;padding:1px 6px;font-weight:700">미완료</span>';
           return '<div style="margin-top:3px">'+tag+(r.wk?' <span style="font-size:9px;background:var(--s2);color:var(--g);border-radius:5px;padding:1px 5px;font-weight:700">🗓 주간계획</span>':'')+' <b>'+dEsc(r.text)+'</b>'+(r.hours?' <span style="color:var(--acc);font-weight:700;font-size:11px">· '+dEsc(r.hours)+'</span>':'')
+            +(st!=='done'&&r.due?' <span style="font-size:9.5px;color:'+(r.due<today()?'var(--rd)':'var(--acc)')+';font-weight:700">⏰ '+dEsc(r.due)+(r.due<today()?' 지남':'')+'</span>':'')
+            +(st!=='done'&&!isOw?' <button onclick="tljCarryDone(\''+e.id+'\','+ri+')" style="font-size:9.5px;background:var(--g);color:#fff;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-weight:700">✓ 완료</button>':'')
             +(r.detail?'<div style="font-size:11.5px;color:var(--t2);line-height:1.6;white-space:pre-wrap;background:var(--s2);border-radius:8px;padding:6px 9px;margin:3px 0 2px">'+dEsc(r.detail)+'</div>':'')+'</div>';
         }).join('')+'</div>')
         :(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':''))
@@ -6565,7 +6570,7 @@ function _tljLoadDate(date){
   if(!ME||ME.role==='owner') return;
   var e=_tljFindEntry(date);
   if(e){
-    window._tljDone=(e.doneItems||[]).map(function(r){ return {text:r.text||'', detail:r.detail||'', hours:r.hours||'', st:r.st||'done', wk:r.wk, basic:r.basic}; });
+    window._tljDone=(e.doneItems||[]).map(function(r){ return {text:r.text||'', detail:r.detail||'', hours:r.hours||'', st:r.st||'done', due:r.due||'', wk:r.wk, basic:r.basic}; });
     if(!window._tljDone.length) window._tljDone=[{text:'',detail:'',hours:'',st:'done'}];
     window._tljFiles=(e.files||[]).slice();
     var p=document.getElementById('tlj-plan'); if(p) p.value=e.plan||'';
@@ -6618,6 +6623,7 @@ function _tljRenderDone(){
       +'<div style="display:flex;gap:5px;align-items:center">'
       +'<select class="fs tlj-dh" data-i="'+i+'" style="flex:0 0 32%;margin:0;padding:6px 5px;font-size:11.5px"><option value="">⏱ 시간</option>'+hopts+'</select>'
       +chips+'</div>'
+      +(st!=='done'?'<div style="display:flex;gap:6px;align-items:center;margin-top:6px"><span style="font-size:10.5px;color:'+(r.due?'var(--acc)':'var(--am)')+';font-weight:700;flex-shrink:0">⏰ 처리 기한</span><input type="date" class="fi tlj-ddl" data-i="'+i+'" value="'+dEsc(r.due||'')+'" style="flex:1;margin:0;padding:6px 8px;font-size:11.5px">'+(r.due?'':'<span style="font-size:9.5px;color:var(--am);font-weight:700;flex-shrink:0">미설정</span>')+'</div>':'')
       +'</div>';
   }).join('');
   window._tljDone.forEach(function(r,i){ var s=el.querySelector('.tlj-dh[data-i="'+i+'"]'); if(s) s.value=r.hours||''; });
@@ -6628,6 +6634,7 @@ function _tljSyncDone(){
   document.querySelectorAll('.tlj-dt').forEach(function(inp){ var r=window._tljDone[parseInt(inp.getAttribute('data-i'))]; if(r) r.text=inp.value; });
   document.querySelectorAll('.tlj-dd').forEach(function(ta){ var r=window._tljDone[parseInt(ta.getAttribute('data-i'))]; if(r) r.detail=ta.value; });
   document.querySelectorAll('.tlj-dh').forEach(function(s){ var r=window._tljDone[parseInt(s.getAttribute('data-i'))]; if(r) r.hours=s.value; });
+  document.querySelectorAll('.tlj-ddl').forEach(function(inp){ var r=window._tljDone[parseInt(inp.getAttribute('data-i'))]; if(r) r.due=inp.value; });
 }
 function tljDoneAdd(){ _tljSyncDone(); window._tljDone.push({text:'',hours:'',st:'done'}); _tljRenderDone(); var inps=document.querySelectorAll('.tlj-dt'); if(inps.length) inps[inps.length-1].focus(); }
 function tljDoneRm(i){ _tljSyncDone(); window._tljDone.splice(i,1); _tljRenderDone(); }
@@ -6683,7 +6690,7 @@ function tljSave(){
   var doneItems=(window._tljDone||[]).map(function(r){
     var t=(r.text||'').trim(), d=(r.detail||'').trim();
     if(!t && d) t=_tljAutoTitle(d); // 내용만 쓰면 제목 자동 생성
-    return {text:t, detail:d, hours:r.hours||'', st:r.st||'done'};
+    return {text:t, detail:d, hours:r.hours||'', st:r.st||'done', due:r.due||''};
   }).filter(function(r){ return r.text; });
   // 체크한 기본 팀장 업무 → 오늘 한 일로 자동 기록
   Array.prototype.forEach.call(document.querySelectorAll('.tlj-basic:checked'), function(c){
@@ -6879,7 +6886,7 @@ function tljTrack(name){
       if(!t){ t=map[k]={text:r.text, first:e.date, hist:[]}; order.push(t); }
       t.last=e.date;
       t.st=(r.st==='ing'||r.st==='todo')?r.st:'done';
-      t.lastEid=e.id; t.lastIdx=ri;
+      t.lastEid=e.id; t.lastIdx=ri; t.due=r.due||'';
       t.doneDate=(t.st==='done')?(r.doneDate||e.date):'';
       var hl=t.hist[t.hist.length-1];
       if(!hl || hl.st!==t.st || hl.date!==e.date) t.hist.push({date:e.date, st:t.st});
@@ -6914,9 +6921,13 @@ function tljTrackHTML(name, mine){
         +'<div style="font-size:12px;font-weight:600;line-height:1.5">'
         +'<span style="font-size:9.5px;background:var(--s2);color:'+(t.st==='ing'?'var(--am)':'var(--rd)')+';border-radius:5px;padding:1px 6px;font-weight:700">'+(STL[t.st]||'')+'</span> '
         +'<span style="font-size:9.5px;background:'+(t.days>=3?'var(--s2)':'var(--s2)')+';color:'+col+';border-radius:5px;padding:1px 6px;font-weight:700">'+t.days+'일째</span> '
+        +(t.due?'<span style="font-size:9.5px;background:var(--s2);color:'+(t.due<today()?'var(--rd)':'var(--acc)')+';border-radius:5px;padding:1px 6px;font-weight:700">⏰ '+dEsc((t.due||'').slice(5))+(t.due<today()?' 지남':'')+'</span> '
+          :'<span style="font-size:9.5px;background:var(--s2);color:var(--am);border-radius:5px;padding:1px 6px;font-weight:700">기한 미설정</span> ')
         +dEsc(t.text)+'</div>'
         +'<div style="font-size:9.5px;color:var(--t3);margin-top:2px">'+dEsc(chain)+' → 지금</div>'
-        +(mine?'<button onclick="tljCarryDone(\''+t.lastEid+'\','+t.lastIdx+')" style="width:100%;margin-top:5px;font-size:11px;padding:6px 0;border-radius:8px;border:none;background:var(--g);color:#fff;font-weight:700;cursor:pointer">✓ 완료 처리</button>':'')
+        +(mine?'<div style="display:flex;gap:6px;margin-top:5px;align-items:center">'
+          +'<input type="date" class="fi" value="'+dEsc(t.due||'')+'" onchange="tljCarryDue(\''+t.lastEid+'\','+t.lastIdx+',this.value)" title="처리 기한 설정" style="flex:0 0 40%;margin:0;padding:6px 6px;font-size:10.5px;border-color:'+(t.due?'var(--s3)':'var(--am)')+'">'
+          +'<button onclick="tljCarryDone(\''+t.lastEid+'\','+t.lastIdx+')" style="flex:1;font-size:11px;padding:6px 0;border-radius:8px;border:none;background:var(--g);color:#fff;font-weight:700;cursor:pointer">✓ 완료 처리</button></div>':'')
         +'</div>';
     });
     h+='</div>';
@@ -7029,7 +7040,7 @@ function tljCarryList(name){
   var nm=name||(ME?ME.name:''); var out=[];
   ((DB.tlj&&DB.tlj[nm])||[]).forEach(function(e){
     (e.doneItems||[]).forEach(function(r,ri){
-      if((r.st==='ing'||r.st==='todo') && !r.moved) out.push({eid:e.id, idx:ri, date:e.date, text:r.text, st:r.st});
+      if((r.st==='ing'||r.st==='todo') && !r.moved) out.push({eid:e.id, idx:ri, date:e.date, text:r.text, st:r.st, due:r.due||''});
     });
   });
   out.sort(function(a,b){ return (a.date||'').localeCompare(b.date||''); });
@@ -7040,6 +7051,14 @@ function _tljRestoreForm(f){ if(!f) return; var p=document.getElementById('tlj-p
 function _tljFindItem(eid,idx){
   var e=((DB.tlj&&DB.tlj[ME.name])||[]).find(function(x){ return x.id===eid; });
   return e&&e.doneItems&&e.doneItems[idx]?e.doneItems[idx]:null;
+}
+function tljCarryDue(eid,idx,v){
+  var r=_tljFindItem(eid,idx); if(!r) return;
+  _tljSyncDone(); var f=_tljKeepForm();
+  r.due=v||'';
+  try{ logChange('할 일 기한 설정', ME.name+' — '+String(r.text||'').slice(0,30)+' → '+(v||'해제')); }catch(e){}
+  saveAll(); _renderTlj(); _tljRestoreForm(f);
+  toast(v?('⏰ 처리 기한을 '+v+'로 정했어요'):'기한을 지웠어요','var(--g)');
 }
 function tljCarryDone(eid,idx){
   var r=_tljFindItem(eid,idx); if(!r) return;
@@ -12193,6 +12212,10 @@ function _chkSoftItems(){
       if(!(((DB.tlj||{})[ME.name])||[]).some(function(e){ return e.date===yd; }))
         it.push({k:'tlj', text:'🧑\u200D💼 어제('+yd.slice(5).replace('-','/')+') 일지가 없어요', btn:'일지 쓰기', go:'openTlj()'});
     }
+    try{
+      var od=tljCarryList(ME.name).filter(function(c){ return c.due && c.due<today(); });
+      if(od.length) it.push({k:'od', text:'⏰ 기한 지난 할 일 '+od.length+'건 — 완료 처리하거나 기한을 조정하세요', btn:'일지 보기', go:'openTlj()'});
+    }catch(e){}
     var opn=(((DB.stickers||{})[ME.name])||[]).filter(function(x){ return !x.done; });
     if(opn.length){
       var oldest=Math.min.apply(null, opn.map(function(x){ return x.ts||Date.now(); }));
