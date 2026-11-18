@@ -1576,6 +1576,8 @@ function saveAll() {
 // 헬퍼
 // ═══════════════════════════════════════
 function today() { return new Date().toISOString().slice(0,10); }
+// 관리자일지 기준일: 다음 날 새벽 2시까지는 전날 일지로 기록 (현지 시간 기준)
+function _tljDay(){ var d=new Date(Date.now()-2*3600000); return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2); }
 function daysSince(d) { if(!d) return 9999; var n=new Date(); n.setHours(0,0,0,0); var t=new Date(d); t.setHours(0,0,0,0); return Math.round((n-t)/864e5); }
 function daysUntil(d) { if(!d) return null; var n=new Date(); n.setHours(0,0,0,0); var t=new Date(d); t.setHours(0,0,0,0); return Math.round((t-n)/864e5); }
 function pCol(r) { return r>=70 ? 'var(--g)' : r>=40 ? 'var(--am)' : 'var(--rd)'; }
@@ -6422,7 +6424,8 @@ function _renderTlj(){
   } else {
     h+='<div style="font-size:11.5px;color:var(--t2);margin-bottom:10px">오늘 한 일과 예정 업무를 기록하세요. 회의에서 나온 내 할 일을 처리로 체크하면 회의록에도 함께 반영되고, 작성 일수·처리 건수는 관리자 점수에 반영됩니다.</div>'
       +ntSectionHTML()
-      +'<label class="fl">날짜</label><input class="fi" type="date" id="tlj-date" value="'+today()+'" onchange="tljDateChg(this.value)">'
+      +'<label class="fl">날짜</label><input class="fi" type="date" id="tlj-date" value="'+_tljDay()+'" onchange="tljDateChg(this.value)">'
+      +(new Date().getHours()<2?'<div style="font-size:9.5px;color:var(--am);font-weight:700;margin:-4px 0 6px">🌙 새벽 2시 전이라 전날('+_tljDay().slice(5).replace('-','/')+') 일지로 기록돼요 — 날짜는 직접 바꿀 수 있어요</div>':'')
       +'<div id="tlj-editbadge"></div>'
       +stickerSecHTML(ME.name, true)
       +(function(){ // ⏳ 이월된 일 (이전 일지의 진행 중·미완료 — 끝날 때까지 따라다님)
@@ -6530,7 +6533,7 @@ function _renderTlj(){
       +(isOw?(e.ownOk
           ?'<button onclick="tljOwnOk(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:1px solid var(--s3);color:var(--t3);border-radius:7px;padding:3px 8px;cursor:pointer">확인 해제</button>'
           :'<button onclick="tljOwnOk(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:var(--pu);color:#fff;border:none;border-radius:7px;padding:3px 10px;cursor:pointer;font-weight:700">👑 확인</button>'):'')
-      +((isOw||e.date===today())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</span></div>'
+      +((isOw||e.date===today()||e.date===_tljDay())?'<button onclick="tljDel(\''+dEsc(target)+'\',\''+e.id+'\')" style="font-size:10.5px;background:none;border:none;color:var(--rd);cursor:pointer">삭제</button>':'')+'</span></div>'
       +((e.doneItems&&e.doneItems.length)?('<div style="font-size:12px;line-height:1.6"><b>✅ 한 일</b>'
         +e.doneItems.map(function(r,ri){
           var st=r.st||'done';
@@ -6553,7 +6556,7 @@ function _renderTlj(){
     +'</div></div>';
   document.body.insertAdjacentHTML('beforeend', h);
   if(document.getElementById('tlj-done-rows')){
-    var _dv=window._tljLoadedDate||((document.getElementById('tlj-date')||{}).value||today());
+    var _dv=window._tljLoadedDate||((document.getElementById('tlj-date')||{}).value||_tljDay());
     var _di=document.getElementById('tlj-date'); if(_di&&_di.value!==_dv) _di.value=_dv;
     if(window._tljLoadedDate!==_dv){ window._tljLoadedDate=_dv; _tljLoadDate(_dv); }
     else{ _tljRenderDone(); _tljBadge(_dv); if(document.getElementById('tlj-files')) _tljRenderFiles(); }
@@ -6586,7 +6589,7 @@ function _tljLoadDate(date){
   if(document.getElementById('tlj-files')) _tljRenderFiles();
   _tljBadge(date);
 }
-function tljDateChg(v){ window._tljLoadedDate=v; _tljLoadDate(v||today()); }
+function tljDateChg(v){ window._tljLoadedDate=v; _tljLoadDate(v||_tljDay()); }
 // ── 오늘 한 일 항목 (작업시간 선택) ──
 var TLJ_HOURS=(function(){ var o=[]; for(var m=10;m<=480;m+=10){ var h=Math.floor(m/60), mm=m%60; o.push(h?(h+'시간'+(mm?' '+mm+'분':'')):(mm+'분')); } o.push('종일'); return o; })();
 function _hrsVal(sv){
@@ -6686,7 +6689,7 @@ function tljFileDl(fid,name){
   }).catch(function(){ toast('내려받기 실패','var(--rd)'); });
 }
 function tljSave(){
-  var date=(document.getElementById('tlj-date')||{}).value||today();
+  var date=(document.getElementById('tlj-date')||{}).value||_tljDay();
   _tljSyncDone();
   var doneItems=(window._tljDone||[]).map(function(r){
     var t=(r.text||'').trim(), d=(r.detail||'').trim();
@@ -10267,9 +10270,9 @@ function wbOwnerAlerts(){
     }); });
     if(_talks.length) alerts.push({sev:'warn', text:'주간 계획 중복 — 협의 필요 '+_talks.length+'건', info:_talks.slice(0,3).join(' · '), src:'주간 계획'});
   }catch(e){}
-  // 4-3) 관리자일지 미작성 (어제 기준 · 일요일 제외)
+  // 4-3) 관리자일지 미작성 (어제 기준 · 새벽 2시까지 유예 · 일요일 제외)
   try{
-    var y=new Date(Date.now()-86400000);
+    var y=new Date(new Date(_tljDay()+'T12:00:00').getTime()-86400000);
     if(y.getDay()!==0){
       var yd=y.getFullYear()+'-'+('0'+(y.getMonth()+1)).slice(-2)+'-'+('0'+y.getDate()).slice(-2);
       var missed=((DB.cfg&&DB.cfg.admins)||[]).map(function(a){ return a&&a.name?a.name:''; }).filter(Boolean)
@@ -10349,7 +10352,7 @@ function wbHomeCardHTML(){
   if(ME && ME.role!=='owner' && !canFeat('workboard')){
     // 현황판 차단 시에도 일지 리마인드는 유지
     if(isAdminLevel() && canFeat('tlj')){
-      var wrote0=((DB.tlj&&DB.tlj[ME.name])||[]).some(function(e){ return e.date===today(); });
+      var wrote0=((DB.tlj&&DB.tlj[ME.name])||[]).some(function(e){ return e.date===_tljDay(); });
       if(!wrote0) return '<div onclick="openTlj()" style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--am)">🧑‍💼 오늘 관리자일지를 아직 안 썼어요</span><span style="font-size:11px;color:var(--am)">쓰러 가기 →</span></div>';
     }
     return '';
@@ -10385,7 +10388,7 @@ function wbHomeCardHTML(){
   h+='</div>';
   // 오늘 일지 미작성 리마인드 (관리자·행정팀 본인)
   if(ME && ME.role!=='owner' && isAdminLevel() && canFeat('tlj')){
-    var wrote=((DB.tlj&&DB.tlj[ME.name])||[]).some(function(e){ return e.date===today(); });
+    var wrote=((DB.tlj&&DB.tlj[ME.name])||[]).some(function(e){ return e.date===_tljDay(); });
     if(!wrote) h='<div onclick="openTlj()" style="background:var(--s1);border:1.5px solid var(--am);border-radius:var(--rs);padding:9px 14px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center"><span style="font-size:12px;font-weight:700;color:var(--am)">🧑‍💼 오늘 관리자일지를 아직 안 썼어요</span><span style="font-size:11px;color:var(--am)">쓰러 가기 →</span></div>'+h;
   }
   return h;
@@ -12287,7 +12290,7 @@ function _chkSoftItems(){
   var it=[];
   if(!ME) return it;
   if((ME.role==='admin'||ME.role==='staff') && canFeat('tlj')){
-    var y=new Date(Date.now()-86400000);
+    var y=new Date(new Date(_tljDay()+'T12:00:00').getTime()-86400000);
     if(y.getDay()!==0){ // 일요일 일지는 묻지 않음
       var yd=y.getFullYear()+'-'+('0'+(y.getMonth()+1)).slice(-2)+'-'+('0'+y.getDate()).slice(-2);
       if(!(((DB.tlj||{})[ME.name])||[]).some(function(e){ return e.date===yd; }))
