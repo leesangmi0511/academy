@@ -6460,7 +6460,7 @@ function _renderTlj(){
           +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">'
           +bs.map(function(b,i){
             return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--s2);cursor:pointer">'
-              +'<input type="checkbox" class="tlj-basic" data-t="'+dEsc(b.title)+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
+              +'<input type="checkbox" class="tlj-basic" data-t="'+dEsc(b.title)+'" onchange="tljChkRow(this,\'basic\')" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
               +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+(b.freq?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700;margin-right:4px">'+dEsc(b.freq)+'</span>':'')+dEsc(b.title)
               +(b.desc?'<span style="display:block;font-size:10px;color:var(--t3);margin-top:1px">'+dEsc(b.desc.length>60?b.desc.slice(0,58)+'…':b.desc)+'</span>':'')+'</span></label>';
           }).join('')
@@ -6479,7 +6479,7 @@ function _renderTlj(){
           +'<div style="background:var(--s1);border:1px solid var(--s3);border-radius:10px;padding:4px 12px;margin-bottom:10px">'
           +wl.map(function(t){
             return '<label style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--s2);cursor:pointer">'
-              +'<input type="checkbox" class="tlj-wk" data-id="'+t.id+'" data-t="'+dEsc(t.text)+'" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
+              +'<input type="checkbox" class="tlj-wk" data-id="'+t.id+'" data-t="'+dEsc(t.text)+'" onchange="tljChkRow(this,\'wk\')" style="width:18px;height:18px;margin-top:1px;flex-shrink:0;accent-color:var(--g)">'
               +'<span style="flex:1;min-width:0;font-size:12px;line-height:1.5">'+(t.day?'<span style="font-size:9.5px;background:var(--gl);color:var(--g);border-radius:5px;padding:1px 6px;font-weight:700;margin-right:4px">'+dEsc(t.day)+'</span>':'')+dEsc(t.text)
               +(function(){ var o=(_dm[String(t.text||'').replace(/\s+/g,'')]||[]).filter(function(nm){ return nm!==ME.name; }); return o.length?'<span style="display:block;font-size:9.5px;color:var(--am);font-weight:700;margin-top:1px">⚠ 중복('+dEsc(o.join('·'))+') — 주간 계획에서 협의/확인'+(t.dupSt==='talk'?' · 협의 중':t.dupSt==='ok'?' · 확인됨':'')+'</span>':''; })()
               +'</span></label>';
@@ -6574,7 +6574,7 @@ function _tljLoadDate(date){
   if(!ME||ME.role==='owner') return;
   var e=_tljFindEntry(date);
   if(e){
-    window._tljDone=(e.doneItems||[]).map(function(r){ return {text:r.text||'', detail:r.detail||'', hours:r.hours||'', st:r.st||'done', due:r.due||'', wk:r.wk, basic:r.basic}; });
+    window._tljDone=(e.doneItems||[]).map(function(r){ return {text:r.text||'', detail:r.detail||'', hours:r.hours||'', st:r.st||'done', due:r.due||'', wk:r.wk, basic:r.basic, bsrc:r.bsrc, wid:r.wid}; });
     if(!window._tljDone.length) window._tljDone=[{text:'',detail:'',hours:'',st:'done'}];
     window._tljFiles=(e.files||[]).slice();
     var p=document.getElementById('tlj-plan'); if(p) p.value=e.plan||'';
@@ -6641,6 +6641,27 @@ function _tljSyncDone(){
   document.querySelectorAll('.tlj-ddl').forEach(function(inp){ var r=window._tljDone[parseInt(inp.getAttribute('data-i'))]; if(r) r.due=inp.value; });
 }
 function tljDoneAdd(){ _tljSyncDone(); window._tljDone.push({text:'',hours:'',st:'done'}); _tljRenderDone(); var inps=document.querySelectorAll('.tlj-dt'); if(inps.length) inps[inps.length-1].focus(); }
+// 기본 업무·주간계획 체크 → 즉시 '오늘 한 일' 행으로 추가해 내용·시간을 바로 수정
+function tljChkRow(el, kind){
+  _tljSyncDone();
+  var t=el.getAttribute('data-t')||'', wid=el.getAttribute('data-id')||'';
+  if(!Array.isArray(window._tljDone)) window._tljDone=[];
+  var match=function(r){ return kind==='basic' ? (r.basic && (r.bsrc||r.text)===t) : (r.wk && ((wid&&r.wid===wid) || r.text===t)); };
+  if(el.checked){
+    if(window._tljDone.length===1 && !(window._tljDone[0].text||'').trim() && !(window._tljDone[0].detail||'').trim()) window._tljDone=[];
+    if(!window._tljDone.some(match)){
+      var row={text:t, detail:'', hours:'', st:'done'};
+      if(kind==='basic'){ row.basic=1; row.bsrc=t; } else { row.wk=1; row.wid=wid; }
+      window._tljDone.push(row);
+    }
+    toast('✅ 오늘 한 일에 추가됐어요 — 아래에서 내용·시간을 바로 적을 수 있어요','var(--g)');
+  } else {
+    var i=window._tljDone.findIndex(function(r){ return match(r) && !(r.detail||'').trim() && !(r.hours||''); });
+    if(i>=0){ window._tljDone.splice(i,1); }
+    else if(window._tljDone.some(match)) toast('이미 적은 내용이 있어 한 일 목록에는 남겨뒀어요','var(--am)');
+  }
+  _tljRenderDone();
+}
 function tljDoneRm(i){ _tljSyncDone(); window._tljDone.splice(i,1); _tljRenderDone(); }
 // ── 관리자일지 파일 첨부 ──
 function _tljRenderFiles(){
@@ -6694,17 +6715,20 @@ function tljSave(){
   var doneItems=(window._tljDone||[]).map(function(r){
     var t=(r.text||'').trim(), d=(r.detail||'').trim();
     if(!t && d) t=_tljAutoTitle(d); // 내용만 쓰면 제목 자동 생성
-    return {text:t, detail:d, hours:r.hours||'', st:r.st||'done', due:r.due||''};
+    var o={text:t, detail:d, hours:r.hours||'', st:r.st||'done', due:r.due||''};
+    if(r.basic){ o.basic=1; if(r.bsrc) o.bsrc=r.bsrc; }
+    if(r.wk){ o.wk=1; if(r.wid) o.wid=r.wid; }
+    return o;
   }).filter(function(r){ return r.text; });
   // 체크한 기본 팀장 업무 → 오늘 한 일로 자동 기록
   Array.prototype.forEach.call(document.querySelectorAll('.tlj-basic:checked'), function(c){
     var t=c.getAttribute('data-t')||'';
-    if(t && !doneItems.some(function(r){ return r.text===t; })) doneItems.push({text:t, hours:'', st:'done', basic:1});
+    if(t && !doneItems.some(function(r){ return r.text===t || (r.basic&&(r.bsrc||'')===t); })) doneItems.push({text:t, hours:'', st:'done', basic:1, bsrc:t});
   });
   // 체크한 이번 주 계획 → 오늘 한 일 기록 + 주간 계획 완료 처리
   Array.prototype.forEach.call(document.querySelectorAll('.tlj-wk:checked'), function(c){
     var t=c.getAttribute('data-t')||'', wid=c.getAttribute('data-id')||'';
-    if(t && !doneItems.some(function(r){ return r.text===t; })) doneItems.push({text:t, hours:'', st:'done', wk:1});
+    if(t && !doneItems.some(function(r){ return r.text===t || (r.wk&&wid&&r.wid===wid); })) doneItems.push({text:t, hours:'', st:'done', wk:1, wid:wid});
     var item=((DB.wkplan&&DB.wkplan[ME.name]&&DB.wkplan[ME.name][_wkKey()])||[]).find(function(x){ return x.id===wid; });
     if(item){ item.done=true; item.doneDate=today(); item.viaTlj=1; }
   });
