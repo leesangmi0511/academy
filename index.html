@@ -6543,11 +6543,11 @@ function _renderTlj(){
           return '<div style="margin-top:3px">'+tag+(r.wk?' <span style="font-size:9px;background:var(--s2);color:var(--g);border-radius:5px;padding:1px 5px;font-weight:700">🗓 주간계획</span>':'')+' <b>'+dEsc(r.text)+'</b>'+(r.hours?' <span style="color:var(--acc);font-weight:700;font-size:11px">· '+dEsc(r.hours)+'</span>':'')
             +(st!=='done'&&r.due?' <span style="font-size:9.5px;color:'+(r.due<today()?'var(--rd)':'var(--acc)')+';font-weight:700">⏰ '+dEsc(r.due)+(r.due<today()?' 지남':'')+'</span>':'')
             +(st!=='done'&&!isOw?' <button onclick="tljCarryDone(\''+e.id+'\','+ri+')" style="font-size:9.5px;background:var(--g);color:#fff;border:none;border-radius:6px;padding:2px 8px;cursor:pointer;font-weight:700">✓ 완료</button>':'')
-            +(r.detail?'<div style="font-size:11.5px;color:var(--t2);line-height:1.6;white-space:pre-wrap;background:var(--s2);border-radius:8px;padding:6px 9px;margin:3px 0 2px">'+dEsc(r.detail)+'</div>':'')+'</div>';
+            +(r.detail?_tljLongHTML(r.detail,'font-size:11.5px;color:var(--t2);line-height:1.6;background:var(--s2);border-radius:8px;padding:6px 9px;margin:3px 0 2px'):'')+'</div>';
         }).join('')+'</div>')
-        :(e.done?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap"><b>✅ 한 일</b>\n'+dEsc(e.done)+'</div>':''))
-      +(e.plan?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--t2)"><b>📌 예정</b>\n'+dEsc(e.plan)+'</div>':'')
-      +(e.issue?'<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:var(--am)"><b>⚠ 특이사항</b>\n'+dEsc(e.issue)+'</div>':'')
+        :(e.done?_tljLongBlock('✅ 한 일', e.done, 'var(--te)'):''))
+      +(e.plan?_tljLongBlock('📌 예정', e.plan, 'var(--t2)'):'')
+      +(e.issue?_tljLongBlock('⚠ 특이사항', e.issue, 'var(--am)'):'')
       +((e.files&&e.files.length)?'<div style="margin-top:5px">'+e.files.map(function(f){ return '<button onclick="tljFileDl(\''+f.fid+'\',\''+dEsc(f.name)+'\')" style="font-size:11px;background:var(--s2);border:1px solid var(--s3);border-radius:7px;padding:4px 9px;margin:2px 4px 0 0;cursor:pointer;color:var(--acc);font-weight:600">📎 '+dEsc(f.name)+'</button>'; }).join('')+'</div>':'')
       +((e.linked&&e.linked.length)?'<div style="font-size:11px;color:var(--g);margin-top:5px;line-height:1.5">'+e.linked.map(function(l){ return '✔ '+dEsc(l.text)+(l.hours?' <span style="color:var(--acc);font-weight:700">· '+dEsc(l.hours)+'</span>':''); }).join('<br>')+'</div>':'')
       +'</div>';
@@ -7079,6 +7079,63 @@ function _tljRestoreForm(f){ if(!f) return; var p=document.getElementById('tlj-p
 function _tljFindItem(eid,idx){
   var e=((DB.tlj&&DB.tlj[ME.name])||[]).find(function(x){ return x.id===eid; });
   return e&&e.doneItems&&e.doneItems[idx]?e.doneItems[idx]:null;
+}
+// ── 긴 글 요약: 기록은 요약으로 보여주고 [원문 보기]로 펼침 ──
+function _tljSum(text){
+  var t=String(text||'').trim();
+  if(!t) return null;
+  var lines=t.split('\n').map(function(x){ return x.trim(); }).filter(Boolean);
+  if(t.length<=90 && lines.length<=2) return null; // 짧은 글은 그대로
+  // 한 줄 긴 글이면 문장 단위로 쪼개기
+  if(lines.length===1){
+    var segs=[], buf='';
+    for(var i=0;i<t.length;i++){
+      buf+=t[i];
+      if(/[.!?]/.test(t[i]) && (i===t.length-1 || /\s/.test(t[i+1]||' '))){ segs.push(buf.trim()); buf=''; }
+    }
+    if(buf.trim()) segs.push(buf.trim());
+    if(segs.length>1) lines=segs;
+  }
+  var KEY=/완료|진행|예정|요청|확인|전달|발송|공지|문제|필요|결정|마감|까지|보류|협의|주문|상담|회의|오류|수정|제출|검토/;
+  var picks=[lines[0]];
+  for(var j=1;j<lines.length && picks.length<3;j++){
+    if(KEY.test(lines[j]) || /\d/.test(lines[j])) picks.push(lines[j]);
+  }
+  if(picks.length<2 && lines.length>1) picks.push(lines[1]);
+  var out=picks.map(function(x){ x=x.replace(/^[\s■□▶◆●·•\-–—*※>]+/,''); return x.length>60?x.slice(0,60)+'…':x; });
+  var sm=out.join(' · ');
+  if(sm.length>150) sm=sm.slice(0,150)+'…';
+  if(sm.replace(/\s+/g,'')===t.replace(/\s+/g,'')) return null;
+  return sm;
+}
+function tljTxTgl(id){
+  var a=document.getElementById(id+'s'), b=document.getElementById(id+'f');
+  if(!a||!b) return;
+  var showFull=(b.style.display==='none');
+  a.style.display=showFull?'none':'block';
+  b.style.display=showFull?'block':'none';
+}
+function _tljTglBtn(id, full){
+  return ' <span onclick="tljTxTgl(\''+id+'\')" style="color:var(--acc);font-weight:700;cursor:pointer;font-size:10px;white-space:nowrap">'+(full?'▲ 요약만':'▼ 원문 보기')+'</span>';
+}
+function _tljLongHTML(text, boxStyle){
+  var sm=_tljSum(text);
+  if(sm===null) return '<div style="white-space:pre-wrap;'+boxStyle+'">'+dEsc(text)+'</div>';
+  window._tljTxC=(window._tljTxC||0)+1; var id='tljtx'+window._tljTxC;
+  return '<div style="'+boxStyle+'">'
+    +'<div id="'+id+'s"><span style="font-size:8.5px;font-weight:800;color:var(--acc);background:var(--s2);border-radius:5px;padding:0 5px;margin-right:4px;vertical-align:1px">요약</span>'+dEsc(sm)+_tljTglBtn(id,false)+'</div>'
+    +'<div id="'+id+'f" style="display:none;white-space:pre-wrap">'+dEsc(text)+_tljTglBtn(id,true)+'</div>'
+    +'</div>';
+}
+function _tljLongBlock(label, text, color){
+  var sm=_tljSum(text);
+  var head='<b>'+label+'</b>';
+  if(sm===null) return '<div style="font-size:12px;line-height:1.6;white-space:pre-wrap;margin-top:5px;color:'+color+'">'+head+'\n'+dEsc(text)+'</div>';
+  window._tljTxC=(window._tljTxC||0)+1; var id='tljtx'+window._tljTxC;
+  return '<div style="font-size:12px;line-height:1.6;margin-top:5px;color:'+color+'">'+head
+    +'<div id="'+id+'s"><span style="font-size:8.5px;font-weight:800;color:var(--acc);background:var(--s2);border-radius:5px;padding:0 5px;margin-right:4px;vertical-align:1px">요약</span>'+dEsc(sm)+_tljTglBtn(id,false)+'</div>'
+    +'<div id="'+id+'f" style="display:none;white-space:pre-wrap">'+dEsc(text)+_tljTglBtn(id,true)+'</div>'
+    +'</div>';
 }
 function tljCarryDue(eid,idx,v){
   var r=_tljFindItem(eid,idx); if(!r) return;
